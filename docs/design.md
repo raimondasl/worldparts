@@ -70,6 +70,8 @@ Components are bound to manifests by import path (`implementations.reference.pyt
 - Unit strings in manifests use this vocabulary, which `units.py` must parse (normalising `m3` to `m**3`, `cm2` to `cm**2`, `%` to percent, `1` to dimensionless): `1`, `%`, `Pa`, `kPa`, `bar`, `m`, `mm`, `m/s`, `m2`, `m3`, `L`, `kg/s`, `L/s`, `L/min`, `m3/h`, `degC`, `K`, `W`, `kW`, `s`, `min`, `h`, `rpm`, `mW/cm2`, `mJ/cm2`, `kg/m3`.
 - Temperature offsets: use pint with `autoconvert_offset_to_baseunit=True` so `"55 degC"` parses. Tolerances in scenarios are plain numbers in the variable's display unit (a tolerance of `1` on a `degC` variable means 1 K).
 - A Kv value converts to SI like any flow (m³/h to m³/s); laws turn it into a mass-flow coefficient (section 5.2).
+- Temperatures are absolute unless a variable declares `quantity: temperature_difference` (allowed only with unit `K` or `degC`). Differences convert by scale only (35.1 K is 35.1 degC, 63.18 degF) and results carry `reference: difference`. The loader rejects a temperature variable whose name looks like a difference (rise, drop, delta, difference and similar) without that declaration.
+- `kWh/m3` (specific energy) is in the unit vocabulary. It has the dimension of a pressure but takes no gauge reference.
 
 ### 3.2 Signs and names
 
@@ -161,6 +163,7 @@ provenance:
 ```
 
 Every warning code a component can emit must be listed in the manifest, either in `envelope` or in `warnings`.
+Revised after verification: parameters (numbers), inputs, states and observables accept an optional `quantity` field; its only value in 0.1 is `temperature_difference` (section 3.1).
 
 ## 5. Reference runtime
 
@@ -184,6 +187,7 @@ All laws work in SI and return `(dp, ddp_dm)`.
 - `PumpLaw(a, b, c, speed, eps)`: head `H(Q, s) = a*s**2 + b*s*Q + c*Q*|Q|` with `Q = m / rho`, fitted so that `a > 0`, `b <= 0`, `c < 0`; `dp = -rho * g * H + eps * m` (the tiny linear term keeps strict monotonicity at `s = 0`, where the pump acts as a resistance).
 - `CheckValveLaw(k, leakage)`: quadratic resistance with coefficient `k` for forward flow and `k * leakage` for reverse flow, joined continuously at zero.
 - `GateLaw(k, blocked_direction)`: a quadratic resistance that can switch one flow direction to leakage-only; used by tank ports when the tank is empty.
+- Revised after verification: `GateLaw(k, blocked_direction, leakage, limit=None)`. With a numeric `limit`, flow in the blocked direction follows the open law up to the limit and then closes steeply (`GATE_STIFFNESS` = 1e10 Pa per kg/s). Tanks use it to cap each step's outflow at the water available.
 
 ### 5.3 Steady solver
 
@@ -229,6 +233,7 @@ class Component:
 The full, current authoring guide is [authoring-components.md](authoring-components.md).
 
 `NetworkBuilder` offers `port(name)`, `node(label)`, `fixed_node(label, p_abs, T)`, `branch(a, b, law, thermal=None, label=...)` and returns handles the component keeps. `NetworkView` gives the solved `p` and `T` of nodes and `m` of branches by handle. The system computes port variables itself: a port's `m_flow` is the sum of this component's branch flows at the port node, signed into the component.
+Revised after verification: `Component.time_step` is the length of the step that follows the current solve (`None` in `solve()`), and `check_states(parameters, states)` returns problems with a trial batch of states (for example a tank level above its height).
 
 ### 6.2 System (`system.py`)
 
@@ -251,6 +256,7 @@ doc = s.to_dict(); s2 = wp.System.from_dict(doc)
 `check()` codes (stable identifiers agents can rely on): `unknown_component`, `unknown_port`, `incompatible_ports`, `self_connection` (error for a port connected to itself; warning when two ports of one instance share a node, which bypasses the component), `unconnected_port` (warning; the port is treated as capped), `no_pressure_reference` (error), `boundary_short_circuit` (error: two fixed-pressure boundaries at different pressures joined without any resistance), `parameter_out_of_range` (error), `invalid_value` (error). `solve()` raises `SystemCheckError` (carrying the issues) if any error-level issue exists. Invalid calls (`add` with an unknown type, `connect` with an unknown port, a value outside hard limits) raise `WorldpartsError` subclasses immediately with a message that lists valid alternatives.
 
 `SolveResult`: `converged`, `iterations`, `max_residual`, `values` (path to display-unit value), `units` (path to unit string), `modes` (instance to mode), `warnings` (list of `ComponentWarning(component, code, severity, message)`), `to_dict()` (pressure values carry `reference: gauge|absolute|difference`). `get(path, unit="bar absolute")` converts between references. `System.variables()` lists every path; string and table parameters are not part of results (`reported: false`) and are read with `System.get`. Pressure strings may state their reference explicitly (`"2 bar absolute"`, `"1.5 bara"`, `"3 barg"`); `"1 atm"` without a reference is rejected for gauge variables. `SimulationResult`: `time` (s), `series` (path to list), `units`, `warnings` (first occurrence time for each component and code), `mode_changes` (time, instance, mode), `final` (a `SolveResult` at the end), `to_dict(max_points=None)` with downsampling.
+Revised after verification: `set_values` re-initialises only the states whose initial value the batch changes, then runs `check_states` on the trial values before applying anything; `check()` reports `check_states` problems as `invalid_value`. `VariableInfo` carries `quantity`, and temperature differences report the reference `difference`.
 
 ### 6.3 System document
 
@@ -362,6 +368,7 @@ All ids are `worldparts.hydraulic.<alias>`. Numbers are defaults; bracketed rang
 - Envelope: `scald_risk` warning when `temperature > scald_temperature`; `crossflow` warning when `hot_flow < -0.01 or cold_flow < -0.01` (one supply pushes water into the other through the cartridge); `low_supply_pressure` warning when the lever is open and the pressure at a connected inlet is below `min_flow_pressure` (code-emitted, because it must ignore capped ports).
 - Modes: `closed` (`lift <= 0.001`), `cold_only` (`mix <= 0.02`), `hot_only` (`mix >= 0.98`), `mixing`.
 - Defaults give about 14 L/min at 3 bar fully open and half mixed.
+- Revised after verification: `crossflow` is `(hot_flow < -0.01 and cold_flow > 0.01) or (cold_flow < -0.01 and hot_flow > 0.01)`; a new `back_siphonage` warning fires when `flow < -0.01` (water drawn back through the spout). The 1e-6 threshold for an undefined outlet temperature is in m³/s.
 
 ### 8.7 `instantaneous_water_heater`
 
@@ -372,6 +379,7 @@ All ids are `worldparts.hydraulic.<alias>`. Numbers are defaults; bracketed rang
 - Observables: `volume_flow` L/min; `outlet_temperature` degC; `temperature_rise` K; `heat_rate` kW.
 - Envelope: `setpoint_not_met` warning when `volume_flow > activation_flow and outlet_temperature < setpoint - 1`; `below_activation_flow` info when `volume_flow > 0.01 and volume_flow < activation_flow`.
 - Modes: `idle` (`volume_flow < activation_flow`), `saturated` (`outlet_temperature < setpoint - 0.01`), `heating`.
+- Revised after verification: the thermal map is `max(T_in, min(setpoint, T_in + ...))`, so the heater never cools; `idle` is `heat_rate <= 0` (a heater with `enabled = 0` is idle); `below_activation_flow` is `volume_flow > 0.01 and volume_flow <= activation_flow and heat_rate <= 0`; `temperature_rise` declares `quantity: temperature_difference`.
 
 ### 8.8 `centrifugal_pump` (the purification-plant example)
 
@@ -382,6 +390,11 @@ All ids are `worldparts.hydraulic.<alias>`. Numbers are defaults; bracketed rang
 - Observables: `volume_flow` m3/h; `head` m; `shaft_power` kW; `hydraulic_power` kW; `efficiency` % (0 when flow or power is not positive); `npsh_available` m (`(p_inlet_abs - p_vapour(T_inlet)) / (rho*g)`); `npsh_required` m; `speed_rpm` rpm; `bep_flow` m3/h; `curve_fit_rms` m.
 - Warnings (code-emitted, listed in the manifest `warnings`): `cavitation` when `npsh_available < npsh_required + npsh_margin` with forward flow; `low_flow` when running and `volume_flow < min_flow_fraction * bep_flow`; `beyond_curve` when `volume_flow` exceeds the largest curve flow times `speed`; `reverse_flow` when `volume_flow < -0.01`.
 - Modes: `off` (`speed <= 0.01`), `reverse_flow`, `cavitating`, `low_flow`, `running` (the implementation may compute mode conditions from observables it exposes, for example `npsh_available < npsh_required`).
+- Revised after verification:
+  - New observable `specific_energy` in kWh/m3: shaft power divided by volume flow, `None` when the flow is not positive.
+  - `cavitation` is also raised whenever NPSH available is below zero; `beyond_curve` and `low_flow` apply only while running (speed above 0.01).
+  - `check_parameters` rejects curves whose best efficiency exceeds 100 %.
+  - A stopped pump is a resistance whose quadratic coefficient is at least `0.5 * a / Q_max**2` (`STOP_RESISTANCE_FACTOR`), blended linearly into the fitted `c` as the speed rises to 0.01, so a stopped pump with a flat curve cannot short-circuit the network.
 
 ### 8.9 `tank` (open atmospheric tank, ports at the bottom)
 
@@ -392,6 +405,11 @@ All ids are `worldparts.hydraulic.<alias>`. Numbers are defaults; bracketed rang
 - Observables: `volume` m3; `fill_fraction` %; `net_inflow` m3/h; `overflow_rate` m3/h (`level` and `temperature` are states and are reported as such).
 - Envelope: `tank_empty` warning when `level <= 0.001`; `low_level` info when `fill_fraction < 10`; `tank_overflow` warning when `overflow_rate > 0`.
 - Modes: `empty`, `overflowing`, `filling` (`net_inflow > 0.001`), `draining` (`net_inflow < -0.001`), `steady`.
+- Revised after verification:
+  - `level` and `temperature` are states only (as the valve's `position` in 8.4).
+  - In a simulation each step's outflow is capped at the water above the 1 mm empty level, shared between the connected ports, so the water balance closes exactly.
+  - The level must not exceed the height (`check_states`); only `initial_level` and `initial_temperature` reset the states.
+  - In a steady solve, `overflow_rate` is the net inflow when the tank is full and filling.
 
 ### 8.10 `media_filter` (sand or cartridge filter; purification example)
 
@@ -402,6 +420,7 @@ All ids are `worldparts.hydraulic.<alias>`. Numbers are defaults; bracketed rang
 - Observables: `volume_flow` m3/h; `pressure_drop` bar; `dp_ratio` 1 (pressure drop divided by the clean pressure drop at the same flow).
 - Envelope: `change_required` warning when `pressure_drop > change_pressure_drop`; `over_rated_flow` warning when `volume_flow > 1.25 * rated_flow`.
 - Modes: `idle` (`abs(volume_flow) < 0.01`), `needs_change` (`pressure_drop > change_pressure_drop`), `loaded` (`clogging >= 0.3`), `clean`.
+- Revised after verification: a code-emitted `reverse_flow` warning fires below -0.01 m³/h, because the forward-flow envelope checks do not apply to reverse flow.
 
 ### 8.11 `uv_reactor` (UV disinfection; purification example)
 
@@ -413,6 +432,7 @@ All ids are `worldparts.hydraulic.<alias>`. Numbers are defaults; bracketed rang
 - Envelope: `underdose` warning when `volume_flow > 0.01 and dose < required_dose`; `lamp_off` warning when `lamp_output < 0.01 and volume_flow > 0.01`.
 - Modes: `idle` (`abs(volume_flow) < 0.01`), `underdosing` (`dose < required_dose`), `disinfecting`.
 - The defaults give about 54 mJ/cm² at rated flow and fall below 40 mJ/cm² above about 27 m³/h, which is the diagnostic the purification example relies on.
+- Revised after verification: a code-emitted `reverse_flow` warning fires below -0.01 m³/h; the 1e6 cap on `residence_time` and `dose` is a lower bound on the true value, and the `underdose` verdict is unaffected by it when `lamp_output >= 0.01`.
 
 ## 9. MCP server
 
@@ -436,10 +456,16 @@ The server (`worldparts mcp`, stdio) is built on MCP Python SDK v2 (`from mcp.se
 | `export_system(system_id, target)` | `wntr_inp` in v0.1 (requires the `wntr` extra). |
 
 Error messages are written for an agent: they name the offending path and list valid alternatives. Manifests are also exposed as resources at `worldparts://components/{id}`.
+Revised after implementation:
+- `solve` and `simulate` return observables, states and port pressures when no variables are given; `variables` also accepts an instance name (all its variables) or `"*"`; `simulate` takes `units`; `list_variables` takes an optional `component` filter; `load_system` also accepts YAML text. Values are rounded to 6 significant digits; system ids are `s1`, `s2` and so on.
+- `add_component` reports the check issues that name the new instance, so a fresh part shows unconnected-port warnings until it is wired.
+- `describe_component` also returns each variable's `quantity`, table-column descriptions and references, each scenario's `system`, `simulate` and `expect` (usable as templates), and each contract's rule and sweep.
+- Extra tools such as `export_system` register through `create_server(registrars=[...])` or `EXTRA_TOOL_REGISTRARS`.
 
 ## 10. CLI
 
 `worldparts list [QUERY]`, `worldparts describe COMPONENT`, `worldparts validate [PATHS...]` (schema-validate manifests and system documents), `worldparts check-catalog [--component ID]` (run all scenarios and contracts, non-zero exit on failure), `worldparts solve SYSTEM.yaml [--var PATH ...] [--json]`, `worldparts simulate SYSTEM.yaml [--duration] [--step] [--var PATH ...] [--json]`, `worldparts export SYSTEM.yaml --target wntr_inp`, `worldparts mcp`.
+Revised after implementation: every command takes `--json`; exit code 0 on success, 1 when validation or a catalogue check fails, 2 for usage and worldparts errors. `validate` without paths checks the package catalogue and, for system documents, also runs the pre-flight check. `check-catalog` takes `--verbose`.
 
 ## 11. WNTR adapter
 
