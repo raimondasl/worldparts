@@ -17,7 +17,7 @@ Goals for v0.1:
 
 Non-goals for v0.1: a general acausal equation engine (use Modelica for that, see the roadmap); compressible flow, water hammer and pipe heat loss; temperature-dependent fluid properties; node elevations beyond the two mechanisms in section 5.4.
 
-Why a reference solver at all, when the report says "wrap the physics, do not build an engine"? That advice is aimed at general equation engines. v0.1 needs (a) a runtime that works with zero heavyweight installs, so any agent can use the catalogue in seconds, (b) a lumped middle tier that can later be ported to a browser or game engine for the bathroom-scene case, where no runtime exists today, and (c) an oracle to measure divergence against WNTR now and Modelica later. The solver is deliberately narrow: monotone branch laws on a graph, nothing more. High-fidelity work goes through adapters.
+Why a reference solver at all, when the report says "wrap the physics, do not build an engine"? That advice is aimed at general equation engines. v0.1 needs (a) a runtime that works with zero heavyweight installs, so any agent can use the catalogue in seconds, (b) a lumped middle tier that is cheap enough for agent loops, diagnosis by hypothesis simulation and controller-in-the-loop tests, and small enough to embed elsewhere later, and (c) an oracle to measure divergence against WNTR now and Modelica later. The solver is deliberately narrow: monotone branch laws on a graph, nothing more. High-fidelity work goes through adapters.
 
 ## 2. Repository layout
 
