@@ -1,0 +1,126 @@
+manifest_version: "0.1"
+id: worldparts.hydraulic.check_valve
+version: "0.1.0"
+name: Check valve
+summary: Non-return valve with a Kv law in the forward direction and a small leakage in reverse.
+description: |
+  A non-return (check) valve from `port_a` (inlet) to `port_b` (outlet). Forward flow follows
+  the Kv law with coefficient `kv`; reverse flow follows the same law with coefficient
+  `kv * leakage`, so the valve blocks backflow except for a small leakage. The two sides are
+  joined continuously at zero flow and regularised so the law stays strictly monotone.
+
+  Not modelled: cracking pressure, disc dynamics and slam, partial opening at low forward flow
+  (the valve is either fully open forward or leaking in reverse), and water hammer.
+tags: [valve, check-valve, non-return, backflow]
+classification:
+  ifc: {entity: IfcValve, predefined_type: CHECK}
+fidelity:
+  level: lumped_quasi_steady
+  assumptions:
+    - Incompressible water with constant properties (998.2 kg/m3, 1.002e-3 Pa s).
+    - Fully open for any forward flow (no cracking pressure, no spring force).
+    - Reverse flow limited to a quadratic leakage with coefficient kv * leakage.
+    - No disc dynamics, slam or water hammer.
+ports:
+  - {name: port_a, type: fluid, medium: water, description: Inlet; forward flow enters here.}
+  - {name: port_b, type: fluid, medium: water, description: Outlet; forward flow leaves here.}
+parameters:
+  - name: kv
+    description: Forward flow coefficient (m3/h of water at 1 bar pressure drop).
+    type: number
+    unit: m3/h
+    default: 3.0
+    minimum: 0.0001
+    maximum: 100000
+  - name: leakage
+    description: Reverse flow coefficient as a fraction of kv.
+    type: number
+    unit: "1"
+    default: 1.0e-6
+    minimum: 1.0e-9
+    maximum: 0.1
+observables:
+  - {name: volume_flow, unit: L/min, description: Volume flow from port_a to port_b (negative is reverse leakage).}
+  - {name: pressure_drop, unit: bar, pressure_reference: difference, description: Pressure at port_a minus pressure at port_b.}
+modes:
+  - {name: open, condition: "volume_flow > 0.001", description: Forward flow through the open valve.}
+  - {name: closed, condition: "true", description: No forward flow; the valve blocks reverse flow except leakage.}
+scenarios:
+  - id: forward-1-bar
+    description: Forward flow at 1 bar reproduces the Kv definition.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 1.0}}
+        - {name: dut, type: check_valve}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.port_a]
+        - [dut.port_b, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 50.0450, abs_tol: 0.01}
+      - {variable: dut.pressure_drop, value: 1.0, abs_tol: 1.0e-5}
+      - {mode: dut, is: open}
+  - id: reverse-1-bar
+    description: Pressure applied to the outlet; only the reverse leakage (kv * leakage) passes.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 1.0}}
+        - {name: dut, type: check_valve}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.port_b]
+        - [dut.port_a, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: -5.00450e-5, rel_tol: 0.001}
+      - {variable: dut.volume_flow, min: -0.001, max: 0}
+      - {variable: dut.pressure_drop, value: -1.0, abs_tol: 1.0e-5}
+      - {mode: dut, is: closed}
+contracts:
+  - id: flow-increases-with-inlet-pressure
+    description: Raising the inlet pressure never reduces the flow, across reverse and forward regimes.
+    scenario: forward-1-bar
+    sweep: {variable: src.pressure, from: -0.9, to: 3, steps: 14}
+    check: {type: monotonic, variable: dut.volume_flow, direction: increasing, strict: true}
+  - id: mass-conservation
+    description: Mass entering port_a leaves through port_b in both directions.
+    scenario: forward-1-bar
+    sweep: {variable: src.pressure, from: -0.9, to: 3, steps: 14}
+    check: {type: equal, left: dut.port_a.m_flow, right: -dut.port_b.m_flow, abs_tol: 1.0e-9}
+  - id: reverse-flow-bounded
+    description: Reverse leakage stays below 0.001 L/min up to 10 bar of back pressure.
+    scenario: reverse-1-bar
+    sweep: {variable: src.pressure, from: 0, to: 10, steps: 11}
+    check: {type: bounds, variable: dut.volume_flow, min: -0.001, max: 0}
+  - id: forward-kv-law
+    description: Forward flow equals kv * sqrt(dp / specific gravity).
+    scenario: forward-1-bar
+    sweep: {variable: src.pressure, from: 0.1, to: 4, steps: 8}
+    check:
+      type: equal
+      left: dut.volume_flow
+      right: "dut.kv * sqrt(dut.pressure_drop * 1000 / 998.2) * 1000 / 60"
+      rel_tol: 1.0e-5
+implementations:
+  reference: {python: "worldparts.components.valves:CheckValve"}
+  modelica:
+    class: Buildings.Fluid.FixedResistances.CheckValve
+    library: Modelica Buildings Library
+    notes: Binding not yet cross-validated in v0.1; the Buildings model includes a pressure-dependent opening that this reference model does not.
+  wntr:
+    element: Pipe
+    notes: A short pipe with check_valve=True; EPANET closes it completely on reverse flow (no leakage).
+provenance:
+  authors: [worldparts contributors]
+  sources:
+    - title: "IEC 60534-2-1: Industrial-process control valves - Part 2-1: Flow capacity - Sizing equations for fluid flow under installed conditions"
+      notes: Kv definition used for the forward law.
+    - title: "Crane Co., Technical Paper No. 410: Flow of Fluids Through Valves, Fittings and Pipe"
+      notes: Typical resistance and behaviour of lift and swing check valves.
+    - title: Modelica Buildings Library
+      url: https://simulationresearch.lbl.gov/modelica/
+      notes: Check valve with leakage as a fraction of the forward flow coefficient.
+  data:
+    acquisition: generic
+    notes: Default parameters (Kv 3 m3/h, leakage 1e-6) are generic illustrative values for a small DN15 to DN20 check valve, not a specific product.
+  license: Apache-2.0
+  data_license: CC0-1.0

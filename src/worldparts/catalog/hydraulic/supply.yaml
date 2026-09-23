@@ -1,0 +1,139 @@
+manifest_version: "0.1"
+id: worldparts.hydraulic.supply
+version: "0.1.0"
+name: Pressure supply
+summary: Ideal pressure source such as a water main, reservoir or pressurised line, with a fixed supply temperature.
+description: |
+  An ideal pressure boundary: the port is held at the gauge `pressure` whatever the flow, and
+  water leaving the supply into the network has the temperature `temperature`. Water can
+  also flow back into the supply (the `absorbing` mode) when the network pressure is higher.
+
+  Internally the supply is a fixed-pressure node joined to its port by a near-ideal linear
+  branch (about 1e-6 Pa per kg/s), so the port pressure differs from `pressure` by less than
+  1e-6 bar for flows up to 100 m3/s. Connecting a supply is also what gives a sub-network its
+  pressure reference. Two boundaries at different pressures joined directly at one junction
+  are a short circuit (unbounded flow); the structural check rejects that as
+  `boundary_short_circuit`.
+
+  Not modelled: the pressure drop of a real service line (add a pipe or valve), pressure
+  regulation, and supply temperature changes caused by the flow.
+tags: [boundary, source, mains, reservoir, pressure]
+classification:
+  other: {role: pressure boundary condition}
+fidelity:
+  level: lumped_quasi_steady
+  assumptions:
+    - Incompressible water with constant properties (998.2 kg/m3, 1.002e-3 Pa s, 4182 J/(kg K)).
+    - Ideal pressure source; pressure independent of flow.
+    - Water returning into the supply is absorbed without changing its temperature.
+ports:
+  - {name: port, type: fluid, medium: water, description: Connection to the network.}
+parameters:
+  - name: pressure
+    description: Supply pressure (gauge).
+    type: number
+    unit: bar
+    default: 3.0
+    minimum: -0.9
+    maximum: 100
+  - name: temperature
+    description: Temperature of the water the supply delivers.
+    type: number
+    unit: degC
+    default: 12
+    minimum: 0.5
+    maximum: 99
+observables:
+  - {name: volume_flow, unit: L/min, description: Volume flow delivered into the network (negative when the network pushes water back into the supply).}
+modes:
+  - {name: supplying, condition: "volume_flow > 0.01", description: Delivering water into the network.}
+  - {name: absorbing, condition: "volume_flow < -0.01", description: The network pushes water back into the supply.}
+  - {name: idle, condition: "true", description: No significant flow.}
+scenarios:
+  - id: supply-valve-drain
+    description: A 3 bar supply discharging through a fully open Kv 2.5 valve to atmosphere.
+    system:
+      components:
+        - {name: dut, type: supply, parameters: {pressure: 3 bar, temperature: 12 degC}}
+        - {name: v, type: valve, parameters: {kv: 2.5}}
+        - {name: sink, type: drain}
+      connections:
+        - [dut.port, v.port_a]
+        - [v.port_b, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 72.2336, abs_tol: 0.01}
+      - {variable: dut.port.p, value: 3.0, abs_tol: 1.0e-5}
+      - {variable: dut.port.T, value: 12.0, abs_tol: 1.0e-9}
+      - {variable: sink.port.T, value: 12.0, abs_tol: 1.0e-9}
+      - {mode: dut, is: supplying}
+  - id: absorbing
+    description: A 4 bar supply pushes water through a valve into the 1 bar supply under test.
+    system:
+      components:
+        - {name: hi, type: supply, parameters: {pressure: 4, temperature: 30}}
+        - {name: v, type: valve}
+        - {name: dut, type: supply, parameters: {pressure: 1}}
+      connections:
+        - [hi.port, v.port_a]
+        - [v.port_b, dut.port]
+    expect:
+      - {variable: dut.volume_flow, value: -72.2336, abs_tol: 0.01}
+      - {variable: dut.port.T, value: 30.0, abs_tol: 1.0e-9}
+      - {mode: dut, is: absorbing}
+  - id: idle-behind-closed-valve
+    description: A supply behind a closed valve delivers only the valve's seat leakage.
+    system:
+      components:
+        - {name: dut, type: supply, parameters: {pressure: 1}}
+        - {name: v, type: valve, inputs: {opening: 0}}
+        - {name: sink, type: drain}
+      connections:
+        - [dut.port, v.port_a]
+        - [v.port_b, sink.port]
+    expect:
+      - {variable: dut.volume_flow, min: 0, max: 0.01}
+      - {mode: dut, is: idle}
+contracts:
+  - id: flow-increases-with-pressure
+    description: Raising the supply pressure never reduces the delivered flow (negative below atmospheric).
+    scenario: supply-valve-drain
+    sweep: {variable: dut.pressure, from: -0.5, to: 5, steps: 12}
+    check: {type: monotonic, variable: dut.volume_flow, direction: increasing, strict: true}
+  - id: mass-conservation
+    description: What the supply delivers arrives at the drain.
+    scenario: supply-valve-drain
+    sweep: {variable: dut.pressure, from: -0.5, to: 5, steps: 12}
+    check: {type: equal, left: dut.volume_flow, right: sink.volume_flow, abs_tol: 1.0e-9, rel_tol: 1.0e-9}
+  - id: port-pressure-equals-setting
+    description: The port pressure equals the supply pressure (ideal source).
+    scenario: supply-valve-drain
+    sweep: {variable: dut.pressure, from: -0.5, to: 5, steps: 12}
+    check: {type: equal, left: dut.port.p, right: dut.pressure, abs_tol: 1.0e-5}
+  - id: temperature-propagates
+    description: The water reaching the drain has the supply temperature.
+    scenario: supply-valve-drain
+    sweep: {variable: dut.temperature, from: 1, to: 95, steps: 5}
+    check: {type: equal, left: sink.port.T, right: dut.temperature, abs_tol: 1.0e-9}
+implementations:
+  reference: {python: "worldparts.components.boundaries:Supply"}
+  modelica:
+    class: Modelica.Fluid.Sources.Boundary_pT
+    library: Modelica Standard Library 4.0.0
+    notes: Set p to 101325 Pa plus the gauge pressure and T to the supply temperature.
+  wntr:
+    element: Reservoir
+    notes: Reservoir head equals the gauge pressure expressed as metres of water.
+provenance:
+  authors: [worldparts contributors]
+  sources:
+    - title: Modelica Standard Library (Modelica.Fluid.Sources.Boundary_pT)
+      url: https://github.com/modelica/ModelicaStandardLibrary
+      notes: Ideal pressure and temperature boundary condition.
+    - title: EPANET
+      url: https://github.com/OpenWaterAnalytics/EPANET
+      notes: Reservoirs as fixed-head boundaries in water network models.
+  data:
+    acquisition: generic
+    notes: Default parameters (3 bar gauge, 12 degC) are generic illustrative values typical of a domestic cold-water main, not a specific site.
+  license: Apache-2.0
+  data_license: CC0-1.0

@@ -178,7 +178,7 @@ Every warning code a component can emit must be listed in the manifest, either i
 
 All laws work in SI and return `(dp, ddp_dm)`.
 
-- `QuadraticResistance(k, m_eps)`: `dp = m * sqrt(m**2 + m_eps**2) / k**2`, with `k` the mass-flow coefficient in kg/(s·Pa^0.5). From a Kv value in SI (m³/s): `k = Kv_SI * sqrt(rho * 1000 / 1e5)`, which reproduces "Kv m³/h of water at 1 bar". `m_eps` defaults to 1e-3 of the flow at 1 bar through the fully open element.
+- `QuadraticResistance(k, m_eps)`: `dp = m * sqrt(m**2 + m_eps**2) / k**2`, with `k` the mass-flow coefficient in kg/(s·Pa^0.5). From a Kv value in SI (m³/s): `k = Kv_SI * sqrt(rho * 1000 / 1e5)`, which reproduces "Kv m³/h of water at 1 bar". `m_eps` defaults to 1e-3 of the flow at 1 bar through the fully open element. The regularisation is a C1 cubic, `m * (m_eps + m**2 / (4 * m_eps))`, inside `|m| < 2 * m_eps` and exactly `m * |m|` outside it, so Kv relations hold exactly above 0.2% of nominal flow.
 - `LinearQuadraticResistance(r_lin, r_quad)`: `dp = r_lin * Q + r_quad * Q * |Q|` with `Q = m / rho`; used by the media filter.
 - `PipeLaw(length, diameter, roughness, minor_loss, height_difference)`: Darcy-Weisbach with the Churchill (1977) friction factor, continuous across laminar, transitional and turbulent flow. Written as `dp = G(Re) * L * mu * v / (2 D**2) + K * rho * v * |v| / 2 + rho * g * dz` with `G = f * Re`, so `G -> 64` as `Re -> 0` and the law stays strictly increasing at zero flow. Tests cross-check `f` against `fluids.friction.Churchill_1977`.
 - `PumpLaw(a, b, c, speed, eps)`: head `H(Q, s) = a*s**2 + b*s*Q + c*Q*|Q|` with `Q = m / rho`, fitted so that `a > 0`, `b <= 0`, `c < 0`; `dp = -rho * g * H + eps * m` (the tiny linear term keeps strict monotonicity at `s = 0`, where the pump acts as a resistance).
@@ -187,11 +187,11 @@ All laws work in SI and return `(dp, ddp_dm)`.
 
 ### 5.3 Steady solver
 
-Unknowns are the pressures of free nodes and the mass flows of branches. Equations: one per branch (`p_a - p_b - dp(m) = 0`) and one mass balance per free node. Newton-Raphson on the scaled system (pressures scaled by 1e5 Pa, flows by 1 kg/s) with backtracking line search on the residual norm; start from zero flows and the mean fixed pressure; converge when the scaled max residual is below 1e-9. If Newton fails after 100 iterations, fall back to `scipy.optimize.root(method="hybr")`; if that fails, raise `SolverError` with the residual and the worst equation. Dense numpy linear algebra is fine for v0.1 sizes (up to a few hundred unknowns).
+Unknowns are the pressures of free nodes and the mass flows of branches. Equations: one per branch (`p_a - p_b - dp(m) = 0`) and one mass balance per free node. Newton-Raphson on the scaled system (pressures scaled by 1e5 Pa, flows by 1 kg/s) with backtracking line search on the residual norm; start from zero flows and the mean fixed pressure; converge when the scaled max residual is below 1e-9. If Newton fails after 100 iterations, a node-pressure Newton runs (each law inverted exactly, convex line search) and its result is polished by the branch-flow Newton; if that also fails, fall back to `scipy.optimize.root(method="hybr")`; if that fails, raise `SolverError` with the residual and the worst equation. Dense numpy linear algebra is fine for v0.1 sizes (up to a few hundred unknowns).
 
 Before solving, the graph is split into connected sub-networks; any sub-network without a fixed-pressure node is a structural error (`no_pressure_reference`).
 
-After the hydraulic solve, temperatures are computed by mixing: each free node's temperature is the flow-weighted mean of the temperatures of branches flowing into it, where a branch's outflow temperature is its `thermal` map applied to its upstream node temperature. Solve by Gauss-Seidel sweeps until changes are below 1e-9 K (at most 500 sweeps). A node with no inflow has temperature `None`.
+After the hydraulic solve, temperatures are computed by mixing: each free node's temperature is the flow-weighted mean of the temperatures of branches flowing into it, where a branch's outflow temperature is its `thermal` map applied to its upstream node temperature. When the flow graph is acyclic this is one exact sweep in flow order. When flow circulates in a loop, the mixing equations are solved directly (thermal maps linearised and Newton-iterated to 1e-9 K). A node that no temperature source reaches has temperature `None`.
 
 ### 5.4 Elevation
 
@@ -199,7 +199,7 @@ v0.1 has no global node elevations. Two mechanisms carry static head: the pipe's
 
 ### 5.5 Time stepping
 
-`System.simulate(duration, step, events)` advances with a fixed step (default 1 s): apply events due at `t`; let each component update fast states (actuator lags, `x += (x_cmd - x) * (1 - exp(-dt / tau))`); solve hydraulics and temperatures with the current states; record outputs and warnings; integrate storage states with explicit Euler (tank level and temperature). `solve()` is a steady snapshot: states marked `steady: settle` are set to their equilibrium, states marked `steady: hold` keep their current values.
+`System.simulate(duration, step, events)` samples at every multiple of `step`, at every event time and exactly at `duration`; events after `duration` are rejected, and without a `duration` the system document's `simulation` block is used. Going from sample `t0` to `t`: fast states advance over `t - t0` with the previous command (actuator lags, exact first-order response `x += (x_cmd - x) * (1 - exp(-dt / tau))`); the events due at `t` are applied; instantaneous responses are applied; hydraulics and temperatures are solved; outputs and warnings are recorded; storage states are integrated with explicit Euler (tank level and temperature). A `start_simulation()` hook runs once per call for per-run accumulators. `solve()` is a steady snapshot: states marked `steady: settle` are set to their equilibrium, states marked `steady: hold` keep their current values.
 
 ## 6. Component and System APIs
 
@@ -221,7 +221,12 @@ class Component:
     def update_fast_states(self, dt: float) -> None: ...
     def integrate(self, dt: float, sol: NetworkView) -> None: ...   # storage states
     def extra_warnings(self, sol: NetworkView) -> list[ComponentWarning]: ...
+    def start_simulation(self) -> None: ...  # once per simulate() call, for per-run accumulators
+    @classmethod
+    def check_parameters(cls, params) -> list[str]: ...  # cross-parameter rules on the whole trial batch
 ```
+
+The full, current authoring guide is [authoring-components.md](authoring-components.md).
 
 `NetworkBuilder` offers `port(name)`, `node(label)`, `fixed_node(label, p_abs, T)`, `branch(a, b, law, thermal=None, label=...)` and returns handles the component keeps. `NetworkView` gives the solved `p` and `T` of nodes and `m` of branches by handle. The system computes port variables itself: a port's `m_flow` is the sum of this component's branch flows at the port node, signed into the component.
 
@@ -243,9 +248,9 @@ sim = s.simulate(duration="10 min", step="1 s", events=[{"at": "60 s", "set": {"
 doc = s.to_dict(); s2 = wp.System.from_dict(doc)
 ```
 
-`check()` codes (stable identifiers agents can rely on): `unknown_component`, `unknown_port`, `incompatible_ports`, `self_connection`, `unconnected_port` (warning; the port is treated as capped), `no_pressure_reference` (error), `parameter_out_of_range` (error), `invalid_value` (error). `solve()` raises `SystemCheckError` (carrying the issues) if any error-level issue exists. Invalid calls (`add` with an unknown type, `connect` with an unknown port, a value outside hard limits) raise `WorldpartsError` subclasses immediately with a message that lists valid alternatives.
+`check()` codes (stable identifiers agents can rely on): `unknown_component`, `unknown_port`, `incompatible_ports`, `self_connection` (error for a port connected to itself; warning when two ports of one instance share a node, which bypasses the component), `unconnected_port` (warning; the port is treated as capped), `no_pressure_reference` (error), `boundary_short_circuit` (error: two fixed-pressure boundaries at different pressures joined without any resistance), `parameter_out_of_range` (error), `invalid_value` (error). `solve()` raises `SystemCheckError` (carrying the issues) if any error-level issue exists. Invalid calls (`add` with an unknown type, `connect` with an unknown port, a value outside hard limits) raise `WorldpartsError` subclasses immediately with a message that lists valid alternatives.
 
-`SolveResult`: `converged`, `iterations`, `max_residual`, `values` (path to display-unit value), `units` (path to unit string), `modes` (instance to mode), `warnings` (list of `ComponentWarning(component, code, severity, message)`), `to_dict()`. `SimulationResult`: `time` (s), `series` (path to list), `units`, `warnings` (first occurrence time for each component and code), `mode_changes` (time, instance, mode), `final` (a `SolveResult` at the end), `to_dict(max_points=None)` with downsampling.
+`SolveResult`: `converged`, `iterations`, `max_residual`, `values` (path to display-unit value), `units` (path to unit string), `modes` (instance to mode), `warnings` (list of `ComponentWarning(component, code, severity, message)`), `to_dict()` (pressure values carry `reference: gauge|absolute|difference`). `get(path, unit="bar absolute")` converts between references. `System.variables()` lists every path; string and table parameters are not part of results (`reported: false`) and are read with `System.get`. Pressure strings may state their reference explicitly (`"2 bar absolute"`, `"1.5 bara"`, `"3 barg"`); `"1 atm"` without a reference is rejected for gauge variables. `SimulationResult`: `time` (s), `series` (path to list), `units`, `warnings` (first occurrence time for each component and code), `mode_changes` (time, instance, mode), `final` (a `SolveResult` at the end), `to_dict(max_points=None)` with downsampling.
 
 ### 6.3 System document
 
@@ -260,6 +265,8 @@ components:
   - {name: faucet, type: mixing_faucet, inputs: {lift: 1, mix: 0.5}}
 connections:
   - [mains.port, faucet.cold]
+    # optional per component: states: {level: 1.2}  (written by to_dict when states differ from their initial values)
+    # table cells may be numbers (declared column unit) or strings with units
 simulation:                               # optional default run for `worldparts simulate`
   duration: 5 min
   step: 1 s
@@ -287,6 +294,8 @@ contracts:
     sweep: {variable: dut.lift, from: 0, to: 1, steps: 11}  # or values: [...]
     check: {type: monotonic, variable: dut.flow, direction: increasing, strict: false}
 ```
+
+Expectations may also test modes: `{mode: dut, is: open}`. Warning expectations and `warning_iff` checks must name a declared warning code; an undeclared code is a failure, not a vacuous pass.
 
 Check types:
 
@@ -321,7 +330,7 @@ All ids are `worldparts.hydraulic.<alias>`. Numbers are defaults; bracketed rang
 - Ports: `port_a`, `port_b`.
 - Parameters: `length` m, 5, [0.01, 100000]; `diameter` mm (inner), 16, [1, 5000]; `roughness` mm, 0.0015, [0, 10]; `minor_loss` 1 (sum of K), 0, [0, 1000]; `height_difference` m (elevation of `port_b` minus `port_a`), 0, [-1000, 1000].
 - Observables: `volume_flow` L/min; `velocity` m/s; `pressure_drop` bar (`p_a - p_b`); `reynolds` 1; `friction_factor` 1.
-- Envelope: `high_velocity` warning when `abs(velocity) > 3`.
+- Envelope: `high_velocity` warning when `abs(velocity) > 3`; `high_relative_roughness` warning when roughness exceeds 5% of the diameter. Code-emitted: `below_vapour_pressure` when a port's absolute pressure falls below the vapour pressure (the quasi-steady model would otherwise report impossible negative absolute pressures). Parameter rule: `roughness < diameter / 2`.
 - Modes: `stagnant` (`abs(volume_flow) < 0.001`), `flowing`.
 - Law: `PipeLaw`.
 
@@ -329,9 +338,9 @@ All ids are `worldparts.hydraulic.<alias>`. Numbers are defaults; bracketed rang
 
 - Ports: `port_a`, `port_b`.
 - Parameters: `kv` m3/h, 2.5, [0.0001, 100000]; `characteristic` string, `linear` | `equal_percentage` | `quick_opening`, default `linear`; `rangeability` 1, 50, [2, 500]; `leakage` 1, 1e-4, [1e-8, 0.1]; `actuator_time` s, 0, [0, 3600] (first-order time constant; 0 is instantaneous).
-- Inputs: `opening` 1, 1.0, [0, 1]. States: `position` 1, `steady: settle`.
+- Inputs: `opening` 1, 1.0, [0, 1]. States: `position` 1, `steady: settle` (states are reported in results, so `position` is a state only, not also an observable; all names under one instance share one namespace).
 - Characteristic φ(y) with `l` the leakage and `R` the rangeability: linear `l + (1-l)*y`; equal percentage `l + (1-l)*(R**(y-1) - 1/R)/(1 - 1/R)`; quick opening `l + (1-l)*sqrt(y)`. Effective Kv is `kv * φ(position)`.
-- Observables: `volume_flow` L/min; `pressure_drop` bar; `effective_kv` m3/h; `position` 1.
+- Observables: `volume_flow` L/min; `pressure_drop` bar; `effective_kv` m3/h.
 - Envelope: `high_pressure_drop` warning when `pressure_drop > 3`.
 - Modes: `closed` (`position <= 0.001`), `throttling` (`position < 0.999`), `open`.
 
@@ -380,7 +389,7 @@ All ids are `worldparts.hydraulic.<alias>`. Numbers are defaults; bracketed rang
 - Parameters: `diameter` m, 2.0, [0.05, 100]; `height` m, 3.0, [0.1, 100]; `initial_level` m, 2.0, [0, 100] (must not exceed `height`); `initial_temperature` degC, 15, [0.5, 99]; `port_kv` m3/h, 200, [0.01, 1e6].
 - States: `level` m (`steady: hold`), `temperature` degC (`steady: hold`).
 - Model: internal fixed node at `P_ATM + rho*g*level` with outflow temperature `temperature`; each port connects through a `GateLaw(port_kv)`; when `level <= 0.001` m, outflow from the tank is blocked (leakage only). Integration: level from net volume inflow; above `height` the excess is spilled and reported as `overflow_rate`; temperature by perfect mixing of inflow.
-- Observables: `level` m; `volume` m3; `fill_fraction` %; `net_inflow` m3/h; `temperature` degC; `overflow_rate` m3/h.
+- Observables: `volume` m3; `fill_fraction` %; `net_inflow` m3/h; `overflow_rate` m3/h (`level` and `temperature` are states and are reported as such).
 - Envelope: `tank_empty` warning when `level <= 0.001`; `low_level` info when `fill_fraction < 10`; `tank_overflow` warning when `overflow_rate > 0`.
 - Modes: `empty`, `overflowing`, `filling` (`net_inflow > 0.001`), `draining` (`net_inflow < -0.001`), `steady`.
 

@@ -1,0 +1,118 @@
+manifest_version: "0.1"
+id: worldparts.testing.heated_tank
+version: "0.1.0"
+name: Heated tank (test-only)
+summary: Test-only open tank with a heating element in its inlet line, used to exercise the worldparts core.
+description: |
+  Test fixture, not part of the package catalogue. An open tank of cross-section `area` with
+  its inlet and outlet at the bottom. The inlet line contains a heating element whose power
+  is a table function of the tank level. The level and temperature are storage states
+  (`steady: hold`) integrated with explicit Euler. When the tank is empty the outlet gate
+  blocks outflow. A code-emitted `overheat` warning flags heated inflow above 60 degC.
+tags: [test, tank, heater]
+fidelity:
+  level: lumped_dynamic
+  assumptions:
+    - Incompressible water with constant properties.
+    - Perfectly mixed tank contents.
+ports:
+  - {name: inlet, type: fluid, medium: water, description: Bottom inlet through the heating element.}
+  - {name: outlet, type: fluid, medium: water, description: Bottom outlet through a gate.}
+parameters:
+  - {name: area, description: Tank cross-section., type: number, unit: m2, default: 0.5, minimum: 0.001, maximum: 100}
+  - {name: height, description: Tank height., type: number, unit: m, default: 2, minimum: 0.1, maximum: 100}
+  - {name: initial_level, description: Level at the start., type: number, unit: m, default: 0.5, minimum: 0, maximum: 100}
+  - {name: initial_temperature, description: Temperature at the start., type: number, unit: degC, default: 20, minimum: 0.5, maximum: 99}
+  - {name: port_kv, description: Kv of each port connection., type: number, unit: m3/h, default: 1.0, minimum: 0.001, maximum: 1000}
+  - {name: heater, description: Heating element switch., type: string, enum: ["on", "off"], default: "on"}
+  - name: heater_curve
+    description: Heating power as a function of the tank level.
+    type: table
+    columns:
+      - {name: level, unit: m, description: Tank level.}
+      - {name: power, unit: kW, description: Heating power.}
+    min_rows: 2
+    default: [[0, 2], [2, 6]]
+states:
+  - {name: level, description: Water level., unit: m, steady: hold}
+  - {name: temperature, description: Mixed water temperature., unit: degC, steady: hold}
+observables:
+  - {name: net_inflow, unit: m3/h, description: Net volume inflow.}
+  - {name: heater_power, unit: kW, description: Heating power at the current level.}
+  - {name: inlet_temperature, unit: degC, description: Temperature of the heated inflow (undefined without inflow).}
+modes:
+  - {name: empty, condition: "level <= 0.001", description: Tank empty.}
+  - {name: filling, condition: "net_inflow > 0.001", description: Level rising.}
+  - {name: draining, condition: "net_inflow < -0.001", description: Level falling.}
+  - {name: steady, condition: "true", description: Level constant.}
+envelope:
+  - {code: tank_empty, severity: warning, condition: "level <= 0.001", message: The tank is empty; outflow is blocked.}
+warnings:
+  - {code: overheat, severity: warning, description: Heated inflow above 60 degC.}
+scenarios:
+  - id: fill-and-heat
+    description: A 1 bar supply fills the tank through the heater; the outlet valve is closed.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 1, temperature: 20}}
+        - {name: dut, type: heated_tank}
+        - {name: v, type: valve, inputs: {opening: 0}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, v.port_a]
+        - [v.port_b, sink.port]
+    expect:
+      - {variable: dut.level, value: 0.5}
+      - {variable: dut.heater_power, value: 3.0, abs_tol: 1.0e-12}
+      - {variable: dut.inlet_temperature, min: 20.5, max: 60}
+      - {variable: dut.outlet.p, value: 0.048945, abs_tol: 1.0e-5}
+      - {mode: dut, is: filling}
+      - {warning: dut.overheat, present: false}
+  - id: drain-to-empty
+    description: A small tank drains into a drain through its outlet and runs empty; the gate then blocks outflow.
+    system:
+      components:
+        - {name: dut, type: heated_tank, parameters: {area: 0.01, initial_level: 0.05, heater: "off"}}
+        - {name: sink, type: drain}
+      connections:
+        - [dut.outlet, sink.port]
+    simulate:
+      duration: 200 s
+      step: 1 s
+    expect:
+      - {variable: dut.level, max: 0.002}
+      - {mode: dut, is: empty}
+      - {warning: dut.tank_empty, present: true}
+contracts:
+  - id: mass-conservation
+    description: The port mass flows add up to the net inflow.
+    scenario: fill-and-heat
+    sweep: {variable: src.pressure, from: 0.1, to: 3, steps: 6}
+    check: {type: equal, left: dut.inlet.m_flow + dut.outlet.m_flow, right: dut.net_inflow * 998.2 / 3600, rel_tol: 1.0e-9}
+  - id: overheat-warning
+    description: The code-emitted overheat warning is raised exactly when the heated inflow exceeds 60 degC.
+    scenario: fill-and-heat
+    sweep: {variable: src.pressure, values: [0.052, 0.055, 0.06, 0.1, 0.5, 2]}
+    check: {type: warning_iff, code: dut.overheat, condition: "dut.inlet_temperature > 60"}
+  - id: less-heating-at-higher-flow
+    description: More supply pressure means more flow and a smaller temperature rise.
+    scenario: fill-and-heat
+    sweep: {variable: src.pressure, from: 0.1, to: 3, steps: 6}
+    check: {type: monotonic, variable: dut.inlet_temperature, direction: decreasing, strict: true}
+  - id: heater-power-within-table
+    description: The interpolated heating power stays within the table range.
+    scenario: fill-and-heat
+    sweep: {variable: dut.initial_level, from: 0, to: 2, steps: 5}
+    check: {type: bounds, variable: dut.heater_power, min: 2, max: 6}
+implementations:
+  reference: {python: "testparts:HeatedTank"}
+provenance:
+  authors: [worldparts contributors]
+  sources:
+    - {title: Test fixture; no external source.}
+  data:
+    acquisition: generic
+    notes: Illustrative test values only.
+  license: Apache-2.0
+  data_license: CC0-1.0

@@ -1,0 +1,222 @@
+manifest_version: "0.1"
+id: worldparts.hydraulic.valve
+version: "0.1.0"
+name: Two-way control valve
+summary: Throttling valve with Kv sizing, inherent characteristic, leakage and first-order actuator lag.
+description: |
+  A two-way throttling valve between `port_a` and `port_b`. The pressure-flow relation is the
+  Kv (flow coefficient) law: at full opening, `kv` m3/h of water flows at a pressure drop of
+  1 bar. The effective Kv is `kv * phi(position)` where `phi` is the inherent characteristic:
+
+  - linear: `l + (1 - l) * y`
+  - equal_percentage: `l + (1 - l) * (R**(y - 1) - 1/R) / (1 - 1/R)`
+  - quick_opening: `l + (1 - l) * sqrt(y)`
+
+  with `y` the valve position, `l` the leakage (relative Kv when closed) and `R` the
+  rangeability. The position follows the commanded `opening` through a first-order lag with
+  time constant `actuator_time` in simulations; a steady solve sets it equal to the opening.
+  The law is regularised near zero flow so it stays strictly monotone; the valve is
+  symmetric (flow may go either way).
+
+  Not modelled: choked or cavitating flow (the `high_pressure_drop` warning flags the region
+  where it becomes likely), installed characteristic distortion beyond what the network
+  itself produces, hysteresis, dead band and actuator force limits.
+tags: [valve, throttling, kv, control-valve, actuator]
+classification:
+  ifc: {entity: IfcValve, predefined_type: REGULATING}
+  brick: Valve
+fidelity:
+  level: lumped_quasi_steady
+  assumptions:
+    - Incompressible water with constant properties (998.2 kg/m3, 1.002e-3 Pa s).
+    - Turbulent Kv law dp proportional to Q**2, exact above 0.2 % of the flow at 1 bar and regularised (C1 cubic) below it.
+    - No choked flow, cavitation or flashing; no pressure recovery effects.
+    - Inherent characteristic only; actuator modelled as an exact first-order lag.
+ports:
+  - {name: port_a, type: fluid, medium: water, description: Inlet in the forward direction.}
+  - {name: port_b, type: fluid, medium: water, description: Outlet in the forward direction.}
+parameters:
+  - name: kv
+    description: Flow coefficient at full opening (m3/h of water at 1 bar pressure drop).
+    type: number
+    unit: m3/h
+    default: 2.5
+    minimum: 0.0001
+    maximum: 100000
+  - name: characteristic
+    description: Inherent flow characteristic.
+    type: string
+    enum: [linear, equal_percentage, quick_opening]
+    default: linear
+  - name: rangeability
+    description: Rangeability R of the equal-percentage characteristic (ratio of largest to smallest controllable Kv).
+    type: number
+    unit: "1"
+    default: 50
+    minimum: 2
+    maximum: 500
+  - name: leakage
+    description: Relative Kv when fully closed (seat leakage as a fraction of kv).
+    type: number
+    unit: "1"
+    default: 0.0001
+    minimum: 1.0e-8
+    maximum: 0.1
+  - name: actuator_time
+    description: First-order time constant of the actuator; 0 is instantaneous.
+    type: number
+    unit: s
+    default: 0
+    minimum: 0
+    maximum: 3600
+inputs:
+  - {name: opening, description: "Commanded valve opening: 0 closed, 1 fully open.", unit: "1", default: 1.0, minimum: 0, maximum: 1}
+states:
+  - name: position
+    description: Actual valve position after the actuator lag (reported as the variable `position`).
+    unit: "1"
+    steady: settle
+    minimum: 0
+    maximum: 1
+observables:
+  - {name: volume_flow, unit: L/min, description: Volume flow from port_a to port_b.}
+  - {name: pressure_drop, unit: bar, pressure_reference: difference, description: Pressure at port_a minus pressure at port_b.}
+  - {name: effective_kv, unit: m3/h, description: Kv at the current position (kv times the characteristic).}
+modes:
+  - {name: closed, condition: "position <= 0.001", description: Valve closed; only seat leakage passes.}
+  - {name: throttling, condition: "position < 0.999", description: Partly open.}
+  - {name: open, condition: "true", description: Fully open.}
+envelope:
+  - code: high_pressure_drop
+    severity: warning
+    condition: "pressure_drop > 3"
+    message: Pressure drop above 3 bar; cavitation and noise are likely in a real valve and the Kv law may overpredict flow (choked flow is not modelled).
+scenarios:
+  - id: kv-at-1-bar
+    description: Fully open linear valve between 1 bar gauge and atmosphere; the flow reproduces the Kv definition.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 1.0}}
+        - {name: dut, type: valve}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.port_a]
+        - [dut.port_b, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 41.7042, abs_tol: 0.01}
+      - {variable: dut.effective_kv, value: 2.5, abs_tol: 1.0e-9}
+      - {variable: dut.pressure_drop, value: 1.0, abs_tol: 1.0e-5}
+      - {mode: dut, is: open}
+      - {warning: dut.high_pressure_drop, present: false}
+  - id: closed-at-3-bar
+    description: Closed valve at 3 bar; only seat leakage (kv * leakage) passes.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 3.0}}
+        - {name: dut, type: valve, inputs: {opening: 0}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.port_a]
+        - [dut.port_b, sink.port]
+    expect:
+      - {variable: dut.effective_kv, value: 0.00025, rel_tol: 1.0e-9}
+      - {variable: dut.volume_flow, value: 0.0072230, rel_tol: 0.001}
+      - {variable: dut.pressure_drop, value: 3.0, abs_tol: 1.0e-5}
+      - {mode: dut, is: closed}
+  - id: equal-percentage-half-open
+    description: Equal-percentage valve at half opening, 1 bar; effective Kv follows the characteristic.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 1.0}}
+        - {name: dut, type: valve, parameters: {characteristic: equal_percentage}, inputs: {opening: 0.5}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.port_a]
+        - [dut.port_b, sink.port]
+    expect:
+      - {variable: dut.effective_kv, value: 0.309968, rel_tol: 1.0e-5}
+      - {variable: dut.volume_flow, value: 5.17084, rel_tol: 1.0e-4}
+      - {mode: dut, is: throttling}
+  - id: actuator-lag
+    description: Valve with a 10 s actuator starts closed and is commanded fully open at t = 0; after 30 s the position is 1 - exp(-3).
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 1.0}}
+        - {name: dut, type: valve, parameters: {actuator_time: 10 s}, inputs: {opening: 0}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.port_a]
+        - [dut.port_b, sink.port]
+    simulate:
+      duration: 30 s
+      step: 1 s
+      events:
+        - {at: 0 s, set: {dut.opening: 1}}
+    expect:
+      - {variable: dut.position, value: 0.950213, abs_tol: 1.0e-5}
+      - {variable: dut.opening, value: 1.0}
+      - {mode: dut, is: throttling}
+contracts:
+  - id: flow-increases-with-opening
+    description: Opening the valve never reduces the flow at a fixed pressure difference.
+    scenario: kv-at-1-bar
+    sweep: {variable: dut.opening, from: 0, to: 1, steps: 11}
+    check: {type: monotonic, variable: dut.volume_flow, direction: increasing, strict: true}
+  - id: mass-conservation
+    description: Mass entering port_a leaves through port_b at every opening.
+    scenario: kv-at-1-bar
+    sweep: {variable: dut.opening, from: 0, to: 1, steps: 11}
+    check: {type: equal, left: dut.port_a.m_flow, right: -dut.port_b.m_flow, abs_tol: 1.0e-9}
+  - id: kv-law
+    description: The flow equals effective Kv times sqrt(dp / specific gravity) at every opening.
+    scenario: kv-at-1-bar
+    sweep: {variable: dut.opening, from: 0, to: 1, steps: 11}
+    check:
+      type: equal
+      left: dut.volume_flow
+      right: "dut.effective_kv * sqrt(dut.pressure_drop * 1000 / 998.2) * 1000 / 60"
+      rel_tol: 1.0e-5
+  - id: linear-characteristic
+    description: For the linear characteristic the effective Kv is kv * (l + (1 - l) * position).
+    scenario: kv-at-1-bar
+    sweep: {variable: dut.opening, from: 0, to: 1, steps: 6}
+    check:
+      type: equal
+      left: dut.effective_kv
+      right: "dut.kv * (dut.leakage + (1 - dut.leakage) * dut.position)"
+      rel_tol: 1.0e-12
+  - id: equal-percentage-monotonic
+    description: The equal-percentage valve also passes more flow as it opens.
+    scenario: equal-percentage-half-open
+    sweep: {variable: dut.opening, from: 0, to: 1, steps: 11}
+    check: {type: monotonic, variable: dut.volume_flow, direction: increasing, strict: true}
+  - id: high-pressure-drop-warning
+    description: The high_pressure_drop warning is raised exactly when the drop exceeds 3 bar.
+    scenario: kv-at-1-bar
+    sweep: {variable: src.pressure, from: 0, to: 6, steps: 13}
+    check: {type: warning_iff, code: dut.high_pressure_drop, condition: "dut.pressure_drop > 3"}
+implementations:
+  reference: {python: "worldparts.components.valves:TwoWayValve"}
+  modelica:
+    class: Buildings.Fluid.Actuators.Valves.TwoWayLinear
+    library: Modelica Buildings Library
+    notes: Use TwoWayEqualPercentage or TwoWayQuickOpening for the other characteristics; Buildings parameterises by Kv or nominal flow and pressure drop. Binding not yet cross-validated in v0.1.
+  wntr:
+    element: TCV
+    notes: Throttle control valve whose minor-loss coefficient reproduces the effective Kv at a nominal diameter.
+provenance:
+  authors: [worldparts contributors]
+  sources:
+    - title: "IEC 60534-2-1: Industrial-process control valves - Part 2-1: Flow capacity - Sizing equations for fluid flow under installed conditions"
+      notes: Definition of the flow coefficient Kv (m3/h of water at 1 bar with specific gravity relative to water at 1000 kg/m3).
+    - title: Modelica Buildings Library
+      url: https://simulationresearch.lbl.gov/modelica/
+      notes: Valve characteristics (linear, equal percentage, quick opening) with leakage, and regularised flow functions.
+    - title: Modelica Standard Library (Modelica.Fluid.Utilities.regSquare)
+      url: https://github.com/modelica/ModelicaStandardLibrary
+      notes: Regularisation of the square law near zero flow.
+  data:
+    acquisition: generic
+    notes: Default parameters (Kv 2.5 m3/h, rangeability 50, leakage 1e-4) are generic illustrative values for a small DN15 to DN20 valve, not a specific product.
+  license: Apache-2.0
+  data_license: CC0-1.0

@@ -1,0 +1,135 @@
+manifest_version: "0.1"
+id: worldparts.hydraulic.drain
+version: "0.1.0"
+name: Drain
+summary: Open discharge to atmosphere such as a basin, open channel or floor drain.
+description: |
+  An open outlet at atmospheric pressure: whatever flows into the port leaves the network.
+  If the network pressure falls below atmospheric (for example on the suction side of a
+  pump or behind a supply below 0 bar gauge), water is drawn back from the drain at the
+  drain `temperature`; the `backflow` warning flags this because in a real installation it
+  means siphoning of possibly contaminated water.
+
+  Internally the drain is a fixed node at atmospheric pressure joined to its port by a
+  near-ideal linear branch (about 1e-6 Pa per kg/s, so less than 1e-6 bar up to 100 m3/s).
+  It also provides a pressure reference.
+
+  Not modelled: the head of water in a basin, air entrainment and free-surface flow.
+tags: [boundary, sink, drain, outlet, atmosphere]
+classification:
+  other: {role: atmospheric outlet boundary condition}
+fidelity:
+  level: lumped_quasi_steady
+  assumptions:
+    - Incompressible water with constant properties (998.2 kg/m3, 1.002e-3 Pa s, 4182 J/(kg K)).
+    - The outlet is at atmospheric pressure (101325 Pa) and at the common datum.
+    - Backflow water is drawn at the drain temperature.
+ports:
+  - {name: port, type: fluid, medium: water, description: Connection to the network.}
+parameters:
+  - name: temperature
+    description: Temperature of water drawn back from the drain (only used on backflow).
+    type: number
+    unit: degC
+    default: 20
+    minimum: 0.5
+    maximum: 99
+observables:
+  - {name: volume_flow, unit: L/min, description: Volume flow into the drain (negative on backflow).}
+modes:
+  - {name: receiving, condition: "volume_flow > 0.01", description: Water discharges into the drain.}
+  - {name: backflow, condition: "volume_flow < -0.01", description: Water is drawn back from the drain into the network.}
+  - {name: idle, condition: "true", description: No significant flow.}
+envelope:
+  - code: backflow
+    severity: warning
+    condition: "volume_flow < -0.01"
+    message: Water is drawn back from the drain because the network is below atmospheric pressure; in a real installation this is back-siphonage.
+scenarios:
+  - id: receiving
+    description: A 2 bar supply discharges through a fully open Kv 2.5 valve into the drain.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 2}}
+        - {name: v, type: valve}
+        - {name: dut, type: drain}
+      connections:
+        - [src.port, v.port_a]
+        - [v.port_b, dut.port]
+    expect:
+      - {variable: dut.volume_flow, value: 58.9788, abs_tol: 0.01}
+      - {variable: dut.port.p, value: 0.0, abs_tol: 1.0e-5}
+      - {mode: dut, is: receiving}
+      - {warning: dut.backflow, present: false}
+  - id: backflow
+    description: A supply below atmospheric pressure (-0.5 bar gauge) draws water back from the drain through a pipe.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: -0.5}}
+        - {name: p, type: pipe}
+        - {name: dut, type: drain, parameters: {temperature: 25}}
+      connections:
+        - [src.port, p.port_a]
+        - [p.port_b, dut.port]
+    expect:
+      - {variable: dut.volume_flow, max: -1}
+      - {variable: src.port.T, value: 25.0, abs_tol: 1.0e-9}
+      - {mode: dut, is: backflow}
+      - {warning: dut.backflow, present: true}
+  - id: idle
+    description: A supply at 0 bar gauge produces no flow into the drain.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0}}
+        - {name: v, type: valve}
+        - {name: dut, type: drain}
+      connections:
+        - [src.port, v.port_a]
+        - [v.port_b, dut.port]
+    expect:
+      - {variable: dut.volume_flow, value: 0.0, abs_tol: 1.0e-6}
+      - {mode: dut, is: idle}
+contracts:
+  - id: backflow-warning
+    description: The backflow warning is raised exactly when water flows out of the drain.
+    scenario: backflow
+    sweep: {variable: src.pressure, from: -0.9, to: 1, steps: 20}
+    check: {type: warning_iff, code: dut.backflow, condition: "dut.volume_flow < -0.01"}
+  - id: mass-conservation
+    description: What the supply delivers arrives at the drain.
+    scenario: receiving
+    sweep: {variable: src.pressure, from: -0.9, to: 5, steps: 12}
+    check: {type: equal, left: dut.volume_flow, right: src.volume_flow, abs_tol: 1.0e-9, rel_tol: 1.0e-9}
+  - id: inflow-increases-with-supply-pressure
+    description: Raising the upstream pressure never reduces the flow into the drain.
+    scenario: receiving
+    sweep: {variable: src.pressure, from: -0.9, to: 5, steps: 12}
+    check: {type: monotonic, variable: dut.volume_flow, direction: increasing, strict: true}
+  - id: port-at-atmosphere
+    description: The drain port stays at atmospheric pressure (0 bar gauge) whatever the flow.
+    scenario: receiving
+    sweep: {variable: src.pressure, from: -0.9, to: 5, steps: 12}
+    check: {type: bounds, variable: dut.port.p, min: -1.0e-5, max: 1.0e-5}
+implementations:
+  reference: {python: "worldparts.components.boundaries:Drain"}
+  modelica:
+    class: Modelica.Fluid.Sources.Boundary_pT
+    library: Modelica Standard Library 4.0.0
+    notes: Set p to 101325 Pa and T to the drain temperature.
+  wntr:
+    element: Reservoir
+    notes: Reservoir at zero gauge head at the common datum.
+provenance:
+  authors: [worldparts contributors]
+  sources:
+    - title: Modelica Standard Library (Modelica.Fluid.Sources.Boundary_pT)
+      url: https://github.com/modelica/ModelicaStandardLibrary
+      notes: Ideal pressure and temperature boundary condition.
+    - title: EPANET
+      url: https://github.com/OpenWaterAnalytics/EPANET
+      notes: Reservoirs as fixed-head boundaries in water network models.
+  data:
+    acquisition: generic
+    notes: The default backflow temperature (20 degC) is a generic illustrative value.
+  license: Apache-2.0
+  data_license: CC0-1.0

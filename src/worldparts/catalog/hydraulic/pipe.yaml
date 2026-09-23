@@ -1,0 +1,215 @@
+manifest_version: "0.1"
+id: worldparts.hydraulic.pipe
+version: "0.1.0"
+name: Pipe
+summary: Straight pipe with Darcy-Weisbach friction (Churchill 1977 friction factor), minor losses and static head.
+description: |
+  A straight pipe of length `length` and inner diameter `diameter` between `port_a` and
+  `port_b`. The pressure drop is
+
+  `dp = f(Re, roughness/D) * L/D * rho * v * |v| / 2 + K * rho * v * |v| / 2 + rho * g * dz`
+
+  with the Darcy friction factor `f` from Churchill (1977), which is continuous across the
+  laminar, transitional and turbulent regimes, `K` the sum of minor-loss coefficients and
+  `dz` the elevation of `port_b` above `port_a`. The friction term is written as
+  `G(Re) * L * mu * v / (2 * D**2)` with `G = f * Re`, so it tends to the Hagen-Poiseuille
+  law at low Reynolds numbers and the law stays strictly monotone through zero flow.
+
+  The roughness must be less than half the diameter; relative roughness above 0.05 (the
+  fitted range of the correlation) raises the `high_relative_roughness` warning. Static head
+  can take the modelled pressure below the vapour pressure of water, even below zero
+  absolute; the `below_vapour_pressure` warning flags that, because a real pipe would
+  cavitate or its water column would separate.
+
+  Not modelled: heat loss, compressibility and water hammer, entrance-length effects,
+  ageing of the pipe wall, cavitation and column separation, and the uncertainty of the
+  laminar-turbulent transition (the Churchill correlation gives one smooth curve through it).
+tags: [pipe, friction, darcy-weisbach, churchill, head-loss, elevation]
+classification:
+  ifc: {entity: IfcPipeSegment, predefined_type: RIGIDSEGMENT}
+fidelity:
+  level: lumped_quasi_steady
+  assumptions:
+    - Incompressible water with constant properties (998.2 kg/m3, 1.002e-3 Pa s).
+    - Fully developed flow; Churchill (1977) friction factor in all regimes.
+    - Minor losses lumped into one coefficient K applied to the pipe velocity.
+    - Adiabatic pipe (no heat loss); rigid wall (no water hammer).
+ports:
+  - {name: port_a, type: fluid, medium: water, description: First end; forward flow enters here.}
+  - {name: port_b, type: fluid, medium: water, description: Second end; forward flow leaves here.}
+parameters:
+  - name: length
+    description: Pipe length.
+    type: number
+    unit: m
+    default: 5
+    minimum: 0.01
+    maximum: 100000
+  - name: diameter
+    description: Inner diameter.
+    type: number
+    unit: mm
+    default: 16
+    minimum: 1
+    maximum: 5000
+  - name: roughness
+    description: Absolute wall roughness (0.0015 mm is drawn copper or plastic; 0.045 mm commercial steel). Must be less than half the diameter.
+    type: number
+    unit: mm
+    default: 0.0015
+    minimum: 0
+    maximum: 10
+  - name: minor_loss
+    description: Sum of minor-loss coefficients K (bends, fittings) applied to the pipe velocity.
+    type: number
+    unit: "1"
+    default: 0
+    minimum: 0
+    maximum: 1000
+  - name: height_difference
+    description: Elevation of port_b minus elevation of port_a.
+    type: number
+    unit: m
+    default: 0
+    minimum: -1000
+    maximum: 1000
+observables:
+  - {name: volume_flow, unit: L/min, description: Volume flow from port_a to port_b.}
+  - {name: velocity, unit: m/s, description: Mean velocity in the direction port_a to port_b.}
+  - {name: pressure_drop, unit: bar, pressure_reference: difference, description: Pressure at port_a minus pressure at port_b (includes static head).}
+  - {name: reynolds, unit: "1", description: Reynolds number (non-negative).}
+  - {name: friction_factor, unit: "1", description: Darcy friction factor (undefined at zero flow).}
+modes:
+  - {name: stagnant, condition: "abs(volume_flow) < 0.001", description: No significant flow.}
+  - {name: flowing, condition: "true", description: Water flows through the pipe.}
+envelope:
+  - code: high_velocity
+    severity: warning
+    condition: "abs(velocity) > 3"
+    message: Velocity above 3 m/s; expect noise, erosion and water hammer risk in a real installation (typical design limit 1.5 to 3 m/s).
+  - code: high_relative_roughness
+    severity: warning
+    condition: "roughness / diameter > 0.05"
+    message: Relative roughness above 0.05 is outside the range the Churchill (1977) friction factor was fitted to; the friction is extrapolated.
+warnings:
+  - code: below_vapour_pressure
+    severity: warning
+    description: The pressure at a pipe end is below the vapour pressure of water (static head in a riser or siphon, or pump suction). A real pipe would cavitate or its water column would separate, so the result is not physical.
+scenarios:
+  - id: laminar-poiseuille
+    description: 10 m of 16 mm pipe under 50 Pa; laminar flow matches Hagen-Poiseuille, Q = pi D^4 dp / (128 mu L).
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 50 Pa}}
+        - {name: dut, type: pipe, parameters: {length: 10, diameter: 16}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.port_a]
+        - [dut.port_b, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 0.481589, rel_tol: 0.002}
+      - {variable: dut.reynolds, value: 636.1, rel_tol: 0.002}
+      - {mode: dut, is: flowing}
+  - id: turbulent-1-bar
+    description: Default pipe (5 m, 16 mm, smooth) between 1 bar gauge and atmosphere; turbulent flow (Re about 93000). The expected flow was computed independently with fluids.friction.Churchill_1977.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 1}}
+        - {name: dut, type: pipe}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.port_a]
+        - [dut.port_b, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 70.7062, abs_tol: 0.01}
+      - {variable: dut.pressure_drop, value: 1.0, abs_tol: 1.0e-5}
+      - {mode: dut, is: flowing}
+      - {warning: dut.high_velocity, present: true}
+  - id: hydrostatic-riser
+    description: A 10 m riser fed at 3 bar with its top end capped; the top pressure is lower by rho g dz.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 3}}
+        - {name: dut, type: pipe, parameters: {length: 12, height_difference: 10}}
+      connections:
+        - [src.port, dut.port_a]
+    expect:
+      - {variable: dut.port_b.p, value: 2.0211002, abs_tol: 1.0e-6}
+      - {variable: dut.volume_flow, value: 0.0, abs_tol: 1.0e-6}
+      - {mode: dut, is: stagnant}
+      - {warning: dut.below_vapour_pressure, present: false}
+  - id: riser-below-vapour-pressure
+    description: A capped 30 m riser fed at 0 bar gauge; the top would sit at 1.01325 - 998.2 * 9.80665 * 30 / 1e5 = -1.92345 bar absolute (-2.93670 bar gauge), below the vapour pressure, so the warning is raised.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0}}
+        - {name: dut, type: pipe, parameters: {length: 30, height_difference: 30}}
+      connections:
+        - [src.port, dut.port_a]
+    expect:
+      - {variable: dut.port_b.p, value: -2.93670, abs_tol: 1.0e-5}
+      - {warning: dut.below_vapour_pressure, present: true}
+contracts:
+  - id: flow-increases-with-pressure
+    description: Raising the upstream pressure never reduces the flow.
+    scenario: turbulent-1-bar
+    sweep: {variable: src.pressure, from: 0.01, to: 5, steps: 12}
+    check: {type: monotonic, variable: dut.volume_flow, direction: increasing, strict: true}
+  - id: flow-decreases-with-length
+    description: A longer pipe passes less flow at the same pressure difference.
+    scenario: turbulent-1-bar
+    sweep: {variable: dut.length, from: 1, to: 100, steps: 10}
+    check: {type: monotonic, variable: dut.volume_flow, direction: decreasing, strict: true}
+  - id: mass-conservation
+    description: Mass entering port_a leaves through port_b.
+    scenario: turbulent-1-bar
+    sweep: {variable: src.pressure, from: -0.9, to: 5, steps: 12}
+    check: {type: equal, left: dut.port_a.m_flow, right: -dut.port_b.m_flow, abs_tol: 1.0e-9}
+  - id: laminar-friction-factor
+    description: In laminar flow the friction factor equals 64 / Re.
+    scenario: laminar-poiseuille
+    sweep: {variable: src.pressure, values: [5 Pa, 20 Pa, 50 Pa, 80 Pa]}
+    check: {type: equal, left: dut.friction_factor, right: 64 / dut.reynolds, rel_tol: 0.001}
+  - id: high-velocity-warning
+    description: The high_velocity warning is raised exactly when the speed exceeds 3 m/s.
+    scenario: turbulent-1-bar
+    sweep: {variable: src.pressure, from: 0.1, to: 6, steps: 12}
+    check: {type: warning_iff, code: dut.high_velocity, condition: "abs(dut.velocity) > 3"}
+  - id: vapour-pressure-warning
+    description: The below_vapour_pressure warning is raised exactly when the capped top of the riser falls below the vapour pressure of water at 20 degC (0.02339 bar absolute by IAPWS-IF97, -0.98986 bar gauge).
+    scenario: riser-below-vapour-pressure
+    sweep: {variable: src.pressure, from: 1.5, to: 3.5, steps: 11}
+    check: {type: warning_iff, code: dut.below_vapour_pressure, condition: "dut.port_b.p < -0.98986"}
+  - id: velocity-consistent-with-flow
+    description: Velocity times the cross-section equals the volume flow.
+    scenario: turbulent-1-bar
+    sweep: {variable: dut.diameter, from: 5, to: 50, steps: 6}
+    check:
+      type: equal
+      left: dut.velocity * 3.141592653589793 * (dut.diameter / 1000) ** 2 / 4 * 60000
+      right: dut.volume_flow
+      rel_tol: 1.0e-9
+implementations:
+  reference: {python: "worldparts.components.pipe:Pipe"}
+  modelica:
+    class: Modelica.Fluid.Pipes.StaticPipe
+    library: Modelica Standard Library 4.0.0
+    notes: Use a detailed wall-friction model; MSL uses a different transition treatment than Churchill (1977), so small differences are expected near Re 2000 to 4000.
+  wntr:
+    element: Pipe
+    notes: Darcy-Weisbach headloss with roughness in mm; EPANET uses Swamee-Jain rather than Churchill in turbulent flow.
+provenance:
+  authors: [worldparts contributors]
+  sources:
+    - title: "Churchill, S. W. (1977). Friction-factor equation spans all fluid-flow regimes. Chemical Engineering, 84(24), 91-92."
+      notes: Friction factor used in all regimes.
+    - title: "fluids: fluid dynamics component of the Chemical Engineering Design Library (ChEDL)"
+      url: https://github.com/CalebBell/fluids
+      notes: Reference implementation (fluids.friction.Churchill_1977) used in the worldparts test suite.
+    - title: "White, F. M. Fluid Mechanics. McGraw-Hill."
+      notes: Darcy-Weisbach equation, Hagen-Poiseuille law and minor losses.
+  data:
+    acquisition: generic
+    notes: Default geometry (5 m of 16 mm bore, 0.0015 mm roughness) is a generic illustrative domestic branch pipe, not a specific product.
+  license: Apache-2.0
+  data_license: CC0-1.0
