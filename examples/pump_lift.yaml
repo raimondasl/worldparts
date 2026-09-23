@@ -1,0 +1,45 @@
+worldparts_system: "0.1"
+name: rooftop lift
+description: >-
+  A booster pump lifts water from a ground tank to a rooftop tank 25 m higher through 60 m
+  of 50 mm steel pipe. The pump curve is an illustrative 2900 rpm end-suction pump with its
+  best-efficiency point near 18 m3/h at 35 m; at full speed it delivers about 18.7 m3/h.
+  The tanks are filled and emptied in batches, so the ground tank's inlet and the rooftop
+  tank's outlet are capped (check() lists them as unconnected ports).
+components:
+  - name: ground
+    type: tank
+    parameters: {diameter: 2, height: 2, initial_level: 1.5}
+  - name: pump
+    type: centrifugal_pump
+    parameters:
+      head_curve: [[0, 44], [6, 43], [12, 40], [18, 35], [24, 28]]
+      power_curve: [[0, 1.2], [6, 1.7], [12, 2.2], [18, 2.65], [24, 3.0]]
+      npsh_curve: [[6, 1.2], [12, 1.6], [18, 2.3], [24, 3.3]]
+      motor_power: 4
+  # Discharge valve, fully open at the design point; throttling it is the alternative to
+  # speed control.
+  - name: valve
+    type: valve
+    parameters: {kv: 150}
+  # Steel riser: 0.045 mm roughness; minor_loss 3 = entry, bends, check valve and the
+  # entry into the rooftop tank. The rooftop tank's bottom is 25 m above the ground tank's.
+  - name: riser
+    type: pipe
+    parameters:
+      length: 60
+      diameter: 50
+      roughness: 0.045
+      minor_loss: 3
+      height_difference: 25
+  - name: roof
+    type: tank
+    parameters: {diameter: 2.5, height: 2, initial_level: 0.3}
+connections:
+  - [ground.outlet, pump.inlet]
+  - [pump.outlet, valve.port_a]
+  - [valve.port_b, riser.port_a]
+  - [riser.port_b, roof.inlet]
+simulation:
+  duration: 20 min
+  step: 10 s

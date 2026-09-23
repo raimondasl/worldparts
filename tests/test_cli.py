@@ -245,6 +245,57 @@ def test_simulate_needs_a_duration(capsys: pytest.CaptureFixture[str], tmp_path:
     assert code == 2 and "duration" in err
 
 
+def test_solve_and_simulate_units(capsys: pytest.CaptureFixture[str], line_file: Path) -> None:
+    """--units PATTERN=UNIT converts reported values, as the MCP tools' units argument."""
+    q = expected_flow()  # L/min
+    code, out, err = run_cli(capsys, "solve", str(line_file), "--units", "*.volume_flow=m3/h",
+                             "--units", "v.port_a.p=bar absolute")  # fmt: skip
+    assert code == 0, err
+    rows = {line.split()[0]: line.split()[1:] for line in out.splitlines() if line.strip()}
+    assert float(rows["v.volume_flow"][0]) == pytest.approx(q * 0.06, rel=1e-5)
+    assert rows["v.volume_flow"][1] == "m3/h" and rows["p.volume_flow"][1] == "m3/h"
+    assert rows["v.port_a.p"][1:] == ["bar", "(absolute)"]
+
+    code, out, _ = run_cli(capsys, "solve", str(line_file), "--json", "--units",
+                           "*.volume_flow=m3/h")  # fmt: skip
+    data = json.loads(out)["values"]
+    assert data["v.volume_flow"]["unit"] == "m3/h"
+    assert data["v.volume_flow"]["value"] == pytest.approx(q * 0.06, rel=1e-9)
+    assert "v.kv" in data  # --json still reports everything
+
+    code, out, _ = run_cli(capsys, "simulate", str(line_file), "--json", "--var", "v",
+                           "--units", "v.volume_flow=L/s")  # fmt: skip
+    sim = json.loads(out)
+    assert sim["units"]["v.volume_flow"] == "L/s"
+    assert sim["series"]["v.volume_flow"][0] == pytest.approx(q / 60, rel=1e-6)
+    assert sim["final"]["values"]["v.volume_flow"]["unit"] == "L/s"
+
+    for bad in ("v.volume_flow", "*.nope=m3/h", "v.volume_flow=bar"):
+        code, _, err = run_cli(capsys, "solve", str(line_file), "--units", bad)
+        assert code == 2 and "error:" in err
+
+
+def test_simulate_without_block_names_the_option(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    doc = {k: v for k, v in LINE.items() if k != "simulation"}
+    path = tmp_path / "nosim.yaml"
+    path.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    code, _, err = run_cli(capsys, "simulate", str(path))
+    assert code == 2
+    assert "no 'simulation' block" in err and "--duration '10 min'" in err
+    assert "simulation: {duration: 10 min, step: 1 s}" in err
+    code, _, err = run_cli(capsys, "simulate", str(path), "--duration", "5 s")
+    assert code == 0, err
+
+
+def test_describe_shows_table_column_limits(capsys: pytest.CaptureFixture[str]) -> None:
+    code, out, _ = run_cli(capsys, "describe", "centrifugal_pump")
+    assert code == 0
+    row = next(line for line in out.splitlines() if line.strip().startswith("head_curve"))
+    assert "flow [0, inf], head [0, inf]" in row
+
+
 def test_select_paths_helpers() -> None:
     s = wp.System.from_dict(LINE)
     default = cli.select_paths(s, None)
@@ -280,3 +331,66 @@ def test_uv_run_worldparts_list() -> None:
     )
     assert proc.returncode == 0, proc.stderr
     assert "worldparts.hydraulic.valve" in proc.stdout
+
+
+# ----------------------------------------------------------------------------------------
+# export (WNTR adapter; skipped without the optional wntr package)
+# ----------------------------------------------------------------------------------------
+def test_export_wntr_inp(capsys: pytest.CaptureFixture[str], line_file: Path) -> None:
+    pytest.importorskip("wntr")
+    code, out, err = run_cli(capsys, "export", str(line_file), "--target", "wntr_inp")
+    assert code == 0, err
+    assert "[PIPES]" in out and "[VALVES]" in out and "D-W" in out and "CMH" in out
+    assert "worldparts system 'line'" in out
+
+    target = line_file.with_suffix(".inp")
+    code, out, err = run_cli(
+        capsys, "export", str(line_file), "--target", "wntr_inp", "-o", str(target)
+    )
+    assert code == 0, err
+    assert f"Wrote {target}" in out
+    assert "[RESERVOIRS]" in target.read_text(encoding="utf-8")
+
+
+def test_export_json_and_compare(capsys: pytest.CaptureFixture[str], line_file: Path) -> None:
+    pytest.importorskip("wntr")
+    code, out, err = run_cli(
+        capsys, "export", str(line_file), "--target", "wntr_inp", "--compare", "--json"
+    )
+    assert code == 0, err
+    data = json.loads(out)
+    assert data["target"] == "wntr_inp" and data["file"] is None
+    assert "[JUNCTIONS]" in data["inp"]
+    comparison = data["comparison"]
+    assert comparison["flow_unit"] == "m3/h"
+    v = next(c for c in comparison["links"] if c["path"] == "v.volume_flow")
+    assert v["worldparts"] == pytest.approx(expected_flow() * 60 / 1000, rel=1e-9)
+    assert comparison["max_flow_rel_diff"] < 2e-3
+
+    # Text mode: the .inp goes to stdout and the comparison to stderr.
+    code, out, err = run_cli(capsys, "export", str(line_file), "--target", "wntr_inp",
+                             "--compare")  # fmt: skip
+    assert code == 0
+    assert "[PIPES]" in out and "Known divergence sources" in err
+    assert "use -o FILE to save it" in err
+    assert "element" in err and "node id" in err
+
+
+def test_export_errors(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    pytest.importorskip("wntr")
+    doc = {
+        "worldparts_system": "0.1",
+        "name": "bath",
+        "components": [
+            {"name": "mains", "type": "supply"},
+            {"name": "tap", "type": "mixing_faucet"},
+        ],
+        "connections": [["mains.port", "tap.cold"]],
+    }
+    path = tmp_path / "bath.yaml"
+    path.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    code, _, err = run_cli(capsys, "export", str(path), "--target", "wntr_inp")
+    assert code == 2
+    assert "tap (mixing_faucet)" in err and "Supported components" in err
+    with pytest.raises(SystemExit):
+        cli.main(["export", str(path), "--target", "modelica"])

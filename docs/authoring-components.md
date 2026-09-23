@@ -448,5 +448,5 @@ calculations such as the pump operating point) in `tests/test_<family>.py`.
 - [ ] Code-emitted warning codes are listed under `warnings`.
 - [ ] Two or more scenarios, three or more contracts, one mass-conservation `equal` check.
 - [ ] Provenance names real sources; default data is marked `generic` or `estimate`.
-- [ ] `uv run ruff check src tests`, `uv run ruff format --check src tests` and
-      `uv run pytest` pass.
+- [ ] `uv run ruff check src tests examples tools`,
+      `uv run ruff format --check src tests examples tools` and `uv run pytest` pass.

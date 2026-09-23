@@ -1,7 +1,7 @@
 [project]
 name = "worldparts"
 version = "0.1.0"
-description = "Agent-ready physical component models: a manifest spec, a tested catalogue of pumps, valves, faucets, pipes and tanks, a lightweight solver, and an MCP server."
+description = "Agent-ready water components: a manifest spec, a tested catalogue of pumps, valves, pipes, tanks, media filters and UV reactors, a lightweight hydraulic solver and an MCP server."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -16,7 +16,8 @@ keywords = [
     "hydraulics",
     "water",
     "modelica",
-    "fmi",
+    "water-treatment",
+    "epanet",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",

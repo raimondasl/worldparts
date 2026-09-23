@@ -1,0 +1,73 @@
+worldparts_system: "0.1"
+name: purification skid
+description: >-
+  Raw-water tank, centrifugal pump, throttling valve, pressure sand filter and UV reactor,
+  lifting treated water 16 m to the free-discharge inlet of a clearwell. A gravity intake
+  main keeps the raw-water tank topped up. Design point: about 22 m3/h at 91 % of the pump's
+  best-efficiency flow, UV dose about 49 mJ/cm2 against 40 required, no warnings.
+components:
+  # Gravity intake main (0.41 bar gauge at its end) keeping the raw-water tank topped up.
+  - name: intake
+    type: supply
+    parameters: {pressure: 0.41 bar, temperature: 12 degC}
+  - name: feed
+    type: pipe
+    parameters: {length: 50, diameter: 80, roughness: 0.045, minor_loss: 1}
+  - name: raw
+    type: tank
+    parameters: {diameter: 6, height: 4, initial_level: 3, initial_temperature: 12 degC}
+  # Short suction line, pump and throttling valve (kv 40 m3/h, trimmed to 80 % open).
+  - name: suction
+    type: pipe
+    parameters: {length: 3, diameter: 80, roughness: 0.045, minor_loss: 0.5}
+  - name: pump
+    type: centrifugal_pump
+  - name: valve
+    type: valve
+    parameters: {kv: 40}
+    inputs: {opening: 0.8}
+  # Pressure sand filter: 0.5 bar clean at 20 m3/h, backwash at 1.5 bar.
+  - name: filter
+    type: media_filter
+    parameters:
+      rated_flow: 20
+      clean_pressure_drop: 0.5
+      change_pressure_drop: 1.5
+  # UV reactor with the catalogue defaults: 15 L, 20 mW/cm2 average fluence rate, 40 mJ/cm2.
+  - name: uv
+    type: uv_reactor
+  # 40 m of 65 mm pipe rising 16 m to the clearwell; minor_loss 1 is the free-discharge exit.
+  - name: riser
+    type: pipe
+    parameters:
+      length: 40
+      diameter: 65
+      roughness: 0.045
+      height_difference: 16
+      minor_loss: 1
+  - name: clearwell
+    type: drain
+connections:
+  - [intake.port, feed.port_a]
+  - [feed.port_b, raw.inlet]
+  - [raw.outlet, suction.port_a]
+  - [suction.port_b, pump.inlet]
+  - [pump.outlet, valve.port_a]
+  - [valve.port_b, filter.inlet]
+  - [filter.outlet, uv.inlet]
+  - [uv.outlet, riser.port_a]
+  - [riser.port_b, clearwell.port]
+# Default run for `worldparts simulate`: a 48 h filter run, the media clogging in steps
+# every 6 h (the Python example ramps it every 30 min).
+simulation:
+  duration: 48 h
+  step: 30 min
+  events:
+    - {at: 6 h, set: {filter.clogging: 0.1125}}
+    - {at: 12 h, set: {filter.clogging: 0.225}}
+    - {at: 18 h, set: {filter.clogging: 0.3375}}
+    - {at: 24 h, set: {filter.clogging: 0.45}}
+    - {at: 30 h, set: {filter.clogging: 0.5625}}
+    - {at: 36 h, set: {filter.clogging: 0.675}}
+    - {at: 42 h, set: {filter.clogging: 0.7875}}
+    - {at: 48 h, set: {filter.clogging: 0.9}}

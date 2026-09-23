@@ -2,7 +2,7 @@
 
 This document is the architecture contract for worldparts v0.1. It fixes the concepts, conventions, file layout, public APIs and the exact interface of every v0.1 component. Code, manifests and docs must agree with it; when they cannot, change this document first.
 
-The motivation and evidence live in the research report, [World model libraries for AI agents](research/world-model-libraries-for-ai-agents.md). The one-line thesis: component physics for pumps, valves and faucets already exists, but nothing packages it so an AI agent can **discover, parameterize, compose, query and simulate** it and know when a result is wrong. worldparts is that packaging layer.
+The motivation and evidence live in the research report, [World model libraries for AI agents](research/world-model-libraries-for-ai-agents.md). The one-line thesis: component physics for pumps, valves, filters and tanks already exists, but nothing packages it so an AI agent can **discover, parameterize, compose, query and simulate** it and know when a result is wrong. worldparts is that packaging layer.
 
 ## 1. Goals and non-goals
 
@@ -25,6 +25,8 @@ Why a reference solver at all, when the report says "wrap the physics, do not bu
 pyproject.toml                  uv-managed project (uv_build backend)
 src/worldparts/
   __init__.py                   public API re-exports, __version__
+  errors.py                     WorldpartsError and its subclasses
+  py.typed                      marks the package as typed
   units.py                      pint registry, parsing, SI and display conversion, gauge handling
   media.py                      water properties (constants) and vapour pressure
   expressions.py                safe expression evaluator for modes, envelopes and contracts
@@ -47,14 +49,17 @@ src/worldparts/
   contracts.py                  run manifest scenarios and contracts, catalogue self-test
   mcp_server.py                 MCP server (MCP Python SDK v2, `from mcp.server import MCPServer`)
   cli.py                        `worldparts` command-line interface (argparse)
+  adapters/__init__.py          optional-dependency helpers (wntr_available, MissingDependencyError)
   adapters/wntr_adapter.py      export to WNTR and cross-validate (optional extra `wntr`)
   schemas/component-manifest.schema.json
   schemas/system.schema.json
   catalog/hydraulic/*.yaml      the 11 v0.1 manifests
 tests/                          pytest; one test module per source module or component family
-examples/                       runnable scripts and system documents
+examples/                       runnable scripts and system documents (purification skid, pump lift, domestic hot water)
+tools/gen_catalog_docs.py       generates docs/catalog.md from the manifests (--check in tests)
 spec/component-manifest.md      prose specification of the manifest format
-docs/                           design (this file), research report, roadmap
+docs/                           design (this file), catalog.md (generated), authoring-components.md,
+                                wntr-adapter.md, agent-trial.md, roadmap, research report
 ```
 
 Components are bound to manifests by import path (`implementations.reference.python: "worldparts.components.pump:CentrifugalPump"`), so there is no shared registry file to edit.
@@ -240,16 +245,19 @@ Revised after verification: `Component.time_step` is the length of the step that
 ```python
 import worldparts as wp
 
-s = wp.System("bathroom")
-s.add("mains", "supply", pressure="3.5 bar", temperature="12 degC")     # type by full id or short alias
-s.add("faucet", "worldparts.hydraulic.mixing_faucet", inputs={"lift": 1.0, "mix": 0.5})
-s.connect("mains.port", "faucet.cold")    # connecting several ports to one node forms a junction (tee)
-s.set("faucet.lift", 0.5)                 # inputs or parameters; plain numbers are in the declared unit
+s = wp.System("rooftop lift")
+s.add("tank", "tank", initial_level="1.5 m")              # type by full id or short alias
+s.add("pump", "worldparts.hydraulic.centrifugal_pump")
+s.add("riser", "pipe", length="60 m", diameter="50 mm", height_difference="25 m")
+s.add("roof", "drain")
+s.connect("tank.outlet", "pump.inlet")    # connecting several ports to one node forms a junction (tee)
+s.connect("pump.outlet", "riser.port_a"); s.connect("riser.port_b", "roof.port")
+s.set("pump.speed", 0.9)                  # inputs or parameters; plain numbers are in the declared unit
 issues = s.check()                        # list[Issue]: severity error|warning, code, message, where
 r = s.solve()                             # SolveResult
-r["faucet.flow"]                          # float in the declared display unit (L/min)
-r.get("faucet.flow", unit="L/s")
-sim = s.simulate(duration="10 min", step="1 s", events=[{"at": "60 s", "set": {"faucet.lift": 0}}])
+r["pump.volume_flow"]                     # float in the declared display unit (m3/h)
+r.get("pump.volume_flow", unit="L/s")
+sim = s.simulate(duration="30 min", step="10 s", events=[{"at": "10 min", "set": {"pump.speed": 1.0}}])
 doc = s.to_dict(); s2 = wp.System.from_dict(doc)
 ```
 
@@ -483,11 +491,25 @@ Revised after the agent usability trial:
 ## 10. CLI
 
 `worldparts list [QUERY]`, `worldparts describe COMPONENT`, `worldparts validate [PATHS...]` (schema-validate manifests and system documents), `worldparts check-catalog [--component ID]` (run all scenarios and contracts, non-zero exit on failure), `worldparts solve SYSTEM.yaml [--var PATH ...] [--json]`, `worldparts simulate SYSTEM.yaml [--duration] [--step] [--var PATH ...] [--json]`, `worldparts export SYSTEM.yaml --target wntr_inp`, `worldparts mcp`.
-Revised after implementation: every command takes `--json`; exit code 0 on success, 1 when validation or a catalogue check fails, 2 for usage and worldparts errors. `validate` without paths checks the package catalogue and, for system documents, also runs the pre-flight check. `check-catalog` takes `--verbose`.
+Revised after implementation: every command except `mcp` takes `--json`; exit code 0 on success, 1 when validation or a catalogue check fails, 2 for usage and worldparts errors. `validate` without paths checks the package catalogue and, for system documents, also runs the pre-flight check. `check-catalog` takes `--verbose`.
+Revised for v0.1.0:
+- `worldparts solve|simulate ... [--units PATTERN=UNIT ...]`: repeatable, `*.name` wildcards, explicit paths win, a named path joins the selection; the CLI and the MCP `units` argument share one implementation.
+- `simulate` without `--duration` and without a `simulation` block in the document is a usage error (exit 2) that names `--duration`.
+- `worldparts export SYSTEM.yaml --target wntr_inp [-o FILE] [--compare] [--json]`: without `-o` the `.inp` goes to stdout and the comparison report to stderr; with `-o` the report goes to stdout.
+- `worldparts mcp` prints nothing and waits for a client on stdin.
 
 ## 11. WNTR adapter
 
 `to_wntr(system) -> wntr.network.WaterNetworkModel` and `compare_with_wntr(system) -> ComparisonReport`. Mapping: `supply` and `drain` to reservoirs (head from gauge pressure), `pipe` to a Darcy-Weisbach pipe, `valve` to a throttle control valve whose minor-loss coefficient reproduces the Kv at a nominal diameter, `centrifugal_pump` to a head pump with the fitted curve and speed setting, `tank` to a tank, `media_filter` and `uv_reactor` to equivalent resistances. Components WNTR cannot represent (the faucet's mixing, the heater's thermal map) are reported as unsupported rather than approximated silently. The comparison reports per-link flow and per-node pressure differences, and explains the expected sources of divergence (curve refitting, head-loss formula, units). This is the report's "load the same component into several hosts and measure divergence" experiment, in code.
+Revised after implementation and independent review:
+- Comparisons run EPANET only; WNTR 1.5's own simulator rejects Darcy-Weisbach head loss, so `simulator="wntr"` is a clear error.
+- Supplies and drains become reservoirs joined to their port junction by a zero-loss TCV (a network of reservoirs alone fails in EPANET). Elevations are assigned along `height_difference`; inconsistent heights around a loop are an error.
+- TCV and check-valve coefficients are corrected for the gravity constant built into EPANET's minor-loss formula, so those elements agree to better than 1e-5.
+- Pump curves use EPANET's three-point form when it reproduces the fitted quadratic exactly, otherwise a multi-point curve: 41 points to the run-out flow, continued with negative heads to 3 times the run-out flow (`PUMP_CURVE_EXTENT`); an operating flow beyond the curve is listed as an approximation. A stopped pump is exported closed.
+- Tanks are exported with EPANET's overflow option, so a full tank keeps receiving water as the steady worldparts tank does; a level up to 1 mm (`EMPTY_LEVEL`) is exported as 0.
+- The media filter is matched at the operating flow (default) or the rated flow; its linear media term cannot be represented, so off-reference divergence is expected and reported.
+- Extra public API: `translate`, `model_to_inp`, `WntrExportError`, `MissingDependencyError`, `wntr_available`; extra MCP tool `compare_with_wntr(system_id, reference="operating")`, registered with `export_system` only when wntr is installed.
+- Measured divergence on the four reference cases is at most 0.1 % in flow and 0.4 mbar in pressure; the largest divergence found is 8.3 % in pipe flow at Reynolds numbers 2000 to 4000, where EPANET interpolates its friction factor (documented in docs/wntr-adapter.md).
 
 ## 12. Quality bar
 

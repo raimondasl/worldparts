@@ -6,9 +6,10 @@ Commands::
     worldparts describe COMPONENT [--json]
     worldparts validate [PATHS...] [--json]
     worldparts check-catalog [--component ID] [--verbose] [--json]
-    worldparts solve SYSTEM.yaml [--var PATH ...] [--json]
+    worldparts solve SYSTEM.yaml [--var PATH ...] [--units PATTERN=UNIT ...] [--json]
     worldparts simulate SYSTEM.yaml [--duration D] [--step S] [--var PATH ...]
-                                    [--max-points N] [--json]
+                                    [--units PATTERN=UNIT ...] [--max-points N] [--json]
+    worldparts export SYSTEM.yaml --target wntr_inp [-o FILE] [--compare] [--json]
     worldparts mcp
 
 Human-readable tables are the default; ``--json`` prints machine-readable JSON. Commands
@@ -24,10 +25,11 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
 import json
 import math
 import sys
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -35,8 +37,18 @@ import worldparts as wp
 from worldparts.catalog import package_manifest_paths
 from worldparts.errors import InvalidValueError, UnknownVariableError, format_choices
 from worldparts.manifest import Manifest, VariableSpec, load_yaml, validate_manifest_data
+from worldparts.units import split_pressure_reference
 
-__all__ = ["build_parser", "default_paths", "load_document", "main", "select_paths"]
+__all__ = [
+    "build_parser",
+    "default_paths",
+    "is_wildcard",
+    "load_document",
+    "main",
+    "select_paths",
+    "select_paths_with_units",
+    "unit_targets",
+]
 
 # Exit codes.
 EXIT_OK = 0
@@ -99,6 +111,63 @@ def select_paths(system: wp.System, requested: Iterable[str] | None) -> list[str
                 + format_choices(item, reported + list(system.components))
             )
     return list(dict.fromkeys(out))
+
+
+def is_wildcard(key: str) -> bool:
+    """True for a ``units`` key of the form ``'*.<name>'`` (every selected ``*.<name>``)."""
+    return key.startswith("*.") and len(key) > 2
+
+
+def select_paths_with_units(
+    system: wp.System, variables: Iterable[str] | None, units: Mapping[str, str] | None
+) -> list[str]:
+    """Requested paths (default selection when none) plus every path named in ``units``
+    (wildcard keys ``'*.<name>'`` select nothing; they apply to the selected paths)."""
+    paths = select_paths(system, variables)
+    named = [k for k in units or {} if not is_wildcard(k)]
+    if named:
+        paths += [p for p in select_paths(system, named) if p not in paths]
+    return paths
+
+
+def unit_targets(
+    result_units: Mapping[str, str],
+    references: Mapping[str, str],
+    units: Mapping[str, str] | None,
+    paths: Iterable[str] = (),
+) -> dict[str, tuple[str, str | None, str]]:
+    """``(unit, reference, requested unit string)`` per path for unit conversions.
+
+    A wildcard key ``'*.<name>'`` applies to every path in ``paths`` ending in ``.<name>``;
+    an explicit path overrides it. Shared by the CLI ``--units`` option and the MCP
+    ``units`` argument.
+
+    Raises:
+        UnknownVariableError: An unknown path, or a wildcard that matches no path.
+    """
+    out: dict[str, tuple[str, str | None, str]] = {}
+    selected = list(paths)
+    explicit = {k: v for k, v in (units or {}).items() if not is_wildcard(k)}
+    for key, target in (units or {}).items():
+        if not is_wildcard(key):
+            continue
+        matched = [p for p in selected if p.endswith(key[1:]) and p not in explicit]
+        if not matched and not any(p.endswith(key[1:]) for p in explicit):
+            names = sorted({"*." + p.rsplit(".", 1)[-1] for p in selected})
+            raise UnknownVariableError(
+                f"units: '{key}' matches no reported variable. " + format_choices(key, names)
+            )
+        for p in matched:
+            base, ref = split_pressure_reference(target)
+            out[p] = (base, ref or references.get(p), target)
+    for path, target in explicit.items():
+        if path not in result_units:
+            raise UnknownVariableError(
+                f"units: unknown variable '{path}'. " + format_choices(path, result_units)
+            )
+        base, ref = split_pressure_reference(target)
+        out[path] = (base, ref or references.get(path), target)
+    return out
 
 
 def load_document(path: str | Path) -> dict[str, Any]:
@@ -191,9 +260,22 @@ def _limits(spec: VariableSpec) -> str:
         return " | ".join(spec.enum)
     if spec.minimum is None and spec.maximum is None:
         return ""
-    lo = "-inf" if spec.minimum is None else f"{spec.minimum:g}"
-    hi = "inf" if spec.maximum is None else f"{spec.maximum:g}"
+    return _bounds(spec.minimum, spec.maximum)
+
+
+def _bounds(minimum: float | None, maximum: float | None) -> str:
+    lo = "-inf" if minimum is None else f"{minimum:g}"
+    hi = "inf" if maximum is None else f"{maximum:g}"
     return f"[{lo}, {hi}]"
+
+
+def _column_limits(spec: VariableSpec) -> str:
+    """Limits of a table parameter's columns, e.g. ``flow [0, inf], head [0, inf]``."""
+    return ", ".join(
+        f"{c.name} {_bounds(c.minimum, c.maximum)}"
+        for c in spec.columns
+        if c.minimum is not None or c.maximum is not None
+    )
 
 
 def _variable_rows(group: dict[str, VariableSpec], with_default: bool) -> list[list[Any]]:
@@ -204,7 +286,7 @@ def _variable_rows(group: dict[str, VariableSpec], with_default: bool) -> list[l
             unit = "table: " + ", ".join(f"{c.name} [{c.unit}]" for c in spec.columns)
         row: list[Any] = [spec.name, unit]
         if with_default:
-            row += [spec.default, _limits(spec)]
+            row += [spec.default, _column_limits(spec) if spec.columns else _limits(spec)]
         row.append(spec.description)
         rows.append(row)
     return rows
@@ -386,6 +468,55 @@ def _var_args(values: Sequence[str] | None) -> list[str]:
     return out
 
 
+def _units_args(values: Sequence[str] | None) -> dict[str, str]:
+    """``--units PATTERN=UNIT`` options as a mapping (later options win)."""
+    out: dict[str, str] = {}
+    for item in values or []:
+        key, sep, unit = item.partition("=")
+        if not sep or not key.strip() or not unit.strip():
+            raise InvalidValueError(
+                f"--units expects PATTERN=UNIT, e.g. --units '*.volume_flow=m3/h' or --units "
+                f"'pump.outlet.p=bar absolute'; got '{item}'."
+            )
+        out[key.strip()] = unit.strip()
+    return out
+
+
+def _converted_solve(
+    result: wp.SolveResult, targets: Mapping[str, tuple[str, str | None, str]]
+) -> wp.SolveResult:
+    """A copy of ``result`` with the ``targets`` paths converted to their requested units."""
+    if not targets:
+        return result
+    values, units, refs = dict(result.values), dict(result.units), dict(result.references)
+    for path, (unit, ref, target) in targets.items():
+        values[path] = result.get(path, target)
+        units[path] = unit
+        if ref:
+            refs[path] = ref
+        else:
+            refs.pop(path, None)
+    return dataclasses.replace(result, values=values, units=units, references=refs)
+
+
+def _converted_simulation(
+    sim: wp.SimulationResult, targets: Mapping[str, tuple[str, str | None, str]]
+) -> wp.SimulationResult:
+    """A copy of ``sim`` (and its final result) with ``targets`` converted."""
+    if not targets:
+        return sim
+    series, units, refs = dict(sim.series), dict(sim.units), dict(sim.references)
+    for path, (unit, ref, target) in targets.items():
+        series[path] = sim.get(path, target)
+        units[path] = unit
+        if ref:
+            refs[path] = ref
+        else:
+            refs.pop(path, None)
+    final = _converted_solve(sim.final, {p: t for p, t in targets.items() if p in sim.final})
+    return dataclasses.replace(sim, series=series, units=units, references=refs, final=final)
+
+
 def _print_warnings_and_issues(
     warnings: Sequence[wp.ComponentWarning], issues: Sequence[wp.Issue]
 ) -> None:
@@ -412,12 +543,19 @@ def _print_warnings_and_issues(
 def _cmd_solve(args: argparse.Namespace) -> int:
     system = _load_system(args.system)
     requested = _var_args(args.var)
+    units = _units_args(args.units)
     result = system.solve()
+    if args.json and not requested and not units:
+        _print_json(result.to_dict())
+        return EXIT_OK
+    if args.json and not requested:
+        paths = list(result.values)  # --json reports everything; --units converts some
+    else:
+        paths = select_paths_with_units(system, requested, units)
+    result = _converted_solve(result, unit_targets(result.units, result.references, units, paths))
     if args.json:
-        paths = select_paths(system, requested) if requested else None
         _print_json(result.to_dict(paths))
         return EXIT_OK
-    paths = select_paths(system, requested)
     print(
         f"System '{system.name}': {'converged' if result.converged else 'NOT converged'} in "
         f"{result.iterations} iterations (max residual {result.max_residual:.2g})."
@@ -435,10 +573,21 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
     system = _load_system(args.system)
     block = system.simulation or {}
     duration = args.duration if args.duration is not None else block.get("duration")
+    if duration is None:
+        raise InvalidValueError(
+            f"{args.system} has no 'simulation' block; pass --duration, e.g. worldparts "
+            f"simulate {args.system} --duration '10 min' --step '1 s', or add "
+            "'simulation: {duration: 10 min, step: 1 s}' to the document."
+        )
     step = args.step if args.step is not None else block.get("step")
     requested = _var_args(args.var)
-    record = select_paths(system, requested) if (requested or not args.json) else None
+    units = _units_args(args.units)
+    record = None  # --json without --var records everything
+    if requested or not args.json:
+        record = select_paths_with_units(system, requested, units)
     sim = system.simulate(duration, step, block.get("events"), variables=record)
+    selected = record if record is not None else list(sim.series)
+    sim = _converted_simulation(sim, unit_targets(sim.units, sim.references, units, selected))
     if args.json:
         _print_json(sim.to_dict(max_points=args.max_points, variables=record))
         return EXIT_OK
@@ -459,6 +608,56 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
         )
     )
     _print_warnings_and_issues(sim.warnings, sim.final.issues)
+    return EXIT_OK
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    """Export a system document to another host (``wntr_inp``: an EPANET .inp via WNTR).
+
+    The adapter (and ``wntr``) is imported lazily, so the other commands never pay for it.
+    """
+    from worldparts.adapters import MissingDependencyError, wntr_available
+
+    if not wntr_available():
+        raise MissingDependencyError(
+            "Target 'wntr_inp' needs the optional 'wntr' package: uv add wntr (or pip "
+            "install wntr), or reinstall with the extra: "
+            'uv add "worldparts[wntr] @ git+https://github.com/raimondasl/worldparts"'
+        )
+    from worldparts.adapters.wntr_adapter import compare_with_wntr, export_inp
+
+    system = _load_system(args.system)
+    text = export_inp(system, args.output)
+    report = compare_with_wntr(system) if args.compare else None
+    if args.json:
+        data: dict[str, Any] = {
+            "system": system.name,
+            "target": args.target,
+            "file": str(args.output) if args.output else None,
+            "inp": text,
+        }
+        if report is not None:
+            data["comparison"] = report.to_dict()
+        _print_json(data)
+        return EXIT_OK
+    if args.output:
+        print(
+            f"Wrote {args.output}: EPANET .inp of system '{system.name}' "
+            f"({len(text.splitlines())} lines, flow units CMH, Darcy-Weisbach head loss)."
+        )
+    else:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+    if report is not None:
+        # With the .inp on stdout, the comparison goes to stderr so the file stays clean.
+        stream = sys.stdout if args.output else sys.stderr
+        print(report.summary(), file=stream)
+        if not args.output:
+            print(
+                "\n(The .inp text is on stdout, above this report; use -o FILE to save it "
+                "and keep only the report on screen.)",
+                file=sys.stderr,
+            )
     return EXIT_OK
 
 
@@ -520,9 +719,16 @@ def build_parser() -> argparse.ArgumentParser:
         "or comma-separated. Default: observables, states and port pressures (with --json: "
         "everything)."
     )
+    units_help = (
+        "Report a variable in another unit: PATH=UNIT, or *.NAME=UNIT for every selected "
+        "variable called NAME, e.g. --units '*.volume_flow=m3/h' or --units "
+        "'pump.outlet.p=bar absolute'. Repeatable; explicit paths win over wildcards, and a "
+        "named path is added to the selection."
+    )
     p = add("solve", _cmd_solve, "Solve a system document for its steady operating point.")
     p.add_argument("system", help="System document (YAML or JSON).")
     p.add_argument("--var", action="append", metavar="PATH", help=var_help)
+    p.add_argument("--units", action="append", metavar="PATTERN=UNIT", help=units_help)
     json_flag(p)
 
     p = add("simulate", _cmd_simulate, "Simulate a system document over time.")
@@ -533,11 +739,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--step", help="e.g. '1 s' (default: the document's, else 1 s).")
     p.add_argument("--var", action="append", metavar="PATH", help=var_help)
+    p.add_argument("--units", action="append", metavar="PATTERN=UNIT", help=units_help)
     p.add_argument(
         "--max-points",
         type=int,
         default=200,
         help="Downsample JSON series to at most this many samples (default 200; 0 keeps all).",
+    )
+    json_flag(p)
+
+    p = add(
+        "export",
+        _cmd_export,
+        "Export a system document to another simulation host (needs the 'wntr' extra).",
+    )
+    p.add_argument("system", help="System document (YAML or JSON).")
+    p.add_argument(
+        "--target",
+        required=True,
+        choices=["wntr_inp"],
+        help="wntr_inp: an EPANET .inp file written through WNTR (flow units CMH).",
+    )
+    p.add_argument("-o", "--output", help="Write to this file (default: print the text).")
+    p.add_argument(
+        "--compare",
+        action="store_true",
+        help="Also solve the system in EPANET and report flow and pressure differences "
+        "from the worldparts solution.",
     )
     json_flag(p)
 

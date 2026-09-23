@@ -22,6 +22,7 @@ from mcp import Client
 from mcp.client.stdio import StdioServerParameters
 
 import worldparts as wp
+from worldparts.adapters import wntr_available
 from worldparts.mcp_server import INSTRUCTIONS, RESOURCE_PREFIX, create_server
 
 REPO = Path(__file__).resolve().parents[1]
@@ -119,7 +120,10 @@ def test_tools_have_output_schemas_and_instructions() -> None:
         tools = (await s.client.list_tools()).tools
         names = {t.name for t in tools}
         assert names >= TOOLS
-        assert "export_system" not in names  # arrives with the WNTR adapter
+        # Design 9: export_system is registered only when an exporter exists (the WNTR
+        # adapter, which needs the optional wntr package).
+        assert ("export_system" in names) == wntr_available()
+        assert ("compare_with_wntr" in names) == wntr_available()
         for t in tools:
             assert t.output_schema and t.output_schema.get("type") == "object", t.name
             assert t.description, t.name
@@ -678,5 +682,39 @@ def test_describe_component_shows_what_the_manifest_declares() -> None:
         head = next(p for p in pump["parameters"] if p["name"] == "head_curve")
         assert [c["name"] for c in head["columns"]] == ["flow", "head"]
         assert all("description" in c for c in head["columns"])
+
+    run(body)
+
+
+# ----------------------------------------------------------------------------------------
+# WNTR adapter tools (registered only when the optional wntr package is installed)
+# ----------------------------------------------------------------------------------------
+@pytest.mark.skipif(not wntr_available(), reason="needs the optional wntr package")
+def test_export_system_and_compare_with_wntr() -> None:
+    async def body(s: Session) -> None:
+        sid = await build_line(s)
+        out = await s.call("export_system", system_id=sid, target="wntr_inp")
+        assert out["system_id"] == sid and out["target"] == "wntr_inp"
+        assert "[PIPES]" in out["text"] and "D-W" in out["text"]
+        assert "notes" not in out  # nothing is approximated in a pipe-and-valve line
+
+        cmp = await s.call("compare_with_wntr", system_id=sid)
+        report = cmp["report"]
+        flow = reference_line().solve().get("v.volume_flow", unit="m3/h")
+        v = next(c for c in report["links"] if c["path"] == "v.volume_flow")
+        assert v["worldparts"] == pytest.approx(flow, rel=1e-9)
+        # Default pipes are smooth: Churchill vs Swamee-Jain, well below 0.2 %.
+        assert cmp["max_flow_rel_diff"] < 2e-3
+        assert cmp["max_pressure_abs_diff"] < 5e-3
+        assert report["divergence_sources"]
+
+        err = await s.fail("export_system", system_id="s99")
+        assert "unknown_system" in err
+        tap = (await s.call("create_system", name="tap"))["system_id"]
+        await s.call("add_component", system_id=tap, name="mains", component="supply")
+        await s.call("add_component", system_id=tap, name="f", component="mixing_faucet")
+        await s.call("connect", system_id=tap, a="mains.port", b="f.cold")
+        err = await s.fail("export_system", system_id=tap)
+        assert "[unsupported_component]" in err and "f (mixing_faucet)" in err
 
     run(body)

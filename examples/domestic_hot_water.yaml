@@ -1,0 +1,29 @@
+worldparts_system: "0.1"
+name: domestic hot water
+description: >-
+  Secondary example (building services). Mains water at 3 bar and 12 degC feeds an 18 kW
+  instantaneous heater and the cold sides of a shower mixer and a basin mixer; the heater
+  feeds both hot sides. The shower alone draws about 5.8 L/min of hot water, which 18 kW
+  heats to the 55 degC setpoint (shower about 38 degC). Opening the basin as well raises the
+  hot draw to about 9.6 L/min: the heater saturates at full power, its outlet falls to about
+  39 degC (mode saturated, warning setpoint_not_met) and the shower cools to about 28 degC.
+components:
+  - name: mains
+    type: supply
+    parameters: {pressure: 3 bar, temperature: 12 degC}
+  - name: heater
+    type: instantaneous_water_heater
+    parameters: {setpoint: 55 degC, max_power: 18 kW}
+  - name: shower
+    type: mixing_faucet
+    parameters: {kv_spout: 1.0}
+    inputs: {lift: 0.6, mix: 0.6}
+  - name: basin
+    type: mixing_faucet
+    inputs: {lift: 0.4, mix: 0.6}
+connections:
+  - [mains.port, heater.inlet]
+  - [mains.port, shower.cold]
+  - [mains.port, basin.cold]
+  - [heater.outlet, shower.hot]
+  - [heater.outlet, basin.hot]

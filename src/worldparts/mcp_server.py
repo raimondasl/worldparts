@@ -22,11 +22,13 @@ for output fields that are left out when empty) and tool descriptions are dedent
 ``describe_component`` is brief by default; ``detail='full'`` adds the scenario systems,
 contract rules, implementation notes and provenance.
 
-Extension point: ``export_system(system_id, target)`` (design 9, target ``wntr_inp``) is
-not registered yet; it arrives with the WNTR adapter. A registrar is a function
-``(server, store) -> None`` that declares tools with ``server.tool()`` and reads systems
-with ``store.get(system_id)``; append it to :data:`EXTRA_TOOL_REGISTRARS` (or pass it to
-:func:`create_server`) and it runs after the built-in tools are registered.
+Extension point: a registrar is a function ``(server, store) -> None`` that declares tools
+with ``server.tool()`` and reads systems with ``store.get(system_id)``; append it to
+:data:`EXTRA_TOOL_REGISTRARS` (or pass it to :func:`create_server`) and it runs after the
+built-in tools are registered. The WNTR adapter uses it: when the optional ``wntr`` package
+is installed, :func:`register_wntr_tools` adds ``export_system(system_id, target)`` (design
+9, target ``wntr_inp``) and ``compare_with_wntr(system_id)``. ``wntr`` itself is imported
+only when one of them is called.
 """
 
 from __future__ import annotations
@@ -48,11 +50,13 @@ from pydantic import BaseModel, Field
 from scipy.optimize import brentq
 
 import worldparts as wp
+from worldparts.adapters import wntr_available
 from worldparts.catalog import Catalog, default_catalog
-from worldparts.cli import select_paths
+from worldparts.cli import select_paths_with_units as _selection
+from worldparts.cli import unit_targets as _convert_request
 from worldparts.errors import UnknownComponentError, WorldpartsError, format_choices
 from worldparts.manifest import Manifest, VariableSpec, load_yaml
-from worldparts.units import parse_duration, parse_value, split_pressure_reference
+from worldparts.units import parse_duration, parse_value
 
 __all__ = [
     "EXTRA_TOOL_REGISTRARS",
@@ -62,6 +66,7 @@ __all__ = [
     "UnknownSystemError",
     "create_server",
     "main",
+    "register_wntr_tools",
 ]
 
 RESOURCE_PREFIX = "worldparts://components/"
@@ -615,61 +620,6 @@ def _summary(
         unconnected_ports=unconnected,
         issues=[_issue(i) for i in issues] if issues is not None else None,
     )
-
-
-def _selection(
-    system: wp.System, variables: list[str] | None, units: Mapping[str, str] | None
-) -> list[str]:
-    """Requested paths (default selection when none) plus every path named in ``units``
-    (wildcard keys ``'*.<name>'`` select nothing; they apply to the selected paths)."""
-    paths = select_paths(system, variables)
-    named = [k for k in units or {} if not _is_wildcard(k)]
-    if named:
-        paths += [p for p in select_paths(system, named) if p not in paths]
-    return paths
-
-
-def _is_wildcard(key: str) -> bool:
-    return key.startswith("*.") and len(key) > 2
-
-
-def _convert_request(
-    result_units: Mapping[str, str],
-    references: Mapping[str, str],
-    units: Mapping[str, str] | None,
-    paths: Iterable[str] = (),
-) -> dict[str, tuple[str, str | None, str]]:
-    """``(unit, reference, requested unit string)`` per path for unit conversions.
-
-    A wildcard key ``'*.<name>'`` applies to every path in ``paths`` ending in ``.<name>``;
-    an explicit path overrides it.
-
-    Raises:
-        UnknownVariableError: An unknown path, or a wildcard that matches no path.
-    """
-    out: dict[str, tuple[str, str | None, str]] = {}
-    selected = list(paths)
-    explicit = {k: v for k, v in (units or {}).items() if not _is_wildcard(k)}
-    for key, target in (units or {}).items():
-        if not _is_wildcard(key):
-            continue
-        matched = [p for p in selected if p.endswith(key[1:]) and p not in explicit]
-        if not matched and not any(p.endswith(key[1:]) for p in explicit):
-            names = sorted({"*." + p.rsplit(".", 1)[-1] for p in selected})
-            raise wp.UnknownVariableError(
-                f"units: '{key}' matches no reported variable. " + format_choices(key, names)
-            )
-        for p in matched:
-            base, ref = split_pressure_reference(target)
-            out[p] = (base, ref or references.get(p), target)
-    for path, target in explicit.items():
-        if path not in result_units:
-            raise wp.UnknownVariableError(
-                f"units: unknown variable '{path}'. " + format_choices(path, result_units)
-            )
-        base, ref = split_pressure_reference(target)
-        out[path] = (base, ref or references.get(path), target)
-    return out
 
 
 def _variable_doc(spec: VariableSpec) -> VariableDoc:
@@ -1588,6 +1538,84 @@ def create_server(
         register(server, store)
     _compact_tools(server)
     return server
+
+
+# ----------------------------------------------------------------------------------------
+# WNTR adapter tools (registered only when the optional wntr package is installed)
+# ----------------------------------------------------------------------------------------
+class ExportOutput(BaseModel):
+    system_id: str
+    target: str
+    text: str
+    notes: list[str] = Field(default_factory=list, exclude_if=lambda v: not v)
+
+
+class WntrComparisonOutput(BaseModel):
+    system_id: str
+    max_flow_rel_diff: float
+    max_pressure_abs_diff: float
+    report: dict[str, Any]
+
+
+def register_wntr_tools(server: MCPServer, store: SystemStore) -> None:
+    """Register ``export_system`` and ``compare_with_wntr`` (the WNTR adapter, design 11)."""
+
+    def call(fn: Callable[[], _R]) -> _R:
+        try:
+            with store.lock:
+                return fn()
+        except WorldpartsError as exc:
+            raise ToolError(f"[{exc.code}] {exc}") from exc
+
+    read_only = ToolAnnotations(read_only_hint=True, open_world_hint=False)
+
+    @server.tool(annotations=read_only)
+    def export_system(
+        system_id: SystemId,
+        target: Annotated[
+            Literal["wntr_inp"],
+            Field(description="'wntr_inp' (EPANET .inp via WNTR)."),
+        ] = "wntr_inp",
+    ) -> ExportOutput:
+        """Export a system as EPANET .inp text (units CMH, Darcy-Weisbach).
+
+        Faucets and heaters are unsupported. `notes`: what the export approximates.
+        """
+
+        def run() -> ExportOutput:
+            from worldparts.adapters.wntr_adapter import model_to_inp, translate
+
+            tr = translate(store.get(system_id))
+            return ExportOutput(
+                system_id=system_id,
+                target=target,
+                text=model_to_inp(tr.model),
+                notes=tr.approximations,
+            )
+
+        return call(run)
+
+    @server.tool(annotations=read_only)
+    def compare_with_wntr(system_id: SystemId) -> WntrComparisonOutput:
+        """Solve the system here and in EPANET (via WNTR) and compare: per-link flows
+        (m3/h) and node pressures (bar gauge), differences and why they diverge."""
+
+        def run() -> WntrComparisonOutput:
+            from worldparts.adapters.wntr_adapter import compare_with_wntr as compare
+
+            report = compare(store.get(system_id))
+            return WntrComparisonOutput(
+                system_id=system_id,
+                max_flow_rel_diff=report.max_flow_rel_diff,
+                max_pressure_abs_diff=report.max_pressure_abs_diff,
+                report=report.to_dict(),
+            )
+
+        return call(run)
+
+
+if wntr_available():
+    EXTRA_TOOL_REGISTRARS.append(register_wntr_tools)
 
 
 def main() -> None:
