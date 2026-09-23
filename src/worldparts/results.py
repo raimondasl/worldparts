@@ -51,6 +51,10 @@ class ComponentWarning:
         severity: ``"info"`` or ``"warning"``.
         message: Explanation.
         time: Simulation time in s of the first occurrence (None for steady solves).
+        last_time: Simulation time in s of the last sample at which the warning was raised
+            (None for steady solves).
+        active_at_end: Whether the warning is still raised at the final sample (None for
+            steady solves).
     """
 
     component: str
@@ -58,6 +62,8 @@ class ComponentWarning:
     severity: str
     message: str
     time: float | None = None
+    last_time: float | None = None
+    active_at_end: bool | None = None
 
     @property
     def path(self) -> str:
@@ -67,8 +73,9 @@ class ComponentWarning:
     def to_dict(self) -> dict[str, Any]:
         """Plain-dict form."""
         d = asdict(self)
-        if d["time"] is None:
-            del d["time"]
+        for key in ("time", "last_time", "active_at_end"):
+            if d[key] is None:
+                del d[key]
         return d
 
 
@@ -236,7 +243,9 @@ class SimulationResult:
         time: Sample times in s.
         series: Path to list of values in display units (None where undefined).
         units: Path to display unit.
-        warnings: First occurrence of each (component, code), with its time.
+        warnings: Each (component, code) raised during the run, with the message and time
+            of its first occurrence, the time of its last occurrence and whether it is still
+            raised at the end.
         mode_changes: Initial mode of each component at t=0 and every later change.
         final: The steady result at the final time.
     """

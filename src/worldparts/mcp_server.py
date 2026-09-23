@@ -13,8 +13,14 @@ Systems live in an in-process :class:`SystemStore` keyed by a short ``system_id`
 
 Run it with ``worldparts mcp`` (stdio). Tools: ``list_components``, ``describe_component``,
 ``create_system``, ``add_component``, ``remove_component``, ``set_values``, ``connect``,
-``disconnect``, ``check_system``, ``solve``, ``simulate``, ``list_variables``,
-``get_system``, ``load_system`` and ``run_contracts``.
+``disconnect``, ``check_system``, ``solve``, ``solve_for``, ``simulate``,
+``list_variables``, ``get_system``, ``load_system`` and ``run_contracts``.
+
+The tool list is kept small for the agent's context: the generated JSON schemas are
+compacted after registration (:func:`compact_schema`: no ``title`` keys, no ``null`` branch
+for output fields that are left out when empty) and tool descriptions are dedented.
+``describe_component`` is brief by default; ``detail='full'`` adds the scenario systems,
+contract rules, implementation notes and provenance.
 
 Extension point: ``export_system(system_id, target)`` (design 9, target ``wntr_inp``) is
 not registered yet; it arrives with the WNTR adapter. A registrar is a function
@@ -26,6 +32,7 @@ with ``store.get(system_id)``; append it to :data:`EXTRA_TOOL_REGISTRARS` (or pa
 from __future__ import annotations
 
 import functools
+import inspect
 import itertools
 import math
 import threading
@@ -38,13 +45,14 @@ from mcp.server.mcpserver.exceptions import ResourceNotFoundError, ToolError
 from mcp.server.mcpserver.resources import TextResource
 from mcp_types import ToolAnnotations
 from pydantic import BaseModel, Field
+from scipy.optimize import brentq
 
 import worldparts as wp
 from worldparts.catalog import Catalog, default_catalog
 from worldparts.cli import select_paths
 from worldparts.errors import UnknownComponentError, WorldpartsError, format_choices
 from worldparts.manifest import Manifest, VariableSpec, load_yaml
-from worldparts.units import split_pressure_reference
+from worldparts.units import parse_duration, parse_value, split_pressure_reference
 
 __all__ = [
     "EXTRA_TOOL_REGISTRARS",
@@ -75,7 +83,14 @@ pressures are reported in bar gauge. Results carry their unit and, for pressures
 reference (gauge, absolute or difference); a temperature difference such as a rise in K \
 carries reference 'difference' and converts by scale only (35 K = 35 degC). Read the \
 warnings and modes in every result: \
-they flag operation outside a model's validity envelope.\
+they flag operation outside a model's validity envelope.
+Flow units differ by part (pipes, valves, drains, supplies: L/min; pumps, tanks, filters, \
+UV reactors: m3/h); pass units={'*.volume_flow': 'm3/h'} to solve or simulate to report \
+every matching path in one unit. solve_for finds the value of one input or parameter that \
+gives a target result (e.g. the pump speed for 15 m3/h). describe_component is brief by \
+default; detail='full' adds scenario systems, contract rules and provenance.
+Systems live only as long as this server process: keep a system with get_system and \
+restore it in a new session with load_system.\
 """
 
 _P = ParamSpec("_P")
@@ -140,6 +155,8 @@ class WarningOut(BaseModel):
     severity: Literal["info", "warning"]
     message: str
     time: float | None = _opt("Simulation time in s of the first occurrence.")
+    last_time: float | None = _opt("Simulation time in s of the last occurrence.")
+    active_at_end: bool | None = _opt("Simulation: still raised at the end time.")
 
 
 class KeyParameter(BaseModel):
@@ -147,6 +164,7 @@ class KeyParameter(BaseModel):
 
     name: str
     unit: str | None = _opt("Declared unit.")
+    columns: list[str] | None = _opt("Table columns as 'name [unit]'; rows follow this order.")
     default: Any = Field(description="Default value in the declared unit.")
 
 
@@ -235,16 +253,14 @@ class ScenarioDoc(BaseModel):
     """A canonical scenario shipped with the manifest."""
 
     id: str
-    description: str
+    description: str | None = _opt("detail='full': what the scenario checks and why.")
     simulated: bool
-    system: dict[str, Any] = Field(
-        default_factory=dict,
-        description="The test system (components and connections); a usable template.",
+    system: dict[str, Any] | None = _opt(
+        "detail='full': the test system (components and connections); a usable template."
     )
     simulate: dict[str, Any] | None = _opt("Simulation settings (duration, step, events).")
-    expect: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Expected results: values with tolerances or ranges, modes and warnings.",
+    expect: list[dict[str, Any]] | None = _opt(
+        "detail='full': expected results (values with tolerances or ranges, modes, warnings)."
     )
 
 
@@ -252,15 +268,16 @@ class ContractDoc(BaseModel):
     """A behavioural contract shipped with the manifest."""
 
     id: str
-    description: str
+    description: str | None = _opt("detail='full': what the contract asserts.")
     scenario: str
     check: str = Field(description="monotonic, bounds, equal or warning_iff.")
     sweep: str | None = _opt("Swept variable.")
-    sweep_spec: dict[str, Any] | None = _opt("The full sweep: variable and range or values.")
-    rule: dict[str, Any] = Field(
-        default_factory=dict,
-        description="The check's details (variable, direction, left/right, min/max, "
-        "condition, tolerances).",
+    sweep_spec: dict[str, Any] | None = _opt(
+        "detail='full': the full sweep (variable and range or values)."
+    )
+    rule: dict[str, Any] | None = _opt(
+        "detail='full': the check's details (variable, direction, left/right, min/max, "
+        "condition, tolerances)."
     )
 
 
@@ -285,9 +302,12 @@ class ComponentDescription(BaseModel):
     warnings: list[WarningDoc]
     scenarios: list[ScenarioDoc]
     contracts: list[ContractDoc]
-    implementations: dict[str, Any]
-    provenance: dict[str, Any]
+    implementations: dict[str, Any] = Field(
+        description="Bindings per host; brief: the class or element name only."
+    )
+    provenance: dict[str, Any] | None = _opt("detail='full': sources, data and licences.")
     classification: dict[str, Any] | None = _opt("Cross-walk to IFC, Brick, ...")
+    detail: Literal["brief", "full"]
     resource_uri: str = Field(description="URI of the full manifest resource.")
 
 
@@ -314,6 +334,7 @@ class ComponentInstance(BaseModel):
     inputs: dict[str, Value]
     states: dict[str, Value]
     issues: list[IssueOut] = Field(description="Pre-flight issues about this instance.")
+    hint: str | None = _opt("How the issues of a new, unwired instance clear.")
 
 
 class SetValuesResult(BaseModel):
@@ -346,6 +367,17 @@ class SolveOutput(BaseModel):
     issues: list[IssueOut] = Field(description="Non-fatal pre-flight issues.")
 
 
+class SolveForOutput(SolveOutput):
+    """Result of solve_for: the value found and the operating point there."""
+
+    vary: str = Field(description="The varied path; it is left at the value found.")
+    found: Value = Field(description="Value of `vary` that meets the target.")
+    target: str = Field(description="The target path.")
+    target_value: Quantity = Field(description="The requested target value.")
+    achieved: Quantity = Field(description="The target path's value at the solution.")
+    evaluations: int = Field(description="Number of steady solves used.")
+
+
 class SeriesOut(BaseModel):
     """One recorded variable of a simulation."""
 
@@ -373,7 +405,9 @@ class SimulateOutput(BaseModel):
     samples: int = Field(description="Number of samples computed (before downsampling).")
     time: list[float] = Field(description="Downsampled sample times in s.")
     variables: dict[str, SeriesOut]
-    warnings: list[WarningOut] = Field(description="First occurrence of each warning.")
+    warnings: list[WarningOut] = Field(
+        description="Each warning once: first time and message, last time, active at end."
+    )
     mode_changes: list[ModeChangeOut] = Field(description="Initial modes and every change.")
     final_modes: dict[str, str | None]
     issues: list[IssueOut] = Field(description="Non-fatal pre-flight issues.")
@@ -428,10 +462,18 @@ class ContractReport(BaseModel):
 
 
 class Event(BaseModel):
-    """A simulation event: set values at a time."""
+    """A simulation event: set values at a time, or ramp them linearly from that time."""
 
     at: float | str = Field(description="Time: seconds or a string such as '60 s', '2 min'.")
-    set: dict[str, Any] = Field(description="Paths to values, e.g. {'valve.opening': 0}.")
+    set: dict[str, Any] | None = Field(
+        None, description="Paths to values, e.g. {'valve.opening': 0}."
+    )
+    ramp: dict[str, list[float | str]] | None = Field(
+        None,
+        description="Instead of set: paths to [start, end] values, changed linearly from "
+        "`at` over `over` (applied at every step), e.g. {'filter.clogging': [0, 0.8]}.",
+    )
+    over: float | str | None = Field(None, description="Ramp duration, e.g. '30 min'.")
 
 
 # Argument types shared by several tools (module level so the SDK can resolve them).
@@ -448,7 +490,8 @@ Units = Annotated[
     dict[str, str] | None,
     Field(
         description="Optional unit per path, e.g. {'valve.volume_flow': 'L/s', "
-        "'mains.port.p': 'bar absolute'}."
+        "'mains.port.p': 'bar absolute'}. A key '*.<name>' applies to every reported path "
+        "ending in '.<name>', e.g. {'*.volume_flow': 'm3/h'}; explicit paths win."
     ),
 ]
 
@@ -537,6 +580,8 @@ def _warning(w: wp.ComponentWarning) -> WarningOut:
         severity=w.severity,  # type: ignore[arg-type]
         message=w.message,
         time=w.time,
+        last_time=w.last_time,
+        active_at_end=w.active_at_end,
     )
 
 
@@ -575,21 +620,49 @@ def _summary(
 def _selection(
     system: wp.System, variables: list[str] | None, units: Mapping[str, str] | None
 ) -> list[str]:
-    """Requested paths (default selection when none) plus every path named in ``units``."""
+    """Requested paths (default selection when none) plus every path named in ``units``
+    (wildcard keys ``'*.<name>'`` select nothing; they apply to the selected paths)."""
     paths = select_paths(system, variables)
-    if units:
-        paths += [p for p in select_paths(system, list(units)) if p not in paths]
+    named = [k for k in units or {} if not _is_wildcard(k)]
+    if named:
+        paths += [p for p in select_paths(system, named) if p not in paths]
     return paths
+
+
+def _is_wildcard(key: str) -> bool:
+    return key.startswith("*.") and len(key) > 2
 
 
 def _convert_request(
     result_units: Mapping[str, str],
     references: Mapping[str, str],
     units: Mapping[str, str] | None,
+    paths: Iterable[str] = (),
 ) -> dict[str, tuple[str, str | None, str]]:
-    """``(unit, reference, requested unit string)`` per path for unit conversions."""
+    """``(unit, reference, requested unit string)`` per path for unit conversions.
+
+    A wildcard key ``'*.<name>'`` applies to every path in ``paths`` ending in ``.<name>``;
+    an explicit path overrides it.
+
+    Raises:
+        UnknownVariableError: An unknown path, or a wildcard that matches no path.
+    """
     out: dict[str, tuple[str, str | None, str]] = {}
-    for path, target in (units or {}).items():
+    selected = list(paths)
+    explicit = {k: v for k, v in (units or {}).items() if not _is_wildcard(k)}
+    for key, target in (units or {}).items():
+        if not _is_wildcard(key):
+            continue
+        matched = [p for p in selected if p.endswith(key[1:]) and p not in explicit]
+        if not matched and not any(p.endswith(key[1:]) for p in explicit):
+            names = sorted({"*." + p.rsplit(".", 1)[-1] for p in selected})
+            raise wp.UnknownVariableError(
+                f"units: '{key}' matches no reported variable. " + format_choices(key, names)
+            )
+        for p in matched:
+            base, ref = split_pressure_reference(target)
+            out[p] = (base, ref or references.get(p), target)
+    for path, target in explicit.items():
         if path not in result_units:
             raise wp.UnknownVariableError(
                 f"units: unknown variable '{path}'. " + format_choices(path, result_units)
@@ -629,8 +702,29 @@ def _variable_doc(spec: VariableSpec) -> VariableDoc:
     )
 
 
-def describe_manifest(m: Manifest) -> ComponentDescription:
-    """Everything an agent needs to use a component type."""
+def _binding_name(binding: Any) -> Any:
+    """The class, element or import path of an implementation binding (no notes)."""
+    if isinstance(binding, Mapping):
+        for key in ("python", "class", "element", "entity"):
+            if key in binding:
+                return binding[key]
+        return {k: v for k, v in binding.items() if k != "notes"}
+    return binding
+
+
+def describe_manifest(
+    m: Manifest, detail: Literal["brief", "full"] = "full"
+) -> ComponentDescription:
+    """Everything an agent needs to use a component type.
+
+    ``detail='brief'`` keeps what is needed to use the part (description, ports,
+    parameters, inputs, states, observables, modes, warnings) and lists the scenarios and
+    contracts by id only (with the contract's check type and swept variable), the
+    implementation bindings by name only and no provenance; ``'full'`` adds the scenario
+    and contract descriptions, scenario systems and expectations, contract rules and
+    sweeps, binding notes and provenance.
+    """
+    full = detail == "full"
     d = m.data
     envelope_codes = {w.code for w in m.envelope}
     return ComponentDescription(
@@ -667,31 +761,110 @@ def describe_manifest(m: Manifest) -> ComponentDescription:
         scenarios=[
             ScenarioDoc(
                 id=str(s["id"]),
-                description=str(s.get("description", "")),
+                description=str(s.get("description", "")) if full else None,
                 simulated=bool(s.get("simulate")),
-                system=dict(s.get("system", {})),
-                simulate=dict(s["simulate"]) if s.get("simulate") else None,
-                expect=[dict(e) for e in s.get("expect", [])],
+                system=dict(s.get("system", {})) if full else None,
+                simulate=dict(s["simulate"]) if full and s.get("simulate") else None,
+                expect=[dict(e) for e in s.get("expect", [])] if full else None,
             )
             for s in m.scenarios
         ],
         contracts=[
             ContractDoc(
                 id=str(c["id"]),
-                description=str(c.get("description", "")),
+                description=str(c.get("description", "")) if full else None,
                 scenario=str(c.get("scenario", "")),
                 check=str(c["check"]["type"]),
                 sweep=(c.get("sweep") or {}).get("variable"),
-                sweep_spec=dict(c["sweep"]) if c.get("sweep") else None,
-                rule={k: v for k, v in c["check"].items() if k != "type"},
+                sweep_spec=dict(c["sweep"]) if full and c.get("sweep") else None,
+                rule={k: v for k, v in c["check"].items() if k != "type"} if full else None,
             )
             for c in m.contracts
         ],
-        implementations=dict(d.get("implementations", {})),
-        provenance=dict(d.get("provenance", {})),
+        implementations=dict(d.get("implementations", {}))
+        if full
+        else {k: _binding_name(v) for k, v in d.get("implementations", {}).items()},
+        provenance=dict(d.get("provenance", {})) if full else None,
         classification=d.get("classification"),
+        detail=detail,
         resource_uri=RESOURCE_PREFIX + m.id,
     )
+
+
+def _key_parameters(m: Manifest) -> list[KeyParameter]:
+    """The listing's key parameters, with 'name [unit]' columns for tables."""
+    out = []
+    for k in m.describe()["key_parameters"]:
+        spec = m.parameters.get(k["name"])
+        columns = (
+            [f"{c.name} [{c.unit}]" for c in spec.columns]
+            if spec is not None and spec.columns
+            else None
+        )
+        out.append(KeyParameter(**k, columns=columns))
+    return out
+
+
+def compact_schema(schema: Any, output: bool = False) -> Any:
+    """A JSON schema without the noise pydantic adds, for a smaller tools/list.
+
+    Drops every ``title`` keyword (property names are kept). With ``output`` true, an
+    optional property whose default is null and whose type is ``anyOf [X, null]`` becomes
+    plain ``X``: the output models leave such fields out when they are empty (:func:`_opt`),
+    so null never appears in the output. Output schemas also lose their ``description`` and
+    ``default`` keywords: they describe structure only, and what the results mean is in the
+    tool descriptions (each tool's output schema repeated the same field documentation,
+    which made tools/list several times larger). Validation of what the tools return is
+    unchanged.
+    """
+    if isinstance(schema, list):
+        return [compact_schema(s, output) for s in schema]
+    if not isinstance(schema, dict):
+        return schema
+    out: dict[str, Any] = {}
+    required = set(schema.get("required", []))
+    for key, value in schema.items():
+        if key == "title" and isinstance(value, str):
+            continue
+        if output and key == "description" and isinstance(value, str):
+            continue
+        if output and key == "default":
+            continue
+        if key in ("properties", "$defs") and isinstance(value, dict):
+            props = {}
+            for name, sub in value.items():
+                if key == "properties" and output and name not in required:
+                    sub = _drop_null_branch(sub)
+                props[name] = compact_schema(sub, output)
+            out[key] = props
+        else:
+            out[key] = compact_schema(value, output)
+    return out
+
+
+def _drop_null_branch(sub: Any) -> Any:
+    if not isinstance(sub, dict) or "default" not in sub or sub["default"] is not None:
+        return sub
+    branches = sub.get("anyOf")
+    if not isinstance(branches, list):
+        return sub
+    kept = [b for b in branches if b != {"type": "null"}]
+    if len(kept) == len(branches) or not kept:
+        return sub
+    rest = {k: v for k, v in sub.items() if k not in ("anyOf", "default")}
+    if len(kept) == 1 and isinstance(kept[0], dict):
+        return {**kept[0], **rest}
+    return {"anyOf": kept, **rest}
+
+
+def _compact_tools(server: MCPServer) -> None:
+    """Compact every registered tool's schemas and dedent its description."""
+    for tool in server._tool_manager.list_tools():
+        tool.description = inspect.cleandoc(tool.description or "")
+        tool.parameters = compact_schema(tool.parameters)
+        meta = tool.fn_metadata
+        if meta.output_schema is not None:
+            meta.output_schema = compact_schema(meta.output_schema, output=True)
 
 
 def manifest_text(m: Manifest) -> str:
@@ -776,7 +949,7 @@ def create_server(
                     name=m.name,
                     summary=m.summary,
                     ports=list(m.ports),
-                    key_parameters=[KeyParameter(**k) for k in info["key_parameters"]],
+                    key_parameters=_key_parameters(m),
                     fidelity=info["fidelity"],
                     tags=list(m.data.get("tags", [])),
                 )
@@ -795,16 +968,29 @@ def create_server(
     @tool_call
     def describe_component(
         component: Annotated[str, Field(description="Full id or short alias, e.g. 'valve'.")],
+        detail: Annotated[
+            Literal["brief", "full"],
+            Field(
+                description="'brief' (default): what is needed to use the part. 'full' adds "
+                "scenario systems and expectations (templates), contract rules and sweeps, "
+                "binding notes and provenance (several times larger)."
+            ),
+        ] = "brief",
     ) -> ComponentDescription:
         """Describe a component type: everything needed to use it.
 
-        Ports; parameters and inputs with units, defaults and hard limits; states and
-        observables with units; modes with their conditions; warning codes (envelope rules
-        with conditions, and component-emitted codes); scenarios and contracts; provenance
-        and implementation bindings. Plain numbers you pass later are in these units;
-        pressures are gauge unless the variable says otherwise.
+        Ports; parameters and inputs with units, defaults and hard limits (a table
+        parameter lists its columns in row order); states and observables with units;
+        modes (the first whose condition holds is reported); warning codes; scenario and
+        contract ids; implementation bindings. Plain numbers you pass later are in these
+        units; pressures are gauge unless the variable says otherwise, and a variable with
+        quantity 'temperature_difference' converts by scale only. A state's `steady` is
+        'settle' (solve sets its equilibrium, e.g. a valve position) or 'hold' (solve keeps
+        it, e.g. a tank level). A warning's `source` is 'envelope' (raised when its
+        `condition`, over display-unit values, holds) or 'component' (raised by the model's
+        code; `message` says when).
         """
-        return describe_manifest(cat.get(component))
+        return describe_manifest(cat.get(component), detail)
 
     @server.tool(annotations=read_only)
     @tool_call
@@ -876,6 +1062,14 @@ def create_server(
         system.add(name, component, parameters=parameters or {}, inputs=inputs or {})
         m = system.manifest(name)
         issues = [_issue(i) for i in system.check() if _concerns(i, name)]
+        wiring = {"unconnected_port", "no_pressure_reference"}
+        hint = (
+            "Expected for a part that is not wired yet: unconnected_port and "
+            "no_pressure_reference clear once its ports are connected to a network that "
+            "contains a supply, drain or tank."
+            if any(i.code in wiring for i in issues)
+            else None
+        )
         return ComponentInstance(
             system_id=system_id,
             name=name,
@@ -885,6 +1079,7 @@ def create_server(
             inputs=_instance_values(system, name, m.inputs),
             states=_instance_values(system, name, m.states),
             issues=issues,
+            hint=hint,
         )
 
     @server.tool(annotations=removing)
@@ -1017,6 +1212,27 @@ def create_server(
         )
 
     # -- solving --------------------------------------------------------------------------
+    def solve_values(
+        system: wp.System,
+        result: wp.SolveResult,
+        paths: list[str],
+        units: Mapping[str, str] | None,
+    ) -> dict[str, Quantity]:
+        targets = _convert_request(result.units, result.references, units, paths)
+        values: dict[str, Quantity] = {}
+        for p in paths:
+            if p in targets:
+                unit, ref, target = targets[p]
+                converted = result.get(p, target)
+                values[p] = Quantity(value=_round(converted), unit=unit, reference=ref)  # type: ignore[arg-type]
+            else:
+                values[p] = Quantity(
+                    value=_round(result[p]),
+                    unit=result.units[p],
+                    reference=result.references.get(p),  # type: ignore[arg-type]
+                )
+        return values
+
     @server.tool(annotations=read_only)
     @tool_call
     def solve(system_id: SystemId, variables: Variables = None, units: Units = None) -> SolveOutput:
@@ -1030,20 +1246,112 @@ def create_server(
         system = store.get(system_id)
         paths = _selection(system, variables, units)
         result = system.solve()
-        targets = _convert_request(result.units, result.references, units)
-        values: dict[str, Quantity] = {}
-        for p in paths:
-            if p in targets:
-                unit, ref, target = targets[p]
-                converted = result.get(p, target)
-                values[p] = Quantity(value=_round(converted), unit=unit, reference=ref)  # type: ignore[arg-type]
-            else:
-                values[p] = Quantity(
-                    value=_round(result[p]),
-                    unit=result.units[p],
-                    reference=result.references.get(p),  # type: ignore[arg-type]
-                )
         return SolveOutput(
+            system_id=system_id,
+            converged=result.converged,
+            iterations=result.iterations,
+            max_residual=float(f"{result.max_residual:.3g}"),
+            values=solve_values(system, result, paths, units),
+            modes=dict(result.modes),
+            warnings=[_warning(w) for w in result.warnings],
+            issues=[_issue(i) for i in result.issues],
+        )
+
+    @server.tool(annotations=editing)
+    @tool_call
+    def solve_for(
+        system_id: SystemId,
+        target: Annotated[str, Field(description="Result path to reach, e.g. 'pump.volume_flow'.")],
+        value: Annotated[
+            float | str,
+            Field(
+                description="Target value: a number in the target's reported unit, or a "
+                "string with a unit such as '15 m3/h'."
+            ),
+        ],
+        vary: Annotated[
+            str,
+            Field(description="Numeric input, parameter or state to adjust, e.g. 'pump.speed'."),
+        ],
+        lower: Annotated[
+            float | str, Field(description="Lower bound of `vary` (declared unit or with unit).")
+        ],
+        upper: Annotated[float | str, Field(description="Upper bound of `vary`.")],
+        variables: Variables = None,
+        units: Units = None,
+    ) -> SolveForOutput:
+        """Goal seek: find the value of one input or parameter that gives a target result.
+
+        Solves the steady state repeatedly (Brent's method on `vary` between `lower` and
+        `upper`) until `target` equals `value`, e.g. the pump speed that delivers 15 m3/h
+        or the valve opening that gives 2 bar downstream. The target must cross the value
+        inside the bounds; otherwise the error reports the target at both bounds and
+        nothing is changed. On success `vary` stays at the value found and the result is
+        the steady operating point there, as from solve.
+        """
+        system = store.get(system_id)
+        paths = _selection(system, variables, units)
+        original = system.get(vary)  # validates the path (settable)
+        inst, _, local = vary.partition(".")
+        spec = system.manifest(inst).variable(local)
+        if not spec.is_numeric:
+            raise wp.InvalidValueError(f"vary: '{vary}' is not numeric; solve_for varies a number.")
+        lo = float(spec.parse(lower, "lower"))
+        hi = float(spec.parse(upper, "upper"))
+        if not lo < hi:
+            raise wp.InvalidValueError(f"lower ({lo:g}) must be below upper ({hi:g}).")
+        count = 0
+        goal: list[float] = []  # the target value in the target's reported unit
+        unit: list[str] = []
+
+        def reached(x: float) -> float:
+            nonlocal count
+            system.set_values({vary: x})
+            result = system.solve()
+            count += 1
+            got = result[target]
+            if not goal:
+                unit.append(result.units[target])
+                goal.append(
+                    parse_value(value, result.units[target], "value", result.references.get(target))
+                    if isinstance(value, str)
+                    else float(value)
+                )
+            if got is None:
+                raise wp.InvalidValueError(
+                    f"'{target}' is undefined (null) at {vary} = {x:g}; choose bounds where "
+                    "it is defined."
+                )
+            return float(got) - goal[0]
+
+        try:
+            f_lo = reached(lo)
+            f_hi = reached(hi)
+            if f_lo * f_hi > 0.0:
+                u = unit[0]
+                raise wp.InvalidValueError(
+                    f"'{target}' is {f_lo + goal[0]:.6g} {u} at {vary} = {lo:g} and "
+                    f"{f_hi + goal[0]:.6g} {u} at {vary} = {hi:g}; the target "
+                    f"{goal[0]:.6g} {u} is not between them. Widen the bounds (within the "
+                    "variable's limits) or change another part of the system."
+                )
+            if f_lo == 0.0:
+                root = lo
+            elif f_hi == 0.0:
+                root = hi
+            else:
+                root = float(
+                    brentq(reached, lo, hi, xtol=1e-12 * max(abs(lo), abs(hi), 1e-12), rtol=1e-12)
+                )
+            system.set_values({vary: root})
+            result = system.solve()
+            count += 1
+        except BaseException:
+            system.set_values({vary: original})
+            raise
+        values = solve_values(system, result, paths, units)
+        achieved = result[target]
+        return SolveForOutput(
             system_id=system_id,
             converged=result.converged,
             iterations=result.iterations,
@@ -1052,7 +1360,73 @@ def create_server(
             modes=dict(result.modes),
             warnings=[_warning(w) for w in result.warnings],
             issues=[_issue(i) for i in result.issues],
+            vary=vary,
+            found=_value(spec, system.get(vary)),
+            target=target,
+            target_value=Quantity(
+                value=_round(goal[0], 10),
+                unit=result.units[target],
+                reference=result.references.get(target),  # type: ignore[arg-type]
+            ),
+            achieved=Quantity(
+                value=_round(achieved, 10),
+                unit=result.units[target],
+                reference=result.references.get(target),  # type: ignore[arg-type]
+            ),
+            evaluations=count,
         )
+
+    def expand_events(
+        system: wp.System, events: list[Event] | None, duration: float | str, step: float | str
+    ) -> list[dict[str, Any]]:
+        """Plain set events, with every ramp turned into one set event per step."""
+        total = parse_duration(duration, "duration")
+        dt = parse_duration(step, "step")
+        out: list[dict[str, Any]] = []
+        for k, ev in enumerate(events or []):
+            where = f"events[{k}]"
+            if (ev.set is None) == (ev.ramp is None):
+                raise wp.InvalidValueError(
+                    f"{where} needs exactly one of 'set' (values at `at`) or 'ramp' (with "
+                    "'over'), e.g. {'at': '0 s', 'ramp': {'filter.clogging': [0, 0.8]}, "
+                    "'over': '30 min'}."
+                )
+            if ev.set is not None:
+                if ev.over is not None:
+                    raise wp.InvalidValueError(f"{where}: 'over' is only used with 'ramp'.")
+                out.append({"at": ev.at, "set": ev.set})
+                continue
+            if ev.over is None or not ev.ramp:
+                raise wp.InvalidValueError(
+                    f"{where}: a ramp needs a non-empty 'ramp' mapping and a duration 'over'."
+                )
+            t0 = parse_duration(ev.at, f"{where}.at")
+            span = parse_duration(ev.over, f"{where}.over")
+            if span <= 0 or dt <= 0:
+                raise wp.InvalidValueError(f"{where}.over must be positive.")
+            if t0 + span > total + 1e-9 * dt:
+                raise wp.InvalidValueError(
+                    f"{where}: the ramp ends at {t0 + span:g} s, after the end of the "
+                    f"simulation ({total:g} s). Shorten 'over' or lengthen the duration."
+                )
+            ends: dict[str, tuple[float, float]] = {}
+            for path, pair in ev.ramp.items():
+                system.get(path)  # validates the path (settable)
+                inst, _, local = path.partition(".")
+                spec = system.manifest(inst).variable(local)
+                if not spec.is_numeric or len(pair) != 2:
+                    raise wp.InvalidValueError(
+                        f"{where}.ramp.{path} must be [start, end] of a numeric variable."
+                    )
+                a = float(spec.parse(pair[0], f"{where}.ramp.{path}[0]"))
+                b = float(spec.parse(pair[1], f"{where}.ramp.{path}[1]"))
+                ends[path] = (a, b)
+            n = max(math.ceil(span / dt - 1e-9), 1)
+            for i in range(n + 1):
+                t = t0 + span if i == n else t0 + i * dt
+                frac = min((t - t0) / span, 1.0)
+                out.append({"at": t, "set": {p: a + (b - a) * frac for p, (a, b) in ends.items()}})
+        return out
 
     @server.tool(annotations=editing)
     @tool_call
@@ -1066,7 +1440,9 @@ def create_server(
             list[Event] | None,
             Field(
                 description="Timed set-point changes, e.g. [{'at': '60 s', 'set': "
-                "{'valve.opening': 0}}]; events after the duration are rejected."
+                "{'valve.opening': 0}}], or linear ramps, e.g. [{'at': '0 s', 'ramp': "
+                "{'filter.clogging': [0, 0.8]}, 'over': '30 min'}]; events after the "
+                "duration are rejected."
             ),
         ] = None,
         variables: Variables = None,
@@ -1074,21 +1450,34 @@ def create_server(
         max_points: Annotated[
             int, Field(ge=2, le=10000, description="Downsample series to this many samples.")
         ] = 200,
+        restore: Annotated[
+            bool,
+            Field(
+                description="Put parameters, inputs and states (tank levels, positions) back "
+                "to their values before the run, so the next solve or simulate starts from "
+                "the same point."
+            ),
+        ] = False,
     ) -> SimulateOutput:
         """Simulate over time with a fixed step and timed events.
 
         Samples at every multiple of step, at each event time and at the end. Returns
         downsampled series (the first and last samples are always kept) with per-variable
-        min, max and final values over the full run, the first occurrence of each warning,
-        and every mode change. The system keeps its final state and the values set by
-        events (use set_values to restore them).
+        min, max and final values over the full run; each warning once with its first
+        time, last time and whether it is still active at the end; and every mode change.
+        Unless restore is true, the system keeps its final state and the values set by
+        events.
         """
         system = store.get(system_id)
         paths = _selection(system, variables, units)
         sim = system.simulate(
-            duration, step, [e.model_dump() for e in events or []], variables=paths
+            duration,
+            step,
+            expand_events(system, events, duration, step),
+            variables=paths,
+            restore=restore,
         )
-        targets = _convert_request(sim.units, sim.references, units)
+        targets = _convert_request(sim.units, sim.references, units, paths)
         n = len(sim.time)
         idx = list(range(n))
         if n > max_points:
@@ -1140,15 +1529,22 @@ def create_server(
         document: Annotated[
             dict[str, Any] | str,
             Field(
-                description="A system document (object, or YAML/JSON text) with "
-                "worldparts_system: '0.1', name, components and connections."
+                description="A system document (object, or YAML/JSON text). Minimal "
+                "example: {'worldparts_system': '0.1', 'name': 'line', 'components': "
+                "[{'name': 'mains', 'type': 'supply', 'parameters': {'pressure': '3 bar'}}, "
+                "{'name': 'v', 'type': 'valve', 'inputs': {'opening': 0.5}}, {'name': 'out', "
+                "'type': 'drain'}], 'connections': [['mains.port', 'v.port_a'], ['v.port_b', "
+                "'out.port']]}. Component items are {name, type, parameters?, inputs?, "
+                "states?}; an optional 'simulation' is {duration, step?, events?}."
             ),
         ],
     ) -> SystemSummary:
         """Create a system from a system document and return its new system_id.
 
-        Unknown component types, ports and invalid values do not fail the load: they are
-        kept and listed in `issues` (the same codes as check_system) so you can fix them all.
+        get_system returns such a document. A document of the wrong shape fails with every
+        schema error and the expected shape of the offending part. Unknown component types,
+        ports and invalid values do not fail the load: they are kept and listed in `issues`
+        (the same codes as check_system) so you can fix them all.
         """
         doc = document
         if isinstance(doc, str):
@@ -1190,6 +1586,7 @@ def create_server(
 
     for register in EXTRA_TOOL_REGISTRARS if registrars is None else registrars:
         register(server, store)
+    _compact_tools(server)
     return server
 
 

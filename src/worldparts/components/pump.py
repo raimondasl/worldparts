@@ -220,7 +220,9 @@ class CentrifugalPump(Component):
     def check_parameters(cls, parameters: Mapping[str, Any]) -> list[str]:
         """Curve tables must be fittable and physically sensible.
 
-        Flows strictly increasing with at least three distinct points in every curve; the
+        The preferred operating region must not be empty (``preferred_min_fraction <
+        preferred_max_fraction``). Flows strictly increasing with at least three distinct
+        points in every curve; the
         head must fall from the first to the last point of the head curve; the fitted shaft
         power must stay positive over the head-curve flow range; and the best efficiency the
         head and power curves imply, ``max(rho*g*Q*H0/P0)``, must not exceed 100 % (a power
@@ -231,7 +233,16 @@ class CentrifugalPump(Component):
             parameters["power_curve"],
             parameters["npsh_curve"],
         )
-        out = _curve_problems("head_curve", head, 3)
+        lo, hi = (
+            float(parameters["preferred_min_fraction"]),
+            float(parameters["preferred_max_fraction"]),
+        )
+        out = []
+        if not lo < hi:
+            out.append(
+                f"preferred_min_fraction ({lo:g}) must be below preferred_max_fraction ({hi:g})."
+            )
+        out += _curve_problems("head_curve", head, 3)
         out += _curve_problems("power_curve", power, 3)
         out += _curve_problems("npsh_curve", npsh, 3)
         if out:
@@ -317,7 +328,7 @@ class CentrifugalPump(Component):
             "shaft_power": shaft,
             "hydraulic_power": hydraulic,
             "efficiency": eff,
-            "specific_energy": shaft / q if q > 0.0 else None,
+            "specific_energy": shaft / q if q > FLOW_THRESHOLD else None,
             "npsh_available": self._npsh_available(sol),
             "npsh_required": max(fit.npsh_required_at(q, s), 0.0),
             "speed_rpm": s * float(self.parameters["rated_speed"]),
@@ -330,8 +341,10 @@ class CentrifugalPump(Component):
         flow and fit RMS.
 
         ``specific_energy`` is the shaft energy per pumped volume, ``shaft_power /
-        volume_flow`` (J/m3 in SI, reported in kWh/m3); it is None when the flow is not
-        positive (no water is delivered, so there is no energy per volume).
+        volume_flow`` (J/m3 in SI, reported in kWh/m3); it is None unless the flow is above
+        the 0.01 m3/h forward-flow threshold (no water is delivered, so there is no energy
+        per volume; a leakage flow of 1e-5 m3/h would otherwise give tens of thousands of
+        kWh/m3 and swamp the minimum and maximum of a simulated series).
 
         ``head`` is the pressure rise ``(p_outlet - p_inlet) / (rho * g)``; it differs from the
         fitted curve only by the law's tiny linear term (1 Pa per kg/s).
@@ -339,7 +352,8 @@ class CentrifugalPump(Component):
         return self._state(sol)
 
     def extra_warnings(self, sol: NetworkView) -> list[ComponentWarning]:
-        """``cavitation``, ``low_flow``, ``beyond_curve`` and ``reverse_flow``.
+        """``cavitation``, ``low_flow``, ``beyond_curve``, ``outside_preferred_region``,
+        ``motor_overload`` and ``reverse_flow``.
 
         The conditions are the ones the manifest modes use, on the same numbers:
 
@@ -349,6 +363,10 @@ class CentrifugalPump(Component):
         - low_flow: running (speed above 0.01) and ``volume_flow < min_flow_fraction *
           bep_flow``;
         - beyond_curve: running and ``volume_flow > largest curve flow * speed``;
+        - outside_preferred_region (info): running, neither low_flow nor beyond_curve, and
+          ``volume_flow`` outside ``[preferred_min_fraction, preferred_max_fraction] *
+          bep_flow`` (the preferred operating region of ANSI/HI 9.6.3);
+        - motor_overload: ``shaft_power > motor_power``;
         - reverse_flow: ``volume_flow < -0.01 m3/h``.
         """
         st = self._state(sol)
@@ -383,7 +401,9 @@ class CentrifugalPump(Component):
                 )
             )
         bep = float(st["bep_flow"] or 0.0)
-        if running and q < float(p["min_flow_fraction"]) * bep:
+        low = running and q < float(p["min_flow_fraction"]) * bep
+        beyond = running and q > self.fit.max_flow * s
+        if low:
             out.append(
                 self.warning(
                     "low_flow",
@@ -392,13 +412,36 @@ class CentrifugalPump(Component):
                     "recirculation and vibration.",
                 )
             )
-        if running and q > self.fit.max_flow * s:
+        if beyond:
             out.append(
                 self.warning(
                     "beyond_curve",
                     f"Flow {q * 3600:.3g} m3/h exceeds the largest curve flow scaled to this "
                     f"speed ({self.fit.max_flow * s * 3600:.3g} m3/h); the fitted curves are "
                     "extrapolated.",
+                )
+            )
+        lo, hi = float(p["preferred_min_fraction"]), float(p["preferred_max_fraction"])
+        if running and bep > 0.0 and not (low or beyond) and not lo * bep <= q <= hi * bep:
+            out.append(
+                self.warning(
+                    "outside_preferred_region",
+                    f"Flow {q * 3600:.3g} m3/h is {q / bep * 100:.3g} % of the best-efficiency "
+                    f"flow ({bep * 3600:.3g} m3/h), outside the preferred operating region "
+                    f"({lo * 100:.3g} to {hi * 100:.3g} %); expect lower efficiency, more "
+                    "vibration and shorter bearing and seal life in continuous duty. Change "
+                    "the speed, the system or the pump size to run closer to the "
+                    "best-efficiency point.",
+                )
+            )
+        shaft, motor = float(st["shaft_power"] or 0.0), float(p["motor_power"])
+        if shaft > motor:
+            out.append(
+                self.warning(
+                    "motor_overload",
+                    f"Shaft power {shaft / 1000:.3g} kW exceeds the motor rating "
+                    f"{motor / 1000:.3g} kW ({shaft / motor * 100:.3g} %): the motor overheats "
+                    "and trips. Reduce the speed or the flow, or fit a larger motor.",
                 )
             )
         if q < -FLOW_THRESHOLD:

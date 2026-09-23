@@ -105,7 +105,7 @@ The system drives your component through these hooks (all optional except `build
 | `build(nb)` | whenever the topology or a parameter changes | Create nodes and branches with the `NetworkBuilder`; store the handles on `self`. Must be re-runnable. |
 | `update_laws()` | before **every** network solve, and in `check()` | Push parameters, inputs and states into the law objects, fixed-node pressures (`node.p`) and temperatures (`node.T`), and gate directions. Must not fail on the defaults. |
 | `settle()` | at the start of `solve()` | Set `steady: settle` states to equilibrium (e.g. `position = opening`). |
-| `start_simulation()` | once at the start of every `simulate()` | Reset per-run accumulators (e.g. a spilled-volume counter). Do not reset states: a simulation continues from the current state. |
+| `start_simulation()` | once at the start of every `simulate()` | Reset per-run accumulators (e.g. a spilled-volume counter). Do not reset states: a simulation continues from the current state (`simulate(restore=True)` puts parameters, inputs and states back afterwards; the component needs no code for it). |
 | `update_fast_states(dt)` | twice per simulation sample (see below) | First-order lags with `first_order(x, target, tau, dt)`. Default calls `settle()`. |
 | `observables(view) -> dict` | after each solve | SI value (or `None`) for **every** observable in the manifest. Missing keys raise `ContractError`. |
 | `extra_warnings(view) -> list` | after each solve | Code-emitted warnings via `self.warning(code, message=None)`; the code must be declared in the manifest `warnings` list. |
@@ -339,7 +339,25 @@ inputs); an on/off input is a number in [0, 1].
 and need no code. Anything an expression cannot say (it depends on port connectivity, on a
 curve lookup or on a quantity you do not expose) goes in `extra_warnings`, and its code must
 be listed under `warnings`. `self.warning(code)` raises `ContractError` for an undeclared code,
-and the catalogue test checks every emitted code against the manifest.
+and the catalogue test checks every emitted code against the manifest. A simulation reports
+each warning once: `time` and `message` of its first occurrence, `last_time` of its last and
+`active_at_end`; the component does not track this itself. Prefer one warning per condition:
+the pump's `outside_preferred_region` info is suppressed while the more specific `low_flow`
+or `beyond_curve` applies. Use severity `info` for advice (continuous-duty sizing, a nearly
+empty tank) and `warning` when a result is outside the model's validity or the equipment is
+at risk.
+
+**Observables near zero flow.** A ratio over the flow (energy per m3, residence time) is
+undefined without flow; return `None` below the 0.01 m3/h threshold the modes use, not only at
+exactly zero, or a leakage flow (1e-5 m3/h behind a closed gate) gives a huge meaningless
+value that swamps the minimum and maximum of a simulated series (the pump's
+`specific_energy`).
+
+**Boundaries that cannot hold a suction.** A quasi-steady network keeps every line full of
+water, so a pump can pull the outlet of an empty tank far below atmospheric pressure without
+the pump itself seeing anything wrong (at zero flow a starved suction and a closed discharge
+valve look the same to it). Flag such states where they are unambiguous: the tank raises
+`drawing_air` when it is empty and a port is under suction.
 
 **Modes.** Conditions are evaluated in order over the local display-unit names (parameters,
 inputs, states, observables, `port.p|m_flow|T`); the first true one wins, so end with a

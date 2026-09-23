@@ -23,6 +23,7 @@ from worldparts.components.base import Component, NetworkBuilder, NetworkView
 from worldparts.laws import GateLaw, kv_to_k
 from worldparts.media import G
 from worldparts.network import Branch, Node
+from worldparts.results import ComponentWarning
 from worldparts.units import P_ATM
 
 __all__ = ["Tank"]
@@ -35,6 +36,13 @@ EMPTY_LEVEL = 0.001
 DRAW_LEVEL = EMPTY_LEVEL * (1.0 - 1e-9)
 #: Volume flows (m3/s) below this magnitude do not count as overflow (solver noise).
 OVERFLOW_TOL = 1e-9
+#: Suction (Pa below atmospheric, about 1 cm of water) at the port of an empty tank above
+#: which the ``drawing_air`` warning is raised: an empty open tank cannot hold its outlet
+#: below atmospheric pressure, air enters instead.
+SUCTION_TOL = 100.0
+#: Fraction of the simulation outflow cap at which the cap counts as binding (the tank is
+#: being drawn empty within one step).
+CAP_BINDING = 0.999
 PORTS = ("inlet", "outlet")
 
 
@@ -154,6 +162,41 @@ class Tank(Component):
             "net_inflow": net,
             "overflow_rate": overflow,
         }
+
+    def extra_warnings(self, sol: NetworkView) -> list[ComponentWarning]:
+        """``drawing_air`` when the tank cannot supply what a port draws.
+
+        Raised for each connected port whose pressure is more than :data:`SUCTION_TOL`
+        below atmospheric while the tank is empty (``level <= EMPTY_LEVEL``) or, in a
+        simulation, while the port's outflow is held at the cap that stops a step drawing
+        more water than the tank holds. The outlet of an open tank with no water above it
+        is open to the air, so a real pump or siphon on it would draw air (lose prime, run
+        dry, break the siphon); the model keeps the line full of water and lets the port
+        pressure fall instead, so the results downstream are not physical.
+        """
+        level = float(self.states["level"])
+        out: list[ComponentWarning] = []
+        for port in PORTS:
+            p = sol.port_p(port)
+            if p is None or not sol.port_connected(port) or p >= P_ATM - SUCTION_TOL:
+                continue
+            gate = self.gates[port]
+            outflow = -sol.m(self.branches[port])  # kg/s out of the tank
+            capped = gate.limit is not None and outflow >= CAP_BINDING * gate.limit
+            if level > EMPTY_LEVEL and not capped:
+                continue
+            state = "empty" if level <= EMPTY_LEVEL else f"nearly empty ({level * 1000:.3g} mm)"
+            out.append(
+                self.warning(
+                    "drawing_air",
+                    f"The tank is {state} and port '{port}' is under suction "
+                    f"({(p - P_ATM) / 1e5:.3g} bar gauge): air would enter the outlet, so a "
+                    "pump drawing from it loses prime and runs dry and a siphon breaks. The "
+                    "model keeps the line full of water, so the results downstream of this "
+                    "port are not physical.",
+                )
+            )
+        return out
 
     def integrate(self, dt: float, sol: NetworkView) -> None:
         """Explicit Euler for the level, spill above the rim and perfect mixing."""

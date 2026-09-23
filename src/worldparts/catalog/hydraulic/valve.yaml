@@ -37,7 +37,7 @@ ports:
   - {name: port_b, type: fluid, medium: water, description: Outlet in the forward direction.}
 parameters:
   - name: kv
-    description: Flow coefficient at full opening (m3/h of water at 1 bar pressure drop).
+    description: "Flow coefficient at full opening (m3/h of water at 1 bar pressure drop). Size it to the line: the default 2.5 m3/h is a small DN15 control valve. Typical globe control valves are about Kv 4 (DN15), 10 (DN25), 25 (DN40), 40 (DN50), 63 (DN65), 100 (DN80) and 160 (DN100); full-bore ball and butterfly valves pass several times more (DN50 about 150 to 300)."
     type: number
     unit: m3/h
     default: 2.5

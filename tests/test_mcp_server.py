@@ -155,7 +155,7 @@ def test_list_components() -> None:
 
 def test_describe_component() -> None:
     async def body(s: Session) -> None:
-        d = await s.call("describe_component", component="valve")
+        d = await s.call("describe_component", component="valve", detail="full")
         assert d["id"] == "worldparts.hydraulic.valve" and d["alias"] == "valve"
         assert d["resource_uri"] == RESOURCE_PREFIX + "worldparts.hydraulic.valve"
         assert [p["name"] for p in d["ports"]] == ["port_a", "port_b"]
@@ -665,7 +665,7 @@ def test_describe_component_shows_what_the_manifest_declares() -> None:
     """Scenario systems and expectations, contract rules and sweeps, table columns."""
 
     async def body(s: Session) -> None:
-        d = await s.call("describe_component", component="valve")
+        d = await s.call("describe_component", component="valve", detail="full")
         m = wp.default_catalog().get("valve")
         assert [c["rule"] for c in d["contracts"]] == [
             {k: v for k, v in c["check"].items() if k != "type"} for c in m.contracts

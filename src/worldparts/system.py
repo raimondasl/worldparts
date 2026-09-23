@@ -21,7 +21,7 @@ import copy
 import math
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from worldparts.catalog import Catalog, default_catalog
@@ -56,6 +56,30 @@ __all__ = ["System"]
 _NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _BAR_GAUGE = converter("bar", "gauge")
 _DEGC = converter("degC")
+
+
+#: Expected shapes of the parts of a system document, appended to schema errors.
+SYSTEM_DOCUMENT_HINTS: dict[str, str] = {
+    "(root)": (
+        "a system document is {'worldparts_system': '0.1', 'name': ..., 'description'?: ..., "
+        "'components': [...], 'connections'?: [...], 'simulation'?: {...}}"
+    ),
+    "worldparts_system": "the format version, the string '0.1'",
+    "components": (
+        "components is a list of {'name', 'type', 'parameters'?, 'inputs'?, 'states'?} "
+        "objects, e.g. [{'name': 'mains', 'type': 'supply', 'parameters': {'pressure': "
+        "'3 bar'}}, {'name': 'out', 'type': 'drain'}]; names are identifiers, parameter, "
+        "input and state values are numbers in the declared unit, strings with units, "
+        "booleans or table rows"
+    ),
+    "connections": (
+        "connections is a list of [port_path, port_path] pairs, e.g. [['mains.port', 'out.port']]"
+    ),
+    "simulation": (
+        "simulation is {'duration': '10 min', 'step'?: '1 s', 'events'?: [{'at': '60 s', "
+        "'set': {'valve.opening': 0}}]}"
+    ),
+}
 
 
 @dataclass
@@ -885,6 +909,7 @@ class System:
         step: Any = None,
         events: Iterable[Mapping[str, Any]] | None = None,
         variables: Iterable[str] | None = None,
+        restore: bool = False,
     ) -> SimulationResult:
         """Time simulation with a fixed step (design section 5.5).
 
@@ -899,7 +924,11 @@ class System:
         constant still reads its old position at ``t``); hydraulics and temperatures are
         solved and recorded; storage states are integrated to the next sample. The system is
         left at the final state (inputs changed by events stay changed; use
-        :meth:`reset_states` to restart).
+        :meth:`reset_states` to restart), unless ``restore`` is true.
+
+        Each warning is reported once, with the message and time of its first occurrence,
+        the time of its last occurrence (``last_time``) and whether it is still raised at
+        the end (``active_at_end``).
 
         Args:
             duration: Total time, e.g. ``"10 min"`` or seconds. When omitted, the system
@@ -908,6 +937,9 @@ class System:
             events: ``[{"at": "60 s", "set": {"valve.opening": 0}}]``; values may carry
                 units. Events after ``duration`` are rejected.
             variables: Paths to record (default: all).
+            restore: When true, the parameters, inputs and states are put back to their
+                values before the run (also when the run fails), so the same system can be
+                simulated again from the same start.
 
         Raises:
             InvalidValueError: Invalid duration, step or events (including events after the
@@ -945,10 +977,12 @@ class System:
         times: list[float] = []
         series: dict[str, list[Any]] = {}
         first_warn: dict[tuple[str, str], ComponentWarning] = {}
+        last_warn: dict[tuple[str, str], float] = {}
         mode_changes: list[ModeChange] = []
         last_modes: dict[str, str | None] = {}
         result: SolveResult | None = None
         ev_i = 0
+        saved = self._save_values() if restore else None
         self._simulating = True
         try:
             for inst in self._instances.values():
@@ -992,6 +1026,7 @@ class System:
                         first_warn[key] = ComponentWarning(
                             w.component, w.code, w.severity, w.message, t
                         )
+                    last_warn[key] = t
                 for inst_name, mode in result.modes.items():
                     if k == 0 or last_modes.get(inst_name) != mode:
                         mode_changes.append(ModeChange(t, inst_name, mode))
@@ -1005,19 +1040,55 @@ class System:
             self._simulating = False
             for inst in self._instances.values():
                 inst.component.time_step = None
+            if saved is not None:
+                self._restore_values(saved)
         assert result is not None
         result.issues = issues
+        active = {(w.component, w.code) for w in result.warnings}
+        warnings = [
+            replace(w, last_time=last_warn[key], active_at_end=key in active)
+            for key, w in first_warn.items()
+        ]
         units = {p: result.units[p] for p in series}
         refs = {p: result.references[p] for p in series if p in result.references}
         return SimulationResult(
             time=times,
             series=series,
             units=units,
-            warnings=list(first_warn.values()),
+            warnings=warnings,
             mode_changes=mode_changes,
             final=result,
             references=refs,
         )
+
+    def _save_values(self) -> dict[str, tuple[dict[str, Any], ...]]:
+        """Copies of every instance's parameters, inputs, states and explicit values."""
+        return {
+            name: (
+                dict(inst.component.parameters),
+                dict(inst.component.inputs),
+                dict(inst.component.states),
+                dict(inst.explicit),
+            )
+            for name, inst in self._instances.items()
+        }
+
+    def _restore_values(self, saved: Mapping[str, tuple[dict[str, Any], ...]]) -> None:
+        """Put back values saved by :meth:`_save_values`."""
+        for name, (params, inputs, states, explicit) in saved.items():
+            inst = self._instances.get(name)
+            if inst is None:
+                continue
+            comp = inst.component
+            comp.parameters.clear()
+            comp.parameters.update(params)
+            comp.inputs.clear()
+            comp.inputs.update(inputs)
+            comp.states.clear()
+            comp.states.update(states)
+            inst.explicit.clear()
+            inst.explicit.update(explicit)
+        self._dirty = True
 
     # ------------------------------------------------------------------------------------
     # documents
@@ -1078,7 +1149,7 @@ class System:
             InvalidValueError: When the document does not match the schema or repeats an
                 instance name.
         """
-        problems = _schema_errors("system", dict(doc))
+        problems = _schema_errors("system", dict(doc), SYSTEM_DOCUMENT_HINTS)
         if problems:
             raise InvalidValueError(
                 "The system document does not match system.schema.json:\n"

@@ -257,6 +257,7 @@ doc = s.to_dict(); s2 = wp.System.from_dict(doc)
 
 `SolveResult`: `converged`, `iterations`, `max_residual`, `values` (path to display-unit value), `units` (path to unit string), `modes` (instance to mode), `warnings` (list of `ComponentWarning(component, code, severity, message)`), `to_dict()` (pressure values carry `reference: gauge|absolute|difference`). `get(path, unit="bar absolute")` converts between references. `System.variables()` lists every path; string and table parameters are not part of results (`reported: false`) and are read with `System.get`. Pressure strings may state their reference explicitly (`"2 bar absolute"`, `"1.5 bara"`, `"3 barg"`); `"1 atm"` without a reference is rejected for gauge variables. `SimulationResult`: `time` (s), `series` (path to list), `units`, `warnings` (first occurrence time for each component and code), `mode_changes` (time, instance, mode), `final` (a `SolveResult` at the end), `to_dict(max_points=None)` with downsampling.
 Revised after verification: `set_values` re-initialises only the states whose initial value the batch changes, then runs `check_states` on the trial values before applying anything; `check()` reports `check_states` problems as `invalid_value`. `VariableInfo` carries `quantity`, and temperature differences report the reference `difference`.
+Revised after the agent usability trial: `simulate(..., restore=False)` puts parameters, inputs and states back after the run when `restore=True`; simulation warnings carry the first time, `last_time` and `active_at_end`; `from_dict` schema errors name the expected shape of the failing part instead of echoing the value.
 
 ### 6.3 System document
 
@@ -330,6 +331,7 @@ All ids are `worldparts.hydraulic.<alias>`. Numbers are defaults; bracketed rang
 - Observables: `volume_flow` L/min, positive into the drain.
 - Envelope: `backflow` warning when `volume_flow < -0.01` (the network is below atmospheric pressure and draws from the drain).
 - Modes: `receiving`, `backflow`, `idle`.
+- Note: a free discharge has an exit loss of one velocity head that the drain cannot model (it does not know the pipe diameter); set `minor_loss = 1` on the pipe that ends at the drain.
 
 ### 8.3 `pipe`
 
@@ -339,6 +341,7 @@ All ids are `worldparts.hydraulic.<alias>`. Numbers are defaults; bracketed rang
 - Envelope: `high_velocity` warning when `abs(velocity) > 3`; `high_relative_roughness` warning when roughness exceeds 5% of the diameter. Code-emitted: `below_vapour_pressure` when a port's absolute pressure falls below the vapour pressure (the quasi-steady model would otherwise report impossible negative absolute pressures). Parameter rule: `roughness < diameter / 2`.
 - Modes: `stagnant` (`abs(volume_flow) < 0.001`), `flowing`.
 - Law: `PipeLaw`.
+- Note: the `minor_loss` description tells users to add 1 for a free discharge or a tank entry.
 
 ### 8.4 `valve` (two-way control valve)
 
@@ -349,6 +352,7 @@ All ids are `worldparts.hydraulic.<alias>`. Numbers are defaults; bracketed rang
 - Observables: `volume_flow` L/min; `pressure_drop` bar; `effective_kv` m3/h.
 - Envelope: `high_pressure_drop` warning when `pressure_drop > 3`.
 - Modes: `closed` (`position <= 0.001`), `throttling` (`position < 0.999`), `open`.
+- Note: the `kv` description gives typical Kv values by nominal size, because an agent sizing a line needs a starting point.
 
 ### 8.5 `check_valve`
 
@@ -395,6 +399,11 @@ All ids are `worldparts.hydraulic.<alias>`. Numbers are defaults; bracketed rang
   - `cavitation` is also raised whenever NPSH available is below zero; `beyond_curve` and `low_flow` apply only while running (speed above 0.01).
   - `check_parameters` rejects curves whose best efficiency exceeds 100 %.
   - A stopped pump is a resistance whose quadratic coefficient is at least `0.5 * a / Q_max**2` (`STOP_RESISTANCE_FACTOR`), blended linearly into the fitted `c` as the speed rises to 0.01, so a stopped pump with a flat curve cannot short-circuit the network.
+- Revised after the agent usability trial:
+  - New parameters `motor_power` kW (default 4.0, [0.01, 100000]), `preferred_min_fraction` (0.7, [0, 1]) and `preferred_max_fraction` (1.2, [1, 5]); the minimum must be below the maximum.
+  - New warnings `motor_overload` (shaft power above `motor_power`) and `outside_preferred_region` (info; flow outside 70 to 120 % of the best-efficiency flow, after ANSI/HI 9.6.3; suppressed while `low_flow` or `beyond_curve` applies).
+  - `specific_energy` is `None` unless the flow is above 0.01 m³/h.
+  - The pump cannot tell from its own ports whether it is drawing air; the tank reports that (8.9).
 
 ### 8.9 `tank` (open atmospheric tank, ports at the bottom)
 
@@ -410,6 +419,7 @@ All ids are `worldparts.hydraulic.<alias>`. Numbers are defaults; bracketed rang
   - In a simulation each step's outflow is capped at the water above the 1 mm empty level, shared between the connected ports, so the water balance closes exactly.
   - The level must not exceed the height (`check_states`); only `initial_level` and `initial_temperature` reset the states.
   - In a steady solve, `overflow_rate` is the net inflow when the tank is full and filling.
+- Revised after the agent usability trial: new warning `drawing_air` when the tank is empty (or a step empties it) and a port is held more than 100 Pa below atmospheric pressure, the signature of a pump losing prime. Exit and entry losses at the ports are not modelled beyond `port_kv`. A top inlet (free discharge above the water) is not modelled yet.
 
 ### 8.10 `media_filter` (sand or cartridge filter; purification example)
 
@@ -461,6 +471,14 @@ Revised after implementation:
 - `add_component` reports the check issues that name the new instance, so a fresh part shows unconnected-port warnings until it is wired.
 - `describe_component` also returns each variable's `quantity`, table-column descriptions and references, each scenario's `system`, `simulate` and `expect` (usable as templates), and each contract's rule and sweep.
 - Extra tools such as `export_system` register through `create_server(registrars=[...])` or `EXTRA_TOOL_REGISTRARS`.
+Revised after the agent usability trial:
+- `describe_component(component, detail="brief")`: brief lists scenarios and contracts by id and omits provenance; `detail="full"` returns everything.
+- New tool `solve_for(system_id, target, value, vary, lower, upper, variables=None, units=None)`: goal seek with Brent's method; an unreachable target reports the target at both bounds and leaves the system unchanged.
+- `simulate` accepts ramp events `{at, ramp: {path: [start, end]}, over}` and `restore`; its warnings carry `last_time` and `active_at_end`.
+- `units` accepts wildcards such as `{"*.volume_flow": "m3/h"}`; explicit paths win.
+- `list_components` shows table columns as `name [unit]`; `add_component` returns a `hint` that wiring issues clear once connected.
+- Output schemas are structure-only (no titles, descriptions or defaults) to keep `tools/list` small; meanings live in the tool descriptions.
+- `export_system` is registered only when an exporter exists (the WNTR adapter adds it).
 
 ## 10. CLI
 

@@ -515,6 +515,11 @@ PUMP_SPEC = {
         "rated_speed": ("rpm", 2900, 100, 20000),
         "npsh_margin": ("m", 0.5, 0, 10),
         "min_flow_fraction": ("1", 0.15, 0, 1),
+        # Added after the agent trial (pending design 8.8 revision): preferred operating
+        # region (ANSI/HI 9.6.3) and driver rating.
+        "preferred_min_fraction": ("1", 0.7, 0, 1),
+        "preferred_max_fraction": ("1", 1.2, 1, 5),
+        "motor_power": ("kW", 4.0, 0.01, 100000),
     },
     "inputs": {"speed": ("1", 1.0, 0, 1.2)},
     "observables": {
@@ -533,7 +538,15 @@ PUMP_SPEC = {
         "curve_fit_rms": "m",
     },
     "modes": ["off", "reverse_flow", "cavitating", "low_flow", "running"],
-    "codes": {"cavitation", "low_flow", "beyond_curve", "reverse_flow"},
+    "codes": {
+        "cavitation",
+        "low_flow",
+        "beyond_curve",
+        "reverse_flow",
+        # Added after the agent trial (pending design 8.8 revision).
+        "outside_preferred_region",
+        "motor_overload",
+    },
 }
 TANK_SPEC = {
     "parameters": {
@@ -551,7 +564,8 @@ TANK_SPEC = {
         "overflow_rate": "m3/h",
     },
     "modes": ["empty", "overflowing", "filling", "draining", "steady"],
-    "codes": {"tank_empty", "low_level", "tank_overflow"},
+    # drawing_air added after the agent trial (pending design 8.9 revision).
+    "codes": {"tank_empty", "low_level", "tank_overflow", "drawing_air"},
 }
 
 

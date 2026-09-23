@@ -14,6 +14,11 @@ description: |
   near-ideal linear branch (about 1e-6 Pa per kg/s, so less than 1e-6 bar up to 100 m3/s).
   It also provides a pressure reference.
 
+  The drain adds no exit loss: water arriving through a pipe leaves with its velocity head
+  `v**2 / (2 g)` (0.26 m at 2.26 m/s in a 50 mm pipe, about 1 % of a 25 m lift), which
+  the pump or supply must provide. Add 1 to the `minor_loss` of the pipe that discharges
+  into the drain to include it.
+
   Not modelled: the head of water in a basin, air entrainment and free-surface flow.
 tags: [boundary, sink, drain, outlet, atmosphere]
 classification:

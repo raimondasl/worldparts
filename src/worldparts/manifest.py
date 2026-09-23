@@ -85,16 +85,84 @@ def _validator(name: str) -> jsonschema.protocols.Validator:
     return cls(schema, format_checker=cls.FORMAT_CHECKER)
 
 
-def _schema_errors(name: str, data: Any) -> list[str]:
+#: Longest excerpt of an offending value quoted in a schema error message.
+_MAX_EXCERPT = 60
+
+
+def _json_type(value: Any) -> str:
+    """The JSON type name of a Python value."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, Mapping):
+        return "object"
+    if isinstance(value, (list, tuple)):
+        return "array"
+    return type(value).__name__
+
+
+def _excerpt(value: Any) -> str:
+    """A short description of an offending value: its repr when short, else its type."""
+    text = repr(value)
+    if len(text) <= _MAX_EXCERPT:
+        return text
+    if isinstance(value, Mapping):
+        keys = ", ".join(repr(k) for k in list(value)[:5])
+        more = ", ..." if len(value) > 5 else ""
+        return f"an object with keys {keys}{more}"
+    if isinstance(value, (list, tuple)):
+        return f"an array of {len(value)} items"
+    return text[: _MAX_EXCERPT - 3] + "..."
+
+
+def _schema_message(e: jsonschema.ValidationError) -> str:
+    """A schema error message that never echoes a large offending value."""
+    if e.validator == "type":
+        expected = e.validator_value
+        if isinstance(expected, list):
+            expected = " or ".join(str(x) for x in expected)
+        got = _excerpt(e.instance)
+        if not got.startswith("an "):
+            got = f"{_json_type(e.instance)} {got}"
+        return f"must be of type {expected}, got {got}"
+    if e.validator in ("minItems", "maxItems") and isinstance(e.instance, (list, tuple)):
+        which = "at least" if e.validator == "minItems" else "at most"
+        return f"must have {which} {e.validator_value} items, got {len(e.instance)}"
+    msg = e.message
+    if e.validator == "oneOf" and e.context:
+        best = min(e.context, key=lambda c: len(list(c.absolute_path)))
+        return f"{_excerpt(e.instance)} matches none of the allowed forms (closest: " + (
+            f"{_schema_message(best)})"
+        )
+    if len(msg) > 300:
+        msg = msg[:297] + "..."
+    return msg
+
+
+def _schema_errors(name: str, data: Any, hints: Mapping[str, str] | None = None) -> list[str]:
+    """Schema errors as ``'<location>: <message>'`` lines.
+
+    Messages name the expected type and describe (not echo) large offending values. With
+    ``hints``, a hint keyed by the first path element (or ``"(root)"``) is appended to the
+    first error at that place, e.g. the expected shape of a list item.
+    """
     errors = sorted(_validator(name).iter_errors(data), key=lambda e: list(e.absolute_path))
     out = []
+    hinted: set[str] = set()
     for e in errors:
-        loc = "/".join(str(p) for p in e.absolute_path) or "(root)"
-        msg = e.message
-        if e.validator == "oneOf" and e.context:
-            best = min(e.context, key=lambda c: len(list(c.absolute_path)))
-            msg = f"{msg[:200]} (closest: {best.message[:200]})"
-        out.append(f"{loc}: {msg}")
+        path = list(e.absolute_path)
+        loc = "/".join(str(p) for p in path) or "(root)"
+        line = f"{loc}: {_schema_message(e)}"
+        key = str(path[0]) if path else "(root)"
+        if hints and key in hints and key not in hinted:
+            hinted.add(key)
+            line += f" ({hints[key]})"
+        out.append(line)
     return out
 
 

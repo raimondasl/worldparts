@@ -21,14 +21,28 @@ description: |
   Code-emitted warnings flag cavitation (NPSH available below NPSH required plus
   `npsh_margin` with forward flow, or an inlet below the vapour pressure at any flow, as when
   the pump draws from an empty tank), operation below `min_flow_fraction` of the
-  best-efficiency flow, operation beyond the curve, and reverse flow.
+  best-efficiency flow, operation beyond the curve, and reverse flow. Two more code-emitted
+  warnings cover continuous-duty sizing: `outside_preferred_region` (info) when the running
+  pump is outside its preferred operating region, `preferred_min_fraction` to
+  `preferred_max_fraction` of the best-efficiency flow (70 to 120 % by default, the typical
+  POR of ANSI/HI 9.6.3) but neither below the minimum flow nor beyond the curve (those have
+  their own warnings); and `motor_overload` when the shaft power exceeds `motor_power`, the
+  driver rating (4 kW by default: the next standard motor size above the 3.15 kW maximum
+  of the default power curve, so the default pump is non-overloading at rated speed but
+  overloads when driven fast, e.g. at speed 1.15 through a Kv 15 valve).
+
+  Starved suction: at no flow the pump cannot tell an empty suction tank from a closed
+  discharge valve (both give a shut-off head across the pump); it reports `low_flow`, and
+  `cavitation` only once the inlet falls below the vapour pressure. The tank reports
+  `drawing_air` when an empty tank's outlet is under suction.
 
   Not modelled: the effect of cavitation on head and flow (the warning flags it but the
   curve is still used), the head and power curves outside the tabulated range (extrapolated
   quadratics), four-quadrant behaviour (reverse flow or reverse rotation use the same
   quadratic, which is not a measured characteristic), viscosity corrections, motor and drive
-  losses (the shaft power is the pump input power), start-up transients and inertia, and the
-  temperature rise of the water through the pump.
+  losses (the shaft power is the pump input power; `motor_power` is only compared with it),
+  loss of prime and dry running (the suction line always stays full of water), start-up
+  transients and inertia, and the temperature rise of the water through the pump.
 tags: [pump, centrifugal, affinity-laws, npsh, cavitation, variable-speed, purification]
 classification:
   ifc: {entity: IfcPump, predefined_type: NOTDEFINED}
@@ -90,6 +104,27 @@ parameters:
     default: 0.15
     minimum: 0
     maximum: 1
+  - name: preferred_min_fraction
+    description: Lower end of the preferred operating region as a fraction of the best-efficiency flow (ANSI/HI 9.6.3, typically 0.7); below it the outside_preferred_region info is raised. Must be below preferred_max_fraction.
+    type: number
+    unit: "1"
+    default: 0.7
+    minimum: 0
+    maximum: 1
+  - name: preferred_max_fraction
+    description: Upper end of the preferred operating region as a fraction of the best-efficiency flow (ANSI/HI 9.6.3, typically 1.2).
+    type: number
+    unit: "1"
+    default: 1.2
+    minimum: 1
+    maximum: 5
+  - name: motor_power
+    description: Rated power of the driver (motor nameplate); the motor_overload warning is raised when the shaft power exceeds it. The default suits the default curves (maximum 3.15 kW at rated speed).
+    type: number
+    unit: kW
+    default: 4.0
+    minimum: 0.01
+    maximum: 100000
 inputs:
   - {name: speed, description: "Relative speed (fraction of rated_speed); 0 is stopped.", unit: "1", default: 1.0, minimum: 0, maximum: 1.2}
 observables:
@@ -98,7 +133,7 @@ observables:
   - {name: shaft_power, unit: kW, description: Shaft power from the fitted power curve at the current flow and speed (not below 0).}
   - {name: hydraulic_power, unit: kW, description: Hydraulic power rho g Q H (negative with reverse flow or negative head).}
   - {name: efficiency, unit: "%", description: "Hydraulic over shaft power; 0 when flow, head or power is not positive."}
-  - {name: specific_energy, unit: kWh/m3, description: "Shaft energy per pumped volume, shaft_power / volume_flow (equal to rho g H / efficiency); the running cost per m3 before motor and drive losses. None when the flow is not positive."}
+  - {name: specific_energy, unit: kWh/m3, description: "Shaft energy per pumped volume, shaft_power / volume_flow (equal to rho g H / efficiency); the running cost per m3 before motor and drive losses. None unless the flow is above 0.01 m3/h (a leakage flow would give a meaningless huge value)."}
   - {name: npsh_available, unit: m, description: "Net positive suction head available: (p_inlet_abs - p_vapour(T_inlet)) / (rho g)."}
   - {name: npsh_required, unit: m, description: NPSH required from the fitted curve at the current flow and speed (not below 0).}
   - {name: speed_rpm, unit: rpm, description: Rotational speed.}
@@ -114,6 +149,8 @@ warnings:
   - {code: cavitation, severity: warning, description: "NPSH available is below NPSH required plus npsh_margin with forward flow (above 0.01 m3/h), or below 0 at any flow (inlet below the vapour pressure, e.g. running dry from an empty tank); the pump cavitates."}
   - {code: low_flow, severity: warning, description: "Running (speed above 0.01) below min_flow_fraction times the best-efficiency flow; expect heating, recirculation and vibration."}
   - {code: beyond_curve, severity: warning, description: "Running (speed above 0.01) at a flow above the largest head-curve flow times the speed; the fitted curves are extrapolated."}
+  - {code: outside_preferred_region, severity: info, description: "Running (speed above 0.01), neither low_flow nor beyond_curve, and the flow is outside preferred_min_fraction to preferred_max_fraction of the best-efficiency flow (the preferred operating region); fine briefly, but not for continuous duty."}
+  - {code: motor_overload, severity: warning, description: Shaft power exceeds motor_power; the motor overheats and trips.}
   - {code: reverse_flow, severity: warning, description: Water flows backwards through the pump (volume_flow below -0.01 m3/h).}
 scenarios:
   - id: operating-point
@@ -150,6 +187,49 @@ scenarios:
       - {warning: dut.cavitation, present: false}
       - {warning: dut.low_flow, present: false}
       - {warning: dut.beyond_curve, present: false}
+      - {warning: dut.outside_preferred_region, present: false}
+      - {warning: dut.motor_overload, present: false}
+  - id: part-load
+    description: >-
+      The operating-point circuit with a Kv 8 valve: a + c Q**2 = Q**2 * 100 / (g * 64) gives
+      Q = 14.0053 m3/h, 58.1 % of the 24.111 m3/h best-efficiency flow. That is above the
+      minimum flow (15 %) but below the preferred operating region (70 to 120 %), so the
+      outside_preferred_region info is raised and low_flow is not.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0}}
+        - {name: dut, type: centrifugal_pump}
+        - {name: v, type: valve, parameters: {kv: 8}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, v.port_a]
+        - [v.port_b, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 14.0053, rel_tol: 1.0e-4}
+      - {mode: dut, is: running}
+      - {warning: dut.outside_preferred_region, present: true}
+      - {warning: dut.low_flow, present: false}
+  - id: motor-overload
+    description: >-
+      The operating-point circuit at speed 1.2: every point is similar to the rated one
+      (Q = 1.2 * 23.9596 = 28.7515 m3/h) and the shaft power is 1.2**3 * 2.697254 =
+      4.66085 kW, above the 4 kW motor, so motor_overload is raised.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0}}
+        - {name: dut, type: centrifugal_pump, inputs: {speed: 1.2}}
+        - {name: v, type: valve, parameters: {kv: 15}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, v.port_a]
+        - [v.port_b, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 28.75152, rel_tol: 1.0e-4}
+      - {variable: dut.shaft_power, value: 4.66085, rel_tol: 1.0e-4}
+      - {warning: dut.motor_overload, present: true}
+      - {warning: dut.outside_preferred_region, present: false}
   - id: shutoff
     description: >-
       Same circuit with the valve closed (seat leakage only): the pump runs at shut-off, the
@@ -171,6 +251,8 @@ scenarios:
       - {mode: dut, is: low_flow}
       - {warning: dut.low_flow, present: true}
       - {warning: dut.cavitation, present: false}
+      - {warning: dut.outside_preferred_region, present: false}
+      - {variable: dut.specific_energy, value: null}
   - id: stopped-pump-resistance
     description: >-
       Stopped pump (speed 0) between a 1 bar supply and a drain: it acts as the resistance
@@ -338,6 +420,23 @@ contracts:
     scenario: free-discharge
     sweep: {variable: dut.speed, values: [0, 0.3, 0.6, 1, 1.2]}
     check: {type: warning_iff, code: dut.beyond_curve, condition: "dut.speed > 0.01 and dut.volume_flow > 36 * dut.speed"}
+  - id: preferred-region-info
+    description: >-
+      The outside_preferred_region info is raised exactly when the running pump is outside
+      70 to 120 % of the best-efficiency flow and neither below the minimum flow nor beyond
+      the 36 m3/h curve; the Kv sweep runs from 9 m3/h (37 %) through the region to 41 m3/h
+      (beyond the curve).
+    scenario: operating-point
+    sweep: {variable: v.kv, values: [5, 8, 10, 15, 20, 25, 30, 40]}
+    check:
+      type: warning_iff
+      code: dut.outside_preferred_region
+      condition: "dut.speed > 0.01 and dut.volume_flow >= dut.min_flow_fraction * dut.bep_flow and dut.volume_flow <= 36 * dut.speed and (dut.volume_flow < dut.preferred_min_fraction * dut.bep_flow or dut.volume_flow > dut.preferred_max_fraction * dut.bep_flow)"
+  - id: motor-overload-warning
+    description: The motor_overload warning is raised exactly when the shaft power exceeds the 4 kW motor rating; through the Kv 15 valve that happens between speed 1.1 (3.59 kW) and 1.15 (4.10 kW).
+    scenario: operating-point
+    sweep: {variable: dut.speed, values: [0, 0.5, 1, 1.1, 1.15, 1.2]}
+    check: {type: warning_iff, code: dut.motor_overload, condition: "dut.shaft_power > dut.motor_power"}
   - id: reverse-flow-warning
     description: The reverse_flow warning is raised exactly when the discharge pressure exceeds what the pump can hold (shut-off 3.325 bar).
     scenario: reverse-flow
@@ -370,6 +469,8 @@ provenance:
       notes: Affinity (similarity) laws, NPSH required and cavitation, minimum continuous flow and operation away from the best-efficiency point.
     - title: "Karassik, I. J., Messina, J. P., Cooper, P. and Heald, C. C. Pump Handbook. McGraw-Hill."
       notes: Pump curves, system curves and the operating point as their intersection.
+    - title: "ANSI/HI 9.6.3 Rotodynamic Pumps - Guideline for Operating Regions (Hydraulic Institute)"
+      notes: Preferred operating region (typically 70 to 120 % of the best-efficiency flow) and allowable operating region.
     - title: "ANSI/HI 9.6.1 Rotodynamic Pumps - Guideline for NPSH Margin (Hydraulic Institute)"
       notes: Motivation for an NPSH margin above the NPSH required.
     - title: "IAPWS R7-97: Revised Release on the IAPWS Industrial Formulation 1997 for the Thermodynamic Properties of Water and Steam"

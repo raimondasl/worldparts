@@ -60,7 +60,7 @@ parameters:
     minimum: 0
     maximum: 10
   - name: minor_loss
-    description: Sum of minor-loss coefficients K (bends, fittings) applied to the pipe velocity.
+    description: "Sum of minor-loss coefficients K (bends, fittings) applied to the pipe velocity. Add 1 for the exit loss where the pipe discharges freely into a drain or enters a tank (the jet's velocity head v**2/(2 g) is lost; neither the drain nor the tank port adds it), and about 0.5 for a sharp entrance from a tank."
     type: number
     unit: "1"
     default: 0

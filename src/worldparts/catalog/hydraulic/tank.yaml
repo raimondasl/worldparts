@@ -29,9 +29,18 @@ description: |
   would nearly empty the tank; for accurate drain-down dynamics still choose a step much
   shorter than the drain time.
 
+  An empty open tank cannot hold its outlet below atmospheric pressure: air would enter.
+  The model keeps the suction line full of water, so a pump that holds a discharge column
+  (a lift to a rooftop tank) can pull the outlet of an empty tank well below atmospheric
+  without cavitating; the `drawing_air` warning flags every such port (empty tank, or a
+  simulation step drawing the tank empty, and the port more than 100 Pa below atmospheric).
+
   Not modelled: stratification (the contents are perfectly mixed), heat loss through the wall
   and the free surface, evaporation, the velocity head and vortexing at the outlet nozzle,
-  air entrainment when nearly empty, the pressure drop of the overflow weir (spill is
+  air entrainment when nearly empty (flagged by `drawing_air`, not simulated), the exit
+  loss of water entering through a port (the velocity head of the incoming pipe, v**2/(2 g),
+  about 0.23 m at 2.1 m/s; add 1 to the feeding pipe's `minor_loss` when it matters; the
+  port Kv covers only the nozzle), the pressure drop of the overflow weir (spill is
   instantaneous), non-cylindrical shapes and ports above the bottom. Port elevations are the
   tank bottom; connect pipes with `height_difference` to model a tank placed above or below
   the rest of the network.
@@ -123,6 +132,8 @@ envelope:
     severity: warning
     condition: "overflow_rate > 0"
     message: The tank is full and spills over the rim.
+warnings:
+  - {code: drawing_air, severity: warning, description: "The tank is empty (or, in a simulation, being drawn empty within one step) and a connected port is more than 100 Pa (about 1 cm of water) below atmospheric pressure: a pump or siphon on it would draw air. The model keeps the line full of water, so results downstream are not physical."}
 scenarios:
   - id: drain-through-valve
     description: >-
@@ -219,7 +230,33 @@ scenarios:
       - {variable: pump.volume_flow, min: -1.0e-3, max: 1.0e-3}
       - {mode: dut, is: empty}
       - {warning: dut.tank_empty, present: true}
+      - {warning: dut.drawing_air, present: true}
       - {warning: pump.cavitation, present: true}
+  - id: pump-lift-from-empty-tank
+    description: >-
+      A default pump draws from an empty tank and lifts through 60 m of 50 mm steel pipe
+      rising 25 m to a free discharge (the rooftop-tank lift). The pump holds the 25 m column
+      at shut-off (33.97 m head), so its inlet sits at 25 - 33.97 = -8.97 m, -0.878 bar gauge:
+      NPSH available (10.35 - 8.97 - 0.17 = 1.2 m) stays positive, so the pump reports only
+      low_flow. The empty tank cannot hold its outlet below atmospheric pressure; it raises
+      drawing_air.
+    system:
+      components:
+        - {name: dut, type: tank, parameters: {initial_level: 0}}
+        - {name: pump, type: centrifugal_pump}
+        - {name: riser, type: pipe, parameters: {length: 60, diameter: 50, roughness: 0.045, height_difference: 25}}
+        - {name: sink, type: drain}
+      connections:
+        - [dut.outlet, pump.inlet]
+        - [pump.outlet, riser.port_a]
+        - [riser.port_b, sink.port]
+    expect:
+      - {variable: dut.outlet.p, value: -0.8781, abs_tol: 0.001}
+      - {variable: pump.npsh_available, min: 1.0, max: 1.4}
+      - {warning: dut.tank_empty, present: true}
+      - {warning: dut.drawing_air, present: true}
+      - {warning: pump.low_flow, present: true}
+      - {warning: pump.cavitation, present: false}
   - id: break-tank
     description: >-
       Break tank: a 1 bar supply feeds an initially empty tank (1 m diameter) through a Kv 2.5
@@ -322,6 +359,14 @@ contracts:
     scenario: break-tank
     sweep: {variable: src.pressure, values: [0.5, 1.0, 2.0]}
     check: {type: equal, left: pump.volume_flow, right: vin.volume_flow * 0.06, rel_tol: 1.0e-4}
+  - id: drawing-air-warning
+    description: >-
+      drawing_air is raised exactly when the tank is empty and its outlet is under suction
+      (the pump holds the 25 m column, -0.88 bar at the outlet); with water in the tank the
+      pump lifts it and the outlet stays above atmospheric pressure.
+    scenario: pump-lift-from-empty-tank
+    sweep: {variable: dut.initial_level, values: [0, 0.0005, 0.001, 0.0015, 0.5, 2]}
+    check: {type: warning_iff, code: dut.drawing_air, condition: "dut.level <= 0.001 and dut.outlet.p < -0.001"}
   - id: overflow-warning
     description: >-
       The tank overflows exactly when the supply can push water in against the head of the
