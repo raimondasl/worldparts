@@ -19,6 +19,7 @@ from worldparts.errors import InvalidValueError
 from worldparts.media import MU, RHO, G
 
 __all__ = [
+    "GATE_STIFFNESS",
     "IDEAL_RESISTANCE",
     "CheckValveLaw",
     "GateLaw",
@@ -39,6 +40,9 @@ __all__ = [
 IDEAL_RESISTANCE: float = 1e-6 * RHO
 
 _EPS_FRACTION = 1e-3  # regularisation flow as a fraction of the flow at 1 bar
+
+#: Resistance in Pa/(kg/s) with which a :class:`GateLaw` closes beyond its ``limit``.
+GATE_STIFFNESS: float = 1e10
 
 
 def kv_to_k(kv_si: float, rho: float = RHO) -> float:
@@ -422,24 +426,40 @@ class CheckValveLaw(_AsymmetricQuadratic):
 
 
 class GateLaw(_AsymmetricQuadratic):
-    """Quadratic resistance whose flow in one direction can be switched to leakage only.
+    """Quadratic resistance whose flow in one direction can be blocked or capped.
 
     Used by tank ports: when the tank is empty, outflow from the tank is blocked.
+
+    With ``limit`` None (the default) the blocked direction is leakage only (coefficient
+    ``k * leakage``). With a ``limit`` (kg/s, >= 0) the blocked direction is *capped*: up to
+    ``limit`` it follows the open quadratic law, and beyond it a steep linear resistance of
+    :data:`GATE_STIFFNESS` Pa per kg/s closes the gate (joined with a C1 quadratic over a band
+    of ``1e-9 + 1e-6 * limit`` kg/s), so each bar pushes only about 1e-5 kg/s past the cap;
+    ``limit = 0`` closes the gate at zero flow. A tank uses it in a simulation so that a port
+    draws no more over the next step than the water the tank holds. The law stays
+    continuous, C1 and strictly increasing.
 
     Args:
         k: Mass-flow coefficient in kg/(s Pa^0.5).
         blocked_direction: None (open both ways), ``"forward"`` (a to b blocked) or
             ``"reverse"`` (b to a blocked). May be changed between solves.
-        leakage: Coefficient fraction in the blocked direction.
+        leakage: Coefficient fraction in the blocked direction when ``limit`` is None.
+        limit: None (blocked direction leakage only) or the flow in kg/s allowed in the
+            blocked direction before the gate closes. May be changed between solves.
     """
 
     DIRECTIONS = (None, "forward", "reverse")
 
     def __init__(
-        self, k: float, blocked_direction: str | None = None, leakage: float = 1e-6
+        self,
+        k: float,
+        blocked_direction: str | None = None,
+        leakage: float = 1e-6,
+        limit: float | None = None,
     ) -> None:
         self.k = k
         self.leakage = leakage
+        self.limit = limit
         self.blocked_direction = blocked_direction
 
     @property
@@ -456,9 +476,29 @@ class GateLaw(_AsymmetricQuadratic):
         self._blocked = value
 
     def _k_pair(self) -> tuple[float, float]:
-        kf = self.k * self.leakage if self._blocked == "forward" else self.k
-        kr = self.k * self.leakage if self._blocked == "reverse" else self.k
+        leak = self.limit is None
+        kf = self.k * self.leakage if self._blocked == "forward" and leak else self.k
+        kr = self.k * self.leakage if self._blocked == "reverse" and leak else self.k
         return kf, kr
+
+    def dp(self, m: float) -> tuple[float, float]:
+        """See :meth:`Law.dp`."""
+        dp, ddp = super().dp(m)
+        if self._blocked is None or self.limit is None or not math.isfinite(self.limit):
+            return dp, ddp
+        if self.limit < 0.0:
+            raise InvalidValueError(f"GateLaw.limit must be >= 0 or None, got {self.limit}.")
+        sign = 1.0 if self._blocked == "forward" else -1.0
+        excess = sign * m - self.limit  # flow past the cap in the blocked direction
+        if excess <= 0.0:
+            return dp, ddp
+        band = 1e-9 + 1e-6 * self.limit
+        if excess < band:
+            pen = GATE_STIFFNESS * excess * excess / (2.0 * band)
+            dpen = GATE_STIFFNESS * excess / band
+        else:
+            pen, dpen = GATE_STIFFNESS * (excess - 0.5 * band), GATE_STIFFNESS
+        return dp + sign * pen, ddp + dpen
 
 
 def ideal_connection() -> LinearQuadraticResistance:

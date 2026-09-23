@@ -1,0 +1,321 @@
+manifest_version: "0.1"
+id: worldparts.hydraulic.media_filter
+version: "0.1.0"
+name: Media filter
+summary: Sand or cartridge filter with a linear media loss that grows with clogging and a quadratic housing loss.
+description: |
+  A sand or cartridge filter between `inlet` and `outlet`, described by its clean pressure
+  drop at a rated flow. The pressure drop is the sum of two parts:
+
+  - a **linear media loss** (Darcy flow through the filter bed or cartridge), which is the
+    share `1 - housing_fraction` of the clean drop at rated flow and scales with
+    `1 / (1 - clogging)` as the bed loads with retained solids;
+  - a **quadratic housing loss** (inlet, outlet, distributor and fittings), the share
+    `housing_fraction` of the clean drop at rated flow, independent of clogging.
+
+  With `Q` the volume flow, `Q_rated` the rated flow, `dp_clean` the clean pressure drop,
+  `h` the housing fraction and `c` the clogging:
+  `dp = (1 - h) * dp_clean * Q / Q_rated / (1 - c) + h * dp_clean * Q * |Q| / Q_rated**2`.
+  At the rated flow the clean filter has exactly `clean_pressure_drop`, and
+  `dp_ratio = (1 - h) / (1 - c) + h`. `dp_ratio` is the pressure drop divided by the drop of
+  the same filter when clean at the same flow (the limit is used at zero flow). The
+  `change_required` warning says the drop has reached the change (backwash or cartridge
+  replacement) pressure drop.
+
+  Clogging is an input, not a state: the model does not predict how fast a filter loads.
+  Set `clogging` from an estimate or measurement, or ramp it with simulation events.
+
+  Not modelled: removal efficiency or water quality of any kind (turbidity, particle counts,
+  breakthrough), solids accumulation dynamics, backwash cycles, bed expansion, air binding,
+  media loss, and any dependence of the media loss on temperature (viscosity is constant).
+  Reverse flow uses the same law as forward flow; a real filter may behave differently.
+  In reverse flow (outlet to inlet) `volume_flow` and `pressure_drop` are negative (design
+  3.2) and `dp_ratio` stays positive, `(1 - h) / (1 - c) + h |x|` over `1 - h + h |x|` with
+  `x = Q / Q_rated`. The `change_required` and `over_rated_flow` envelope rules check forward
+  flow only (design 8.10); instead, reverse flow above 0.01 m3/h raises the code-emitted
+  `reverse_flow` warning, whose message says when the reverse drop exceeds
+  `change_pressure_drop` or the flow exceeds 125 % of `rated_flow`.
+tags: [filter, sand-filter, cartridge-filter, treatment, purification, clogging]
+classification:
+  ifc: {entity: IfcFilter, predefined_type: WATERFILTER}
+  brick: Filter
+fidelity:
+  level: lumped_quasi_steady
+  assumptions:
+    - Incompressible water with constant properties (998.2 kg/m3, 1.002e-3 Pa s).
+    - Media loss linear in flow (Darcy regime, low Reynolds number in the bed); housing loss quadratic in flow.
+    - Clogging multiplies the media resistance by 1 / (1 - clogging) uniformly; the housing loss is unaffected.
+    - Quasi-steady; no storage, no solids balance and no removal efficiency.
+    - The quadratic term is regularised (C1 cubic) below 0.02 % of the rated flow so the law stays strictly increasing when housing_fraction is 1.
+ports:
+  - {name: inlet, type: fluid, medium: water, description: Raw-water inlet (forward direction).}
+  - {name: outlet, type: fluid, medium: water, description: Filtered-water outlet (forward direction).}
+parameters:
+  - name: rated_flow
+    description: Rated (design) volume flow at which the clean pressure drop is specified.
+    type: number
+    unit: m3/h
+    default: 20
+    minimum: 0.01
+    maximum: 100000
+  - name: clean_pressure_drop
+    description: Pressure drop of the clean filter at the rated flow.
+    type: number
+    unit: bar
+    pressure_reference: difference
+    default: 0.2
+    minimum: 0.001
+    maximum: 20
+  - name: housing_fraction
+    description: Share of the clean pressure drop at rated flow that is quadratic housing loss; the rest is linear media loss.
+    type: number
+    unit: "1"
+    default: 0.3
+    minimum: 0
+    maximum: 1
+  - name: change_pressure_drop
+    description: Pressure drop at which the media must be backwashed or the cartridge changed.
+    type: number
+    unit: bar
+    pressure_reference: difference
+    default: 1.0
+    minimum: 0.01
+    maximum: 50
+inputs:
+  - {name: clogging, description: "Clogging fraction of the media: the media resistance is multiplied by 1 / (1 - clogging). 0 is clean.", unit: "1", default: 0.0, minimum: 0, maximum: 0.99}
+observables:
+  - {name: volume_flow, unit: m3/h, description: Volume flow from inlet to outlet.}
+  - {name: pressure_drop, unit: bar, pressure_reference: difference, description: Pressure at the inlet minus pressure at the outlet.}
+  - {name: dp_ratio, unit: "1", description: Pressure drop divided by the clean pressure drop at the same flow (the zero-flow limit at zero flow).}
+modes:
+  - {name: idle, condition: "abs(volume_flow) < 0.01", description: No significant flow.}
+  - {name: needs_change, condition: "pressure_drop > change_pressure_drop", description: The pressure drop exceeds the change pressure drop; backwash or change the media.}
+  - {name: loaded, condition: "clogging >= 0.3", description: Noticeably loaded but still below the change pressure drop.}
+  - {name: clean, condition: "true", description: Clean or lightly loaded filter in service.}
+envelope:
+  - code: change_required
+    severity: warning
+    condition: "pressure_drop > change_pressure_drop"
+    message: The filter pressure drop exceeds the change pressure drop; backwash the bed or change the cartridge.
+  - code: over_rated_flow
+    severity: warning
+    condition: "volume_flow > 1.25 * rated_flow"
+    message: Flow above 125 % of the rated flow; a real filter loses removal efficiency and may break through.
+warnings:
+  - {code: reverse_flow, severity: warning, description: "Water flows backwards through the filter (volume_flow below -0.01 m3/h) and may flush retained solids to the raw-water side. change_required and over_rated_flow only check forward flow; the message says when the reverse drop or flow would exceed them."}
+scenarios:
+  - id: clean-rated-flow
+    description: |
+      Clean filter between a 0.2 bar supply and a drain. Hand calculation: the clean drop at
+      rated flow is 0.2 bar by definition, so the flow is exactly the rated 20 m3/h and
+      dp_ratio is 1 (supply and drain joints add under 1e-9 bar).
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0.2}}
+        - {name: dut, type: media_filter}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 20.0, rel_tol: 1.0e-6}
+      - {variable: dut.pressure_drop, value: 0.2, abs_tol: 1.0e-6}
+      - {variable: dut.dp_ratio, value: 1.0, abs_tol: 1.0e-9}
+      - {warning: dut.change_required, present: false}
+      - {warning: dut.over_rated_flow, present: false}
+      - {mode: dut, is: clean}
+  - id: loaded-at-0-2-bar
+    description: |
+      Half-clogged filter (clogging 0.5) at 0.2 bar. Hand calculation with x = Q / 20 m3/h:
+      0.2 = 0.2 * (0.7 / 0.5 * x + 0.3 * x**2), so 0.3 x**2 + 1.4 x - 1 = 0 and
+      x = (-1.4 + sqrt(1.96 + 1.2)) / 0.6 = 0.629398, Q = 12.5880 m3/h;
+      dp_ratio = 1 / (0.7 x + 0.3 x**2) = 1.787562.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0.2}}
+        - {name: dut, type: media_filter, inputs: {clogging: 0.5}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 12.58796, rel_tol: 1.0e-5}
+      - {variable: dut.dp_ratio, value: 1.787562, rel_tol: 1.0e-5}
+      - {warning: dut.change_required, present: false}
+      - {mode: dut, is: loaded}
+  - id: clogged-at-rated-flow
+    description: |
+      Heavily clogged filter (clogging 0.9) driven at its rated flow. Hand calculation: at
+      20 m3/h the drop is 0.2 * (0.7 / 0.1 + 0.3) = 1.46 bar, so a 1.46 bar supply gives
+      exactly the rated flow; dp_ratio = 7.3 and the 1.0 bar change drop is exceeded.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 1.46}}
+        - {name: dut, type: media_filter, inputs: {clogging: 0.9}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 20.0, rel_tol: 1.0e-6}
+      - {variable: dut.dp_ratio, value: 7.3, rel_tol: 1.0e-6}
+      - {warning: dut.change_required, present: true}
+      - {mode: dut, is: needs_change}
+  - id: over-rated-flow
+    description: |
+      Clean filter at 0.4 bar. Hand calculation: 2 = 0.7 x + 0.3 x**2 gives
+      x = (-0.7 + sqrt(0.49 + 2.4)) / 0.6 = 5/3, Q = 33.333 m3/h, above 1.25 * 20 = 25 m3/h.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0.4}}
+        - {name: dut, type: media_filter}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 33.33333, rel_tol: 1.0e-6}
+      - {variable: dut.dp_ratio, value: 1.0, abs_tol: 1.0e-9}
+      - {warning: dut.over_rated_flow, present: true}
+      - {warning: dut.change_required, present: false}
+      - {mode: dut, is: clean}
+  - id: throttled-supply
+    description: |
+      A 3 bar supply feeds the filter through a Kv 12 m3/h valve, so the filter drop rises as
+      it clogs. Hand calculation (x = Q / 20 m3/h, bar; the Kv law carries the specific
+      gravity 0.9982): 3 = 0.9982 * (20 x / 12)**2 + 0.2 * (0.7 x / (1 - c) + 0.3 x**2).
+      Clean (c = 0): 2.832778 x**2 + 0.14 x - 3 = 0, x = 1.004678, Q = 20.09357 m3/h, filter
+      drop 0.2012177 bar. The filter drop reaches the 1.0 bar change drop when the valve drop
+      is 2 bar, Q = 12 * sqrt(2 / 0.9982) = 16.98586 m3/h, which happens at clogging 0.87572.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 3.0}}
+        - {name: v, type: valve, parameters: {kv: 12}}
+        - {name: dut, type: media_filter}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, v.port_a]
+        - [v.port_b, dut.inlet]
+        - [dut.outlet, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 20.09357, rel_tol: 1.0e-6}
+      - {variable: dut.pressure_drop, value: 0.2012177, rel_tol: 1.0e-6}
+      - {warning: dut.change_required, present: false}
+      - {mode: dut, is: clean}
+  - id: reverse-flow
+    description: |
+      Half-clogged filter (clogging 0.5) with 0 bar on the inlet and 0.3 bar on the outlet, so
+      water flows backwards. Hand calculation with y = |Q| / 20 m3/h:
+      0.3 = 0.2 * (1.4 y + 0.3 y**2), so 0.3 y**2 + 1.4 y - 1.5 = 0 and
+      y = (-1.4 + sqrt(3.76)) / 0.6 = 0.8984532, Q = -17.96906 m3/h, pressure_drop -0.3 bar;
+      both the drop and the clean drop are negative, so
+      dp_ratio = (1.4 + 0.3 y) / (0.7 + 0.3 y) = 1.721995. Forward-flow rules stay silent;
+      reverse_flow is raised.
+    system:
+      components:
+        - {name: a, type: supply, parameters: {pressure: 0}}
+        - {name: dut, type: media_filter, inputs: {clogging: 0.5}}
+        - {name: b, type: supply, parameters: {pressure: 0.3}}
+      connections:
+        - [a.port, dut.inlet]
+        - [dut.outlet, b.port]
+    expect:
+      - {variable: dut.volume_flow, value: -17.96906, rel_tol: 1.0e-6}
+      - {variable: dut.pressure_drop, value: -0.3, abs_tol: 1.0e-7}
+      - {variable: dut.dp_ratio, value: 1.721995, rel_tol: 1.0e-6}
+      - {warning: dut.reverse_flow, present: true}
+      - {warning: dut.change_required, present: false}
+      - {warning: dut.over_rated_flow, present: false}
+      - {mode: dut, is: loaded}
+contracts:
+  - id: mass-conservation
+    description: Mass entering the inlet leaves through the outlet at every supply pressure.
+    scenario: clean-rated-flow
+    sweep: {variable: src.pressure, from: -0.5, to: 3, steps: 8}
+    check: {type: equal, left: dut.inlet.m_flow, right: -dut.outlet.m_flow, abs_tol: 1.0e-9}
+  - id: linear-quadratic-law
+    description: The drop is (1 - h) * dp_clean * x / (1 - c) + h * dp_clean * x * |x| with x = Q / Q_rated, at every flow.
+    scenario: loaded-at-0-2-bar
+    sweep: {variable: src.pressure, from: -0.5, to: 3, steps: 8}
+    check:
+      type: equal
+      left: dut.pressure_drop
+      right: "dut.clean_pressure_drop * ((1 - dut.housing_fraction) / (1 - dut.clogging) * dut.volume_flow / dut.rated_flow + dut.housing_fraction * dut.volume_flow * abs(dut.volume_flow) / dut.rated_flow**2)"
+      rel_tol: 1.0e-6
+      abs_tol: 1.0e-9
+  - id: dp-ratio-definition
+    description: dp_ratio is the drop over the clean drop at the same flow, ((1 - h) / (1 - c) + h |x|) / (1 - h + h |x|) for x = Q / Q_rated.
+    scenario: loaded-at-0-2-bar
+    sweep: {variable: dut.clogging, from: 0, to: 0.99, steps: 12}
+    check:
+      type: equal
+      left: dut.dp_ratio
+      right: "((1 - dut.housing_fraction) / (1 - dut.clogging) + dut.housing_fraction * abs(dut.volume_flow) / dut.rated_flow) / (1 - dut.housing_fraction + dut.housing_fraction * abs(dut.volume_flow) / dut.rated_flow)"
+      rel_tol: 1.0e-6
+  - id: dp-ratio-both-directions
+    description: The same definition holds in reverse flow, where the drop and the clean drop are both negative and the ratio stays positive (supply from -0.9 to 3 bar at clogging 0.5, no sweep point at zero flow).
+    scenario: loaded-at-0-2-bar
+    sweep: {variable: src.pressure, values: [-0.9, -0.3, -0.05, -0.001, 0.001, 0.05, 0.3, 3]}
+    check:
+      type: equal
+      left: dut.dp_ratio
+      right: "((1 - dut.housing_fraction) / (1 - dut.clogging) + dut.housing_fraction * abs(dut.volume_flow) / dut.rated_flow) / (1 - dut.housing_fraction + dut.housing_fraction * abs(dut.volume_flow) / dut.rated_flow)"
+      rel_tol: 1.0e-6
+  - id: flow-decreases-with-clogging
+    description: At a fixed supply pressure, a more clogged filter passes strictly less water.
+    scenario: clean-rated-flow
+    sweep: {variable: dut.clogging, from: 0, to: 0.99, steps: 12}
+    check: {type: monotonic, variable: dut.volume_flow, direction: decreasing, strict: true}
+  - id: dp-ratio-at-least-one
+    description: Clogging never lowers the pressure drop below that of the clean filter.
+    scenario: throttled-supply
+    sweep: {variable: dut.clogging, from: 0, to: 0.99, steps: 12}
+    check: {type: bounds, variable: dut.dp_ratio, min: 1}
+  - id: change-required-iff
+    description: With a throttled supply the filter drop rises with clogging; change_required is raised exactly above the hand-calculated crossing clogging 0.87572 (see the throttled-supply scenario), so between the sweep points 0.87 and 0.88.
+    scenario: throttled-supply
+    sweep: {variable: dut.clogging, values: [0, 0.2, 0.4, 0.6, 0.8, 0.85, 0.87, 0.875, 0.8765, 0.88, 0.9, 0.95, 0.99]}
+    check: {type: warning_iff, code: dut.change_required, condition: "dut.clogging > 0.87572"}
+  - id: over-rated-flow-iff
+    description: over_rated_flow is raised exactly when the flow exceeds 25 m3/h (125 % of rated), reached at a supply of 0.2 * (0.7 * 1.25 + 0.3 * 1.25**2) = 0.26875 bar; reverse flow of any size does not raise it.
+    scenario: clean-rated-flow
+    sweep: {variable: src.pressure, values: [-0.9, -0.4, 0, 0.1, 0.2, 0.25, 0.265, 0.2725, 0.3, 0.5]}
+    check: {type: warning_iff, code: dut.over_rated_flow, condition: "src.pressure > 0.26875"}
+  - id: reverse-flow-iff
+    description: reverse_flow is raised exactly when the supply is below the drain (-0.0001 bar already gives about -0.014 m3/h through the clean filter, 0.2 * 0.7 * y = 1e-4 with y = |Q| / 20), never at zero or forward flow.
+    scenario: clean-rated-flow
+    sweep: {variable: src.pressure, values: [-0.9, -0.1, -0.0001, 0, 0.0001, 0.2, 3]}
+    check: {type: warning_iff, code: dut.reverse_flow, condition: "src.pressure < 0"}
+implementations:
+  reference: {python: "worldparts.components.treatment:MediaFilter"}
+  modelica:
+    class: Modelica.Fluid.Fittings.GenericResistances.VolumeFlowRate
+    library: Modelica Standard Library
+    notes: >-
+      Generic resistance dp = a * V_flow**2 + b * V_flow with a = r_quad and b = r_lin (update b
+      with clogging). Alternatively two Buildings.Fluid.FixedResistances.PressureDrop in series,
+      one with linearized = true for the media. Binding not yet cross-validated in v0.1.
+  wntr:
+    element: GPV
+    notes: >-
+      General purpose valve with a head-loss curve sampled from the linear-plus-quadratic law
+      at the current clogging (EPANET has no linear-plus-quadratic link). Binding not yet
+      cross-validated in v0.1.
+provenance:
+  authors: [worldparts contributors]
+  sources:
+    - title: "MWH's Water Treatment: Principles and Design, 3rd edition (Crittenden, Trussell, Hand, Howe, Tchobanoglous), Wiley, 2012"
+      notes: Granular filtration; clean-bed head loss (Carman-Kozeny, linear in filtration rate) and head-loss build-up with solids retention; terminal head loss as the backwash trigger.
+    - title: "Ergun, S. (1952). Fluid flow through packed columns. Chemical Engineering Progress 48(2), 89-94"
+      notes: Packed-bed pressure drop as a viscous (linear) plus inertial (quadratic) term; the media loss here keeps only the viscous term.
+    - title: Modelica Standard Library
+      url: https://github.com/modelica/ModelicaStandardLibrary
+      notes: Generic linear-plus-quadratic resistances and square-law regularisation near zero flow.
+  data:
+    acquisition: generic
+    notes: >-
+      Default parameters (20 m3/h rated flow, 0.2 bar clean drop, 30 % housing share, 1.0 bar
+      change drop) are generic illustrative values for a small pressure sand filter or large
+      cartridge housing, not a specific product.
+  license: Apache-2.0
+  data_license: CC0-1.0

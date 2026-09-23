@@ -1,0 +1,390 @@
+manifest_version: "0.1"
+id: worldparts.hydraulic.centrifugal_pump
+version: "0.1.0"
+name: Centrifugal pump
+summary: Variable-speed centrifugal pump from head, shaft-power and NPSH curves, with affinity-law scaling, efficiency, best-efficiency point and cavitation check.
+description: |
+  A centrifugal pump between `inlet` and `outlet` described by three curves at rated speed:
+  head, shaft power and NPSH required, each a table of flow against value. The head curve
+  is fitted with a bounded least-squares quadratic `H0(Q) = a + b*Q + c*Q**2` (with `a > 0`,
+  `b <= 0` and `c < 0`, so the pump law stays strictly monotone and the network well posed);
+  the RMS residual of the fit is reported as `curve_fit_rms`. Shaft power and NPSH required
+  are plain least-squares quadratics. The relative `speed` scales all three by the affinity
+  laws: `H = a*s**2 + b*s*Q + c*Q*|Q|`, `P = p0*s**3 + p1*s**2*Q + p2*s*Q**2` and
+  `NPSHr = n0*s**2 + n1*s*Q + n2*Q**2`. At speed 0 the pump acts as a quadratic resistance
+  (`-c*Q*|Q|`, plus a tiny linear term of 1 Pa per kg/s that keeps the law strictly
+  increasing).
+
+  The best-efficiency flow is the maximum of `rho*g*Q*H0/P0` over the head-curve flow range,
+  scaled by the speed. `npsh_available` is `(p_inlet_abs - p_vapour(T_inlet)) / (rho*g)`
+  with the IAPWS-IF97 vapour pressure (20 degC is assumed where no water reaches the pump).
+  Code-emitted warnings flag cavitation (NPSH available below NPSH required plus
+  `npsh_margin` with forward flow, or an inlet below the vapour pressure at any flow, as when
+  the pump draws from an empty tank), operation below `min_flow_fraction` of the
+  best-efficiency flow, operation beyond the curve, and reverse flow.
+
+  Not modelled: the effect of cavitation on head and flow (the warning flags it but the
+  curve is still used), the head and power curves outside the tabulated range (extrapolated
+  quadratics), four-quadrant behaviour (reverse flow or reverse rotation use the same
+  quadratic, which is not a measured characteristic), viscosity corrections, motor and drive
+  losses (the shaft power is the pump input power), start-up transients and inertia, and the
+  temperature rise of the water through the pump.
+tags: [pump, centrifugal, affinity-laws, npsh, cavitation, variable-speed, purification]
+classification:
+  ifc: {entity: IfcPump, predefined_type: NOTDEFINED}
+  brick: Pump
+fidelity:
+  level: lumped_quasi_steady
+  assumptions:
+    - Incompressible water with constant properties (998.2 kg/m3, 1.002e-3 Pa s).
+    - Head, shaft power and NPSH required are quadratic fits of the rated-speed curves, scaled with speed by the affinity laws (Q ~ s, H ~ s**2, P ~ s**3, NPSHr ~ s**2).
+    - The head fit is constrained (a > 0, b <= 0, c < 0) so the pump law is monotone; its RMS residual is reported.
+    - The same quadratic head law is used for reverse flow and at zero speed (no four-quadrant data).
+    - Speed is a prescribed input (no motor model, no inertia); cavitation is diagnosed, not modelled.
+ports:
+  - {name: inlet, type: fluid, medium: water, description: Suction side; forward flow enters here.}
+  - {name: outlet, type: fluid, medium: water, description: Discharge side; forward flow leaves here.}
+parameters:
+  - name: head_curve
+    description: Head against flow at rated speed (at least 3 rows, flows strictly increasing, head falling with flow).
+    type: table
+    columns:
+      - {name: flow, unit: m3/h, minimum: 0, description: Volume flow.}
+      - {name: head, unit: m, minimum: 0, description: Pump head.}
+    min_rows: 3
+    default: [[0, 34], [10, 32.5], [20, 28.5], [30, 21.5], [36, 16]]
+  - name: power_curve
+    description: Shaft power against flow at rated speed (at least 3 rows, flows strictly increasing).
+    type: table
+    columns:
+      - {name: flow, unit: m3/h, minimum: 0, description: Volume flow.}
+      - {name: power, unit: kW, minimum: 0, description: Shaft (input) power.}
+    min_rows: 3
+    default: [[0, 1.5], [10, 2.0], [20, 2.55], [30, 2.95], [36, 3.15]]
+  - name: npsh_curve
+    description: NPSH required against flow at rated speed (at least 3 rows, flows strictly increasing).
+    type: table
+    columns:
+      - {name: flow, unit: m3/h, minimum: 0, description: Volume flow.}
+      - {name: npsh, unit: m, minimum: 0, description: Net positive suction head required.}
+    min_rows: 3
+    default: [[10, 1.4], [20, 2.1], [30, 3.4], [36, 4.6]]
+  - name: rated_speed
+    description: Rotational speed at which the curves apply.
+    type: number
+    unit: rpm
+    default: 2900
+    minimum: 100
+    maximum: 20000
+  - name: npsh_margin
+    description: Safety margin added to the NPSH required before the cavitation warning.
+    type: number
+    unit: m
+    default: 0.5
+    minimum: 0
+    maximum: 10
+  - name: min_flow_fraction
+    description: Minimum continuous flow as a fraction of the best-efficiency flow.
+    type: number
+    unit: "1"
+    default: 0.15
+    minimum: 0
+    maximum: 1
+inputs:
+  - {name: speed, description: "Relative speed (fraction of rated_speed); 0 is stopped.", unit: "1", default: 1.0, minimum: 0, maximum: 1.2}
+observables:
+  - {name: volume_flow, unit: m3/h, description: Volume flow from inlet to outlet.}
+  - {name: head, unit: m, description: "Pump head: outlet minus inlet pressure over rho g."}
+  - {name: shaft_power, unit: kW, description: Shaft power from the fitted power curve at the current flow and speed (not below 0).}
+  - {name: hydraulic_power, unit: kW, description: Hydraulic power rho g Q H (negative with reverse flow or negative head).}
+  - {name: efficiency, unit: "%", description: "Hydraulic over shaft power; 0 when flow, head or power is not positive."}
+  - {name: specific_energy, unit: kWh/m3, description: "Shaft energy per pumped volume, shaft_power / volume_flow (equal to rho g H / efficiency); the running cost per m3 before motor and drive losses. None when the flow is not positive."}
+  - {name: npsh_available, unit: m, description: "Net positive suction head available: (p_inlet_abs - p_vapour(T_inlet)) / (rho g)."}
+  - {name: npsh_required, unit: m, description: NPSH required from the fitted curve at the current flow and speed (not below 0).}
+  - {name: speed_rpm, unit: rpm, description: Rotational speed.}
+  - {name: bep_flow, unit: m3/h, description: Best-efficiency flow at the current speed.}
+  - {name: curve_fit_rms, unit: m, description: RMS residual of the head-curve fit over the tabulated points.}
+modes:
+  - {name: "off", condition: "speed <= 0.01", description: The pump is stopped; it acts as a resistance.}
+  - {name: reverse_flow, condition: "volume_flow < -0.01", description: Water flows backwards through the running pump.}
+  - {name: cavitating, condition: "npsh_available < 0 or (volume_flow > 0.01 and npsh_available < npsh_required + npsh_margin)", description: "NPSH available is below NPSH required plus the margin with forward flow, or the inlet is below the vapour pressure."}
+  - {name: low_flow, condition: "volume_flow < min_flow_fraction * bep_flow", description: Running below the minimum continuous flow.}
+  - {name: running, condition: "true", description: Normal operation.}
+warnings:
+  - {code: cavitation, severity: warning, description: "NPSH available is below NPSH required plus npsh_margin with forward flow (above 0.01 m3/h), or below 0 at any flow (inlet below the vapour pressure, e.g. running dry from an empty tank); the pump cavitates."}
+  - {code: low_flow, severity: warning, description: "Running (speed above 0.01) below min_flow_fraction times the best-efficiency flow; expect heating, recirculation and vibration."}
+  - {code: beyond_curve, severity: warning, description: "Running (speed above 0.01) at a flow above the largest head-curve flow times the speed; the fitted curves are extrapolated."}
+  - {code: reverse_flow, severity: warning, description: Water flows backwards through the pump (volume_flow below -0.01 m3/h).}
+scenarios:
+  - id: operating-point
+    description: >-
+      Supply at 0 bar, pump at rated speed, fully open Kv 15 valve, drain. The constrained fit
+      of the default curve is a = 33.970527 m, b = 0, c = -0.0138548 m/(m3/h)**2 (the
+      unconstrained fit has b slightly positive, so b = 0 is active and a, c are the linear
+      regression of H on Q**2). The valve needs H = (Q / Kv)**2 * 1e5 / (1000 g). Solving
+      a + c Q**2 = Q**2 * 100 / (g * 225) gives Q = 23.95962 m3/h and H = 26.01697 m. Shaft
+      power from the power fit is 2.697254 kW; NPSH required 2.530 m; NPSH available at
+      12 degC is (101325 - 1402.3) / (998.2 g) = 10.2078 m. Specific energy is
+      2.697254 kW / 23.95962 m3/h = 0.1125757 kWh/m3.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0}}
+        - {name: dut, type: centrifugal_pump}
+        - {name: v, type: valve, parameters: {kv: 15}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, v.port_a]
+        - [v.port_b, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 23.95962, rel_tol: 1.0e-4}
+      - {variable: dut.head, value: 26.01697, rel_tol: 1.0e-4}
+      - {variable: dut.shaft_power, value: 2.697254, rel_tol: 1.0e-4}
+      - {variable: dut.specific_energy, value: 0.1125757, rel_tol: 1.0e-4}
+      - {variable: dut.npsh_required, value: 2.52982, rel_tol: 1.0e-4}
+      - {variable: dut.npsh_available, value: 10.2078, abs_tol: 0.001}
+      - {variable: dut.bep_flow, value: 24.111, abs_tol: 0.01}
+      - {variable: dut.curve_fit_rms, value: 0.0518003, abs_tol: 1.0e-6}
+      - {variable: dut.speed_rpm, value: 2900, rel_tol: 1.0e-12}
+      - {mode: dut, is: running}
+      - {warning: dut.cavitation, present: false}
+      - {warning: dut.low_flow, present: false}
+      - {warning: dut.beyond_curve, present: false}
+  - id: shutoff
+    description: >-
+      Same circuit with the valve closed (seat leakage only): the pump runs at shut-off, the
+      head equals the fitted shut-off head a = 33.9705 m and the low_flow warning is raised.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0}}
+        - {name: dut, type: centrifugal_pump}
+        - {name: v, type: valve, parameters: {kv: 15}, inputs: {opening: 0}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, v.port_a]
+        - [v.port_b, sink.port]
+    expect:
+      - {variable: dut.head, value: 33.9705, abs_tol: 0.001}
+      - {variable: dut.volume_flow, min: 0, max: 0.01}
+      - {variable: dut.efficiency, min: 0, max: 0.1}
+      - {mode: dut, is: low_flow}
+      - {warning: dut.low_flow, present: true}
+      - {warning: dut.cavitation, present: false}
+  - id: stopped-pump-resistance
+    description: >-
+      Stopped pump (speed 0) between a 1 bar supply and a drain: it acts as the resistance
+      rho g |c| Q**2 + eps rho Q = 1e5 Pa with |c| = 179558.66 m/(m3/s)**2 and eps = 1 Pa per
+      kg/s, so Q = 27.15275 m3/h.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 1}}
+        - {name: dut, type: centrifugal_pump, inputs: {speed: 0}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 27.15275, rel_tol: 1.0e-5}
+      - {variable: dut.shaft_power, value: 0, abs_tol: 1.0e-12}
+      - {variable: dut.specific_energy, value: 0, abs_tol: 1.0e-12}
+      - {variable: dut.speed_rpm, value: 0, abs_tol: 1.0e-12}
+      - {mode: dut, is: "off"}
+      - {warning: dut.low_flow, present: false}
+      - {warning: dut.beyond_curve, present: false}
+  - id: free-discharge
+    description: >-
+      Pump discharging straight into a drain from a 0 bar supply: the head falls to zero at
+      Q = sqrt(a / |c|) = 49.5155 m3/h (less a negligible share for the 1 Pa per kg/s term),
+      beyond the largest curve flow of 36 m3/h.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0}}
+        - {name: dut, type: centrifugal_pump}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 49.51554, rel_tol: 1.0e-5}
+      - {variable: dut.head, value: 0, abs_tol: 1.0e-4}
+      - {variable: dut.efficiency, value: 0, abs_tol: 1.0e-6}
+      - {warning: dut.beyond_curve, present: true}
+      - {mode: dut, is: running}
+  - id: suction-lift-cavitation
+    description: >-
+      The pump draws from a tank holding 0.3 m of 15 degC water through 100 m of 65 mm pipe
+      rising 3 m to the pump, and discharges through a Kv 15 valve. At about 21 m3/h the
+      suction velocity is 1.76 m/s and the Darcy friction (f about 0.021, Churchill) costs
+      about 5.1 m; with the 3 m lift the inlet sits near -0.77 bar gauge, so NPSH available is
+      about 10.18 + 0.3 - 3 - 5.1 = 2.3 m, below the NPSH required (about 2.2 m) plus the
+      0.5 m margin: the pump cavitates. tests/test_pump.py repeats this with fluids.
+    system:
+      components:
+        - {name: tank, type: tank, parameters: {initial_level: 0.3}}
+        - {name: suction, type: pipe, parameters: {length: 100, diameter: 65, roughness: 0.045, height_difference: 3}}
+        - {name: dut, type: centrifugal_pump}
+        - {name: v, type: valve, parameters: {kv: 15}}
+        - {name: sink, type: drain}
+      connections:
+        - [tank.outlet, suction.port_a]
+        - [suction.port_b, dut.inlet]
+        - [dut.outlet, v.port_a]
+        - [v.port_b, sink.port]
+    expect:
+      - {variable: dut.npsh_available, min: 0.5, max: 2.9}
+      - {mode: dut, is: cavitating}
+      - {warning: dut.cavitation, present: true}
+      - {warning: suction.below_vapour_pressure, present: false}
+  - id: reverse-flow
+    description: >-
+      A 4 bar supply on the discharge side of a running pump exceeds its shut-off pressure
+      (33.97 m, 3.325 bar) and pushes water backwards through it into a drain.
+    system:
+      components:
+        - {name: sink, type: drain}
+        - {name: dut, type: centrifugal_pump}
+        - {name: src, type: supply, parameters: {pressure: 4}}
+      connections:
+        - [sink.port, dut.inlet]
+        - [dut.outlet, src.port]
+    expect:
+      - {variable: dut.volume_flow, max: -0.01}
+      - {variable: dut.specific_energy, value: null}
+      - {mode: dut, is: reverse_flow}
+      - {warning: dut.reverse_flow, present: true}
+contracts:
+  - id: mass-conservation
+    description: Mass entering the inlet leaves through the outlet at every valve opening.
+    scenario: operating-point
+    sweep: {variable: v.opening, from: 0, to: 1, steps: 11}
+    check: {type: equal, left: dut.inlet.m_flow, right: -dut.outlet.m_flow, abs_tol: 1.0e-9}
+  - id: shutoff-head-scales-with-speed-squared
+    description: At shut-off the head is a * s**2 with a = 33.970527 m (affinity law).
+    scenario: shutoff
+    sweep: {variable: dut.speed, from: 0.2, to: 1.2, steps: 6}
+    check: {type: equal, left: dut.head, right: "33.970527 * dut.speed ** 2", abs_tol: 0.001}
+  - id: head-follows-affinity-law
+    description: >-
+      At every speed the head equals a s**2 + c Q |Q| with the fitted a = 33.970527 m and
+      c = -0.0138548350 m/(m3/h)**2 (b = 0), to within the 1 Pa per kg/s linear term.
+    scenario: operating-point
+    sweep: {variable: dut.speed, from: 0.3, to: 1.2, steps: 10}
+    check:
+      type: equal
+      left: dut.head
+      right: "33.970527 * dut.speed ** 2 - 0.0138548350 * dut.volume_flow * abs(dut.volume_flow)"
+      abs_tol: 0.001
+  - id: flow-increases-with-speed
+    description: A faster pump delivers more water through the same valve.
+    scenario: operating-point
+    sweep: {variable: dut.speed, from: 0, to: 1.2, steps: 13}
+    check: {type: monotonic, variable: dut.volume_flow, direction: increasing, strict: true}
+  - id: hydraulic-power-definition
+    description: Hydraulic power is rho g Q H at every opening.
+    scenario: operating-point
+    sweep: {variable: v.opening, from: 0.05, to: 1, steps: 8}
+    check: {type: equal, left: dut.hydraulic_power, right: "998.2 * 9.80665 * dut.volume_flow / 3600 * dut.head / 1000", rel_tol: 1.0e-9}
+  - id: efficiency-bounds
+    description: Efficiency stays between 0 and the best efficiency of the fitted curves (62.85 %) at every valve opening.
+    scenario: operating-point
+    sweep: {variable: v.opening, from: 0, to: 1, steps: 11}
+    check: {type: bounds, variable: dut.efficiency, min: 0, max: 62.85}
+  - id: efficiency-invariant-with-speed
+    description: >-
+      The valve curve is a parabola through the origin, so at every speed the operating point
+      is a similar point of the rated one (Q ~ s, H ~ s**2, P ~ s**3 by the affinity laws)
+      and the efficiency stays at its rated-speed value through the Kv 15 valve, 62.840 %
+      (1.69496 kW hydraulic over 2.69724 kW shaft power), to within 0.01 percentage points
+      (the tolerance covers the 1 Pa per kg/s term of the pump law, largest at low speed).
+    scenario: operating-point
+    sweep: {variable: dut.speed, from: 0.3, to: 1.2, steps: 10}
+    check: {type: equal, left: dut.efficiency, right: 62.840, abs_tol: 0.01}
+  - id: specific-energy-from-head-and-efficiency
+    description: >-
+      Specific energy is the shaft energy per pumped volume, P / Q = rho g H / efficiency, in
+      kWh/m3 (1 kWh = 3.6e6 J), at every valve opening.
+    scenario: operating-point
+    sweep: {variable: v.opening, from: 0.05, to: 1, steps: 8}
+    check: {type: equal, left: dut.specific_energy, right: "998.2 * 9.80665 * dut.head / (dut.efficiency / 100) / 3.6e6", rel_tol: 1.0e-9}
+  - id: specific-energy-falls-with-flow
+    description: >-
+      Opening the valve raises the flow faster than the shaft power (the power curve has a
+      large no-flow share, 1.5 kW), so the energy per m3 falls: from about 1.14 kWh/m3 at 5 %
+      opening to 0.1126 kWh/m3 fully open.
+    scenario: operating-point
+    sweep: {variable: v.opening, from: 0.05, to: 1, steps: 20}
+    check: {type: monotonic, variable: dut.specific_energy, direction: decreasing, strict: true}
+  - id: specific-energy-scales-with-speed-squared
+    description: >-
+      Through the Kv 15 valve every speed gives a similar operating point (Q ~ s, P ~ s**3),
+      so the specific energy is 0.1125757 kWh/m3 times s**2 (affinity laws); slowing a pump
+      on a pure friction system saves energy per m3 quadratically.
+    scenario: operating-point
+    sweep: {variable: dut.speed, from: 0.3, to: 1.2, steps: 10}
+    check: {type: equal, left: dut.specific_energy, right: "0.1125757 * dut.speed ** 2", rel_tol: 1.0e-4}
+  - id: cavitation-warning
+    description: The cavitation warning is raised exactly when NPSH available is below NPSH required plus the margin with forward flow, or below zero, as the tank level varies from empty (the pump runs dry and pulls its inlet below the vapour pressure) to full.
+    scenario: suction-lift-cavitation
+    sweep: {variable: tank.initial_level, values: [0, 0.05, 0.3, 1, 2, 3]}
+    check: {type: warning_iff, code: dut.cavitation, condition: "dut.npsh_available < 0 or (dut.volume_flow > 0.01 and dut.npsh_available < dut.npsh_required + dut.npsh_margin)"}
+  - id: low-flow-warning
+    description: The low_flow warning is raised exactly when the running pump delivers less than min_flow_fraction of the best-efficiency flow.
+    scenario: operating-point
+    sweep: {variable: v.opening, values: [0, 0.01, 0.05, 0.1, 0.15, 0.3, 1]}
+    check: {type: warning_iff, code: dut.low_flow, condition: "dut.speed > 0.01 and dut.volume_flow < dut.min_flow_fraction * dut.bep_flow"}
+  - id: beyond-curve-warning
+    description: The beyond_curve warning is raised exactly when the running pump's flow exceeds 36 m3/h times the speed.
+    scenario: free-discharge
+    sweep: {variable: dut.speed, values: [0, 0.3, 0.6, 1, 1.2]}
+    check: {type: warning_iff, code: dut.beyond_curve, condition: "dut.speed > 0.01 and dut.volume_flow > 36 * dut.speed"}
+  - id: reverse-flow-warning
+    description: The reverse_flow warning is raised exactly when the discharge pressure exceeds what the pump can hold (shut-off 3.325 bar).
+    scenario: reverse-flow
+    sweep: {variable: src.pressure, values: [2, 3, 3.3, 3.4, 4, 5]}
+    check: {type: warning_iff, code: dut.reverse_flow, condition: "dut.volume_flow < -0.01"}
+implementations:
+  reference: {python: "worldparts.components.pump:CentrifugalPump"}
+  modelica:
+    class: Buildings.Fluid.Movers.SpeedControlled_y
+    library: Modelica Buildings Library
+    notes: >-
+      Map head_curve to per.pressure (V_flow, dp = rho g H), power_curve to per.power and
+      rated_speed to per.speed_nominal, with y = speed. Buildings interpolates the curve with
+      splines instead of a bounded quadratic and applies the affinity laws the same way.
+      Modelica.Fluid.Machines.PrescribedPump with
+      Modelica.Fluid.Machines.BaseClasses.PumpCharacteristics.quadraticFlow is the MSL
+      alternative. Binding not yet cross-validated in v0.1.
+  wntr:
+    element: HeadPump
+    notes: >-
+      Head pump with a pump curve and a speed setting; EPANET fits a single-point or
+      three-point curve as H = A - B Q**C and interpolates a multi-point curve piecewise
+      linearly, so the operating point differs slightly from the quadratic fit. EPANET has no
+      NPSH check and treats a pump as a check valve (no reverse flow). Binding not yet
+      cross-validated in v0.1.
+provenance:
+  authors: [worldparts contributors]
+  sources:
+    - title: "Gülich, J. F. Centrifugal Pumps. Springer."
+      notes: Affinity (similarity) laws, NPSH required and cavitation, minimum continuous flow and operation away from the best-efficiency point.
+    - title: "Karassik, I. J., Messina, J. P., Cooper, P. and Heald, C. C. Pump Handbook. McGraw-Hill."
+      notes: Pump curves, system curves and the operating point as their intersection.
+    - title: "ANSI/HI 9.6.1 Rotodynamic Pumps - Guideline for NPSH Margin (Hydraulic Institute)"
+      notes: Motivation for an NPSH margin above the NPSH required.
+    - title: "IAPWS R7-97: Revised Release on the IAPWS Industrial Formulation 1997 for the Thermodynamic Properties of Water and Steam"
+      notes: Saturation (vapour) pressure used for the NPSH available.
+    - title: Modelica Buildings Library
+      url: https://simulationresearch.lbl.gov/modelica/
+      notes: Mover models parameterised by pressure and power curves with affinity-law speed scaling.
+    - title: EPANET
+      url: https://github.com/OpenWaterAnalytics/EPANET
+      notes: Pump curves and speed settings in water network models.
+  data:
+    acquisition: generic
+    notes: >-
+      The default curves describe a generic end-suction pump of about 25 m3/h at 26 m and
+      2900 rpm (best efficiency about 63 %), invented for illustration; they are not a
+      specific product or datasheet.
+  license: Apache-2.0
+  data_license: CC0-1.0

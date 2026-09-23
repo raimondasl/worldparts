@@ -10,6 +10,7 @@ from fluids.friction import Churchill_1977
 
 from worldparts.errors import InvalidValueError
 from worldparts.laws import (
+    GATE_STIFFNESS,
     CheckValveLaw,
     GateLaw,
     Law,
@@ -44,6 +45,9 @@ def make_laws() -> dict[str, Law]:
         "gate_open": GateLaw(k),
         "gate_forward_blocked": GateLaw(k, "forward"),
         "gate_reverse_blocked": GateLaw(k, "reverse"),
+        "gate_reverse_capped": GateLaw(k, "reverse", limit=0.05),
+        "gate_reverse_closed": GateLaw(k, "reverse", limit=0.0),
+        "gate_forward_capped": GateLaw(k, "forward", limit=1e-4),
         "ideal": ideal_connection(),
     }
 
@@ -134,6 +138,36 @@ def test_gate_direction_can_be_switched() -> None:
     assert gate.flow(-1e4) == pytest.approx(-open_flow, rel=1e-6)
     with pytest.raises(InvalidValueError):
         gate.blocked_direction = "sideways"
+
+
+def test_gate_limit_caps_the_blocked_direction() -> None:
+    """Core change for the tank (design 8.9): a capped gate follows the open law up to
+    ``limit`` in its blocked direction and closes steeply beyond it.
+
+    Hand calculation: with k for Kv 2.5 m3/h, the open law passes k sqrt(1e4) = 0.0695 kg/s
+    at 0.1 bar. Capped at 0.01 kg/s, the flow at dp is 0.01 + dp_excess / GATE_STIFFNESS with
+    dp_excess = dp - (0.01 / k)**2 (the open drop at the cap), under 1e-5 kg/s past the cap
+    at 1 bar. The other direction is untouched; limit 0 closes the gate at zero flow, and
+    limit None is the old leakage-only gate.
+    """
+    k = kv_to_k(KV)
+    gate = GateLaw(k, "reverse", limit=0.01)
+    open_flow = GateLaw(k).flow(1e4)
+    assert gate.flow(1e4) == pytest.approx(open_flow, rel=1e-9)  # forward: open
+    assert gate.flow(-10.0) == pytest.approx(GateLaw(k).flow(-10.0), rel=1e-9)  # under the cap
+    for dp in (1e4, 1e5, 1e6):
+        m = gate.flow(-dp)
+        past = -m - 0.01
+        expected = (dp - (0.01 / k) ** 2) / GATE_STIFFNESS
+        assert past == pytest.approx(expected, rel=1e-3, abs=1e-8)
+        assert past < 1.001 * dp / GATE_STIFFNESS + 1e-7  # 1e-5 kg/s per bar
+    gate.blocked_direction = None  # unblocked: the cap does not apply
+    assert gate.flow(-1e4) == pytest.approx(-open_flow, rel=1e-9)
+    gate.blocked_direction = "reverse"
+    gate.limit = 0.0  # closed at zero flow: only the stiff term, 1e-5 kg/s per bar
+    assert gate.flow(-1e5) == pytest.approx(-1e5 / GATE_STIFFNESS, rel=1e-3)
+    gate.limit = None  # leakage only, as before
+    assert gate.flow(-1e4) == pytest.approx(-open_flow * 1e-6, rel=1e-4)
 
 
 @pytest.mark.parametrize("rel_rough", [0.0, 1e-6, 1e-4, 1e-3, 1e-2, 5e-2])

@@ -196,6 +196,11 @@ class Component:
     """
 
     manifest: ClassVar[Manifest]
+    #: Length in s of the simulation step over which the current solution will be integrated
+    #: (set by ``System.simulate`` before ``update_laws()``; at the last sample, the length of
+    #: the step that led to it). None in a steady ``solve()``. Storage components use it to
+    #: keep an explicit step from taking more than they hold.
+    time_step: float | None = None
 
     def __init__(self, name: str, parameters: dict[str, Any], inputs: dict[str, float]) -> None:
         self.name = name
@@ -236,10 +241,24 @@ class Component:
         """
         return []
 
+    @classmethod
+    def check_states(cls, parameters: Mapping[str, Any], states: Mapping[str, Any]) -> list[str]:
+        """Cross-checks of state values against parameters (SI); return problem messages.
+
+        Called by the system before a batch that sets states or parameters is accepted, with
+        the trial values (after any re-initialisation), and by ``check()``. For example a
+        tank level must not exceed the tank height. Single-state limits are already enforced
+        from the manifest.
+        """
+        return []
+
     def init_states(self) -> None:
         """Set states to their initial values (default: manifest ``default`` or 0).
 
-        Called at construction and whenever a parameter changes.
+        Called at construction, by ``System.reset_states()`` and, when a parameter batch
+        changes the initial value of a state, to re-initialise that state (outside
+        simulations). Only write ``self.states``: the system also calls it to find the
+        initial values.
         """
         for name, spec in self.manifest.states.items():
             self.states[name] = spec.to_si(spec.default) if spec.default is not None else 0.0

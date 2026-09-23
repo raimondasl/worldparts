@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 import functools
+import json
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -290,3 +292,63 @@ def test_dimensionless_range_message_has_no_unit() -> None:
     with pytest.raises(OutOfRangeError) as exc:
         m.inputs["opening"].parse(1.5, "v.opening")
     assert str(exc.value) == "v.opening = 1.5 is outside the allowed range [0, 1]."
+
+
+def _with_rise(**extra: Any) -> dict[str, Any]:
+    data = valve_data()
+    data["observables"].append(
+        {"name": "temperature_rise", "unit": "K", "description": "A rise.", **extra}
+    )
+    return data
+
+
+def test_temperature_difference_must_be_declared() -> None:
+    """A temperature named like a difference must say so, or it converts as absolute."""
+    with pytest.raises(ManifestError) as exc:
+        Manifest.from_dict(_with_rise())
+    assert any("quantity: temperature_difference" in p for p in exc.value.problems)
+    m = Manifest.from_dict(_with_rise(quantity="temperature_difference"))
+    spec = m.observables["temperature_rise"]
+    assert spec.quantity == "temperature_difference" and spec.reference == "difference"
+    assert spec.converter.offset == 0.0
+    assert m.observables["volume_flow"].reference is None
+
+
+def test_quantity_schema_rules() -> None:
+    problems = validate_manifest_data(_with_rise(quantity="temperature_difference", unit="bar"))
+    assert any("observables/" in p for p in problems), problems
+    problems = validate_manifest_data(_with_rise(quantity="speed"))
+    assert any("observables/" in p for p in problems), problems
+    data = valve_data()
+    data["parameters"].append(
+        {
+            "name": "approach",
+            "description": "Design temperature approach.",
+            "type": "number",
+            "unit": "degC",
+            "quantity": "temperature_difference",
+            "default": 5,
+            "minimum": 0,
+            "maximum": 50,
+        }
+    )
+    m = Manifest.from_dict(data)
+    spec = m.parameters["approach"]
+    assert spec.parse("9 degF", "v.approach") == pytest.approx(5.0)
+    assert spec.to_si(5.0) == pytest.approx(5.0)
+
+
+def test_schemas_have_no_duplicate_keys() -> None:
+    """A duplicate key silently replaces the first definition (last one wins in JSON)."""
+
+    def no_dups(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        keys = [k for k, _ in pairs]
+        dups = {k for k in keys if keys.count(k) > 1}
+        assert not dups, f"duplicate keys {sorted(dups)}"
+        return dict(pairs)
+
+    for name in ("component-manifest", "system"):
+        text = (
+            resources.files("worldparts").joinpath(f"schemas/{name}.schema.json").read_text("utf-8")
+        )
+        json.loads(text, object_pairs_hook=no_dups)

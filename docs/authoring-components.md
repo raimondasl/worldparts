@@ -27,6 +27,7 @@ converts to and from the declared unit of every variable. Some SI forms to remem
 | `bar` (gauge, the default for pressures) | Pa **absolute** (3 bar gauge is 401325.0) |
 | `bar` with `pressure_reference: difference` | Pa difference (0.2 bar is 20000.0) |
 | `degC` | K |
+| `K` or `degC` with `quantity: temperature_difference` | K difference (a 43 K rise is 43.0) |
 | `L/min`, `m3/h`, `L/s` | m3/s |
 | `%` and `1` | a fraction (50 % is 0.5; return efficiency as 0.72, not 72) |
 | `kW` | W |
@@ -34,6 +35,7 @@ converts to and from the declared unit of every variable. Some SI forms to remem
 | `L`, `m3` | m3 |
 | `mW/cm2` | W/m2; `mJ/cm2` is J/m2, so `dose = fluence * t` needs no factor |
 | `min`, `h` | s |
+| `kWh/m3` | J/m3 (1 kWh/m3 is 3.6e6; `shaft_power / volume_flow` needs no factor) |
 
 **Pressures default to gauge.** Any pressure-valued variable (unit `Pa`, `kPa` or `bar`) is
 gauge unless you declare `pressure_reference: absolute` or `difference`. Pressure drops
@@ -48,6 +50,20 @@ variable's declared reference. `"1 atm"` without a reference is rejected for gau
 (it almost always means atmospheric pressure, which is `0 bar` gauge). Results carry the
 reference: `SolveResult.to_dict()` gives `{"value", "unit", "reference"}` for pressures, and
 `result.get(path, unit="bar absolute")` converts a gauge value to absolute.
+
+**Temperatures default to absolute.** A temperature difference (a rise, an approach, a
+delta) declared in `K` would otherwise convert like an absolute temperature: 35 K would read
+as -238.15 degC. Declare it with `quantity: temperature_difference`; it then converts by
+scale only (35 K = 35 degC = 63 degF), strings such as `"9 degF"` parse as 5 K, results carry
+`"reference": "difference"` (in `to_dict()`, `SolveResult.references` and the MCP output),
+and `describe_component` shows the quantity. The loader rejects a temperature variable whose
+name contains `rise`, `difference`, `delta`, `drop`, `increase`, `decrease`, `approach` or
+`dt` without it, and the schema allows the quantity only with unit `K` or `degC`. Prefer
+`K` for differences. Example: the heater's
+`{name: temperature_rise, unit: K, quantity: temperature_difference, ...}`.
+
+An energy per volume (`kWh/m3`) has the dimension of a pressure but is not one: it has no
+gauge offset and takes no `pressure_reference`.
 
 **One namespace per instance.** Parameters, inputs, states, observables and ports share the
 path namespace `<instance>.<name>`, so every name must be unique across them. States are
@@ -69,7 +85,7 @@ direction is from its first port to its second; create its main branch in that d
 `worldparts.media.vapour_pressure(T_kelvin)`, and `worldparts.media.G` for gravity.
 
 **Units vocabulary.** Manifest units must come from the list in design 3.1 (the schema
-enforces it).
+enforces it), plus `kWh/m3` (specific energy), added at integration.
 
 ## 2. The base API
 
@@ -84,7 +100,8 @@ The system drives your component through these hooks (all optional except `build
 |---|---|---|
 | `__init__(name, parameters, inputs)` | once | Inherited. Values arrive in SI and validated. Calls `init_states()`. Override only if you must, and call `super().__init__`. |
 | `check_parameters(cls, parameters) -> list[str]` | before a parameter change is accepted | Cross-parameter rules on SI values, e.g. tank `initial_level <= height`. Return messages; the system raises `InvalidValueError` and `check()` reports `invalid_value`. It receives the whole trial parameter set of a `set_values` batch, so rules see consistent values whatever the key order. |
-| `init_states()` | at construction and once per batch that changes a parameter (outside simulations) | Set `self.states[...]` from parameters or inputs. Default: the manifest state `default`, else 0. **Only write `self.states`**: `to_dict()` calls it to find which states differ from their initial values. |
+| `check_states(cls, parameters, states) -> list[str]` | before a batch that sets parameters or states is accepted, and in `check()` | Cross-checks of states against parameters on SI values, e.g. tank `level <= height`. It receives the trial parameters and the trial states (after re-initialisation and the batch's own state values); a problem rejects the whole batch (`InvalidValueError`) and `check()` reports `invalid_value` (for example a system document with `states: {level: 5}` on a 3 m tank). |
+| `init_states()` | at construction, in `reset_states()`, and when a parameter batch changes a state's initial value (outside simulations) | Set `self.states[...]` from parameters or inputs. Default: the manifest state `default`, else 0. **Only write `self.states`**: the system calls it with trial parameters to find which initial values a batch changes, and `to_dict()` calls it to find which states differ from their initial values. A batch re-initialises only the states whose initial value it changes (a tank's `initial_level` resets `level`; its `port_kv` keeps the water). |
 | `build(nb)` | whenever the topology or a parameter changes | Create nodes and branches with the `NetworkBuilder`; store the handles on `self`. Must be re-runnable. |
 | `update_laws()` | before **every** network solve, and in `check()` | Push parameters, inputs and states into the law objects, fixed-node pressures (`node.p`) and temperatures (`node.T`), and gate directions. Must not fail on the defaults. |
 | `settle()` | at the start of `solve()` | Set `steady: settle` states to equilibrium (e.g. `position = opening`). |
@@ -106,6 +123,11 @@ multiple of `step`; events after `duration` are rejected). Going from sample `t0
    `1 - exp(-(t - t_event) / tau)` exactly, independent of the step size;
 4. `update_laws()`, solve, record observables, modes and warnings;
 5. `integrate(t_next - t, view)`.
+
+Before step 4 the system sets `self.time_step` on every component to `t_next - t`, the step
+over which this solution will be integrated (at the last sample, the step that led to it);
+it is `None` in a steady `solve()`. A storage component uses it in `update_laws()` to keep an
+explicit step from taking more than it holds (the tank caps its port outflow with it).
 
 Because storage states are integrated after recording, anything `integrate` computes for
 the step `[t, t_next]` (the tank's `overflow_rate`, and a mode or warning based on it) is
@@ -146,7 +168,7 @@ coefficients in `update_laws()`.
 | `PipeLaw(length, diameter, roughness, minor_loss, height_difference)` | pipe | SI lengths. |
 | `PumpLaw(a, b, c, speed, eps)` | pump | `H = a*s^2 + b*s*Q + c*Q*abs(Q)` in m with Q in m3/s; needs `a > 0`, `b <= 0`, `c < 0`. |
 | `CheckValveLaw(k, leakage)` | check valve | reverse coefficient `k * leakage`. |
-| `GateLaw(k, blocked_direction)` | tank ports | set `gate.blocked_direction = "forward"` (a to b blocked), `"reverse"` or `None` in `update_laws()`; it may change every step. |
+| `GateLaw(k, blocked_direction, leakage=1e-6, limit=None)` | tank ports | set `gate.blocked_direction = "forward"` (a to b blocked), `"reverse"` or `None` in `update_laws()`; it may change every step. With `limit=None` the blocked direction is leakage only; with `limit` (kg/s) it follows the open law up to the limit and closes beyond it with `GATE_STIFFNESS` (1e10 Pa per kg/s, about 1e-5 kg/s per bar past the cap); `limit=0` closes it at zero flow. |
 
 Helpers: `kv_to_k(kv_si)`, `k_to_kv(k)`, `flow_at_1bar(k)`, `churchill_friction_factor(re, rr)`.
 A rated point converts to a Kv as `kv_si = Q_rated / sqrt(dp_rated / 1e5 * 1000 / rho)`.
@@ -277,10 +299,16 @@ component with no lag behaves the same in both.
 
 **Storage integration (tank).** In `update_laws()` set `self.node.p = P_ATM + self.rho * G *
 level`, `self.node.T = temperature` and each gate's `blocked_direction` (blocking outflow when
-`level <= 0.001`). In `integrate(dt, view)` compute the net inflow from `view.m(branch)` of
-your port branches, advance the level with explicit Euler, spill anything above `height`
-(remember the spill for the `overflow_rate` observable) and mix inflow temperatures (use
-`view.port_T(port)` for water entering through a port). Clamp the level at 0.
+`level <= 0.001`). In a simulation also cap the outflow: explicit Euler must never take more
+out over a step than the tank holds, or the clamp at 0 creates water (a pump drawing from a
+nearly empty break tank did exactly that). The tank sets `blocked_direction = "reverse"` and
+`limit = rho * A * (level - just under 1 mm) / (time_step * connected_ports)` on its gates, so
+the level settles just above empty and a pump delivers what flows in. In
+`integrate(dt, view)` compute the net inflow from `view.m(branch)` of your port branches,
+advance the level with explicit Euler, spill anything above `height` (remember the spill for
+the `overflow_rate` observable) and mix inflow temperatures (use `view.port_T(port)` for
+water entering through a port). Keep the clamp at 0 as a guard. Reject a level above the
+rim in `check_states`.
 `tests/testparts.py` (`HeatedTank`) is a complete, tested example of all of this, including
 the energy balance.
 

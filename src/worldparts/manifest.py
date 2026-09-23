@@ -30,7 +30,14 @@ from worldparts.errors import (
     format_choices,
 )
 from worldparts.expressions import compile_expression
-from worldparts.units import UnitConverter, converter, is_pressure_unit, parse_value
+from worldparts.units import (
+    QUANTITIES,
+    UnitConverter,
+    converter,
+    is_pressure_unit,
+    is_temperature_unit,
+    parse_value,
+)
 
 __all__ = [
     "PORT_VARIABLES",
@@ -179,6 +186,8 @@ class VariableSpec:
         min_rows: Minimum table rows.
         pressure_reference: For pressure units.
         steady: For states, ``settle`` or ``hold``.
+        quantity: ``temperature_difference`` for a temperature difference (e.g. a rise in K),
+            which converts between units by scale only; None otherwise.
     """
 
     name: str
@@ -194,6 +203,7 @@ class VariableSpec:
     min_rows: int | None = None
     pressure_reference: str | None = None
     steady: str | None = None
+    quantity: str | None = None
 
     @property
     def is_numeric(self) -> bool:
@@ -204,13 +214,21 @@ class VariableSpec:
     def converter(self) -> UnitConverter:
         """Converter between the declared unit and SI (numeric variables only)."""
         assert self.unit is not None
-        return converter(self.unit, self.pressure_reference)
+        return converter(self.unit, self.reference)
 
     @property
     def reference(self) -> str | None:
-        """Effective pressure reference (``gauge`` by default for pressures)."""
-        if self.unit is not None and self.is_numeric and is_pressure_unit(self.unit):
+        """Effective reference used for unit conversion.
+
+        Pressures: ``gauge`` (default), ``absolute`` or ``difference``. Temperature
+        differences (``quantity: temperature_difference``): ``difference``. Otherwise None.
+        """
+        if self.unit is None or not self.is_numeric:
+            return None
+        if is_pressure_unit(self.unit):
             return self.pressure_reference or "gauge"
+        if self.quantity is not None and is_temperature_unit(self.unit):
+            return QUANTITIES.get(self.quantity)
         return None
 
     def limits_text(self) -> str:
@@ -619,6 +637,23 @@ class Manifest:
                         f"{label}: its name suggests a pressure difference; declare "
                         "'pressure_reference: difference' (pressures default to gauge)."
                     )
+            if spec.unit and spec.is_numeric and is_temperature_unit(spec.unit):
+                looks_diff = re.search(
+                    r"(rise|difference|delta|drop|increase|decrease|approach|dt$|_dt)", spec.name
+                )
+                if looks_diff and spec.quantity != "temperature_difference":
+                    out.append(
+                        f"{label}: its name suggests a temperature difference; declare "
+                        "'quantity: temperature_difference' (temperatures default to absolute, "
+                        "so 35 K would otherwise convert to -238.15 degC)."
+                    )
+            if spec.quantity == "temperature_difference" and not (
+                spec.unit and spec.is_numeric and is_temperature_unit(spec.unit)
+            ):
+                out.append(
+                    f"{label}: quantity 'temperature_difference' needs a temperature unit "
+                    f"(K or degC), but the unit is {spec.unit!r}."
+                )
             if spec.pressure_reference is not None and not (
                 spec.unit and spec.is_numeric and is_pressure_unit(spec.unit)
             ):
@@ -744,6 +779,7 @@ def _var(item: Mapping[str, Any], kind: str) -> VariableSpec:
         min_rows=item.get("min_rows"),
         pressure_reference=item.get("pressure_reference"),
         steady=item.get("steady"),
+        quantity=item.get("quantity"),
     )
 
 

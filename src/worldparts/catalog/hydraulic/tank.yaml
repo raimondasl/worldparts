@@ -1,0 +1,374 @@
+manifest_version: "0.1"
+id: worldparts.hydraulic.tank
+version: "0.1.0"
+name: Open storage tank
+summary: Open atmospheric cylindrical tank with two bottom ports, level-dependent static head, overflow at the rim and perfectly mixed temperature.
+description: |
+  A vertical cylindrical tank of inner `diameter` and `height`, open to the atmosphere, with
+  two ports at the bottom (`inlet` and `outlet`; the names are conventional and water may flow
+  either way through either port). The pressure at the tank bottom is
+  `P_ATM + rho * g * level`, so the tank acts as a pressure boundary whose head changes with
+  its level. Each port joins the tank through a Kv resistance (`port_kv`, the nozzle and
+  fitting), and when the level falls to 1 mm or below the outflow through both ports is
+  blocked (a leakage fraction of 1e-6 of the port Kv remains), so an empty tank does not
+  deliver water or report negative levels.
+
+  The `level` and `temperature` are storage states. A steady `solve()` is a snapshot at the
+  current level (the states are held); `simulate()` integrates them with explicit Euler at
+  the simulation step. The level follows the net volume inflow `A * dlevel/dt = sum(Q_in)`.
+  Water that would rise above `height` is spilled over the rim and reported as
+  `overflow_rate` (in a simulation, the spill over the step that led to the current sample;
+  in a steady solve of a full tank, the net inflow, which is what spills). The temperature
+  follows perfect mixing of the inflows with the tank contents; spilled water and outflow
+  leave at the tank temperature. An explicit step never takes more water out than the tank
+  holds: in a simulation the outflow of each connected port is capped at its share of the
+  water above the empty level divided by the step (the gate closes steeply beyond the cap).
+  A pump drawing from a nearly empty break tank therefore delivers exactly what flows in,
+  with the level settling just above 1 mm, instead of drawing water that is not there; the
+  pump then reports the cavitation of a starved suction. The cap binds only when a step
+  would nearly empty the tank; for accurate drain-down dynamics still choose a step much
+  shorter than the drain time.
+
+  Not modelled: stratification (the contents are perfectly mixed), heat loss through the wall
+  and the free surface, evaporation, the velocity head and vortexing at the outlet nozzle,
+  air entrainment when nearly empty, the pressure drop of the overflow weir (spill is
+  instantaneous), non-cylindrical shapes and ports above the bottom. Port elevations are the
+  tank bottom; connect pipes with `height_difference` to model a tank placed above or below
+  the rest of the network.
+tags: [tank, storage, reservoir, level, overflow, mixing, purification]
+classification:
+  ifc: {entity: IfcTank, predefined_type: STORAGE}
+fidelity:
+  level: lumped_dynamic
+  assumptions:
+    - Incompressible water with constant properties (998.2 kg/m3, 1.002e-3 Pa s, 4182 J/(kg K)).
+    - Hydrostatic pressure at the bottom ports, P_ATM + rho g level; free surface at atmospheric pressure.
+    - Port connections are quadratic Kv resistances, regularised near zero flow; outflow blocked (leakage 1e-6 of the Kv) at a level of 1 mm or below.
+    - In a simulation, outflow over a step is capped at the water above the empty level, shared equally by the connected ports.
+    - Perfectly mixed contents; adiabatic walls and free surface.
+    - Explicit Euler integration of level and temperature at the simulation step; instantaneous spill above the rim.
+ports:
+  - {name: inlet, type: fluid, medium: water, description: Bottom port (conventionally the inlet; flow may go either way).}
+  - {name: outlet, type: fluid, medium: water, description: Bottom port (conventionally the outlet; flow may go either way).}
+parameters:
+  - name: diameter
+    description: Inner diameter of the cylindrical tank.
+    type: number
+    unit: m
+    default: 2.0
+    minimum: 0.05
+    maximum: 100
+  - name: height
+    description: Height of the rim above the bottom; water above it spills.
+    type: number
+    unit: m
+    default: 3.0
+    minimum: 0.1
+    maximum: 100
+  - name: initial_level
+    description: Water level at the start (must not exceed height). Changing it resets the level state; changing any other parameter keeps the current level.
+    type: number
+    unit: m
+    default: 2.0
+    minimum: 0
+    maximum: 100
+  - name: initial_temperature
+    description: Water temperature at the start. Changing it resets the temperature state; changing any other parameter keeps the current temperature.
+    type: number
+    unit: degC
+    default: 15
+    minimum: 0.5
+    maximum: 99
+  - name: port_kv
+    description: Kv of each port connection (nozzle and fitting), m3/h of water at 1 bar.
+    type: number
+    unit: m3/h
+    default: 200
+    minimum: 0.01
+    maximum: 1000000
+states:
+  - name: level
+    description: Water level above the bottom (reported as the variable `level`); it must not exceed `height`.
+    unit: m
+    steady: hold
+    minimum: 0
+    maximum: 100
+  - name: temperature
+    description: Perfectly mixed water temperature (reported as the variable `temperature`).
+    unit: degC
+    steady: hold
+    minimum: 0.5
+    maximum: 99
+observables:
+  - {name: volume, unit: m3, description: Water volume in the tank (cross-section times level).}
+  - {name: fill_fraction, unit: "%", description: Level as a percentage of the height.}
+  - {name: net_inflow, unit: m3/h, description: Net volume inflow through both ports (negative when draining).}
+  - {name: overflow_rate, unit: m3/h, description: "Volume flow spilled over the rim: in a simulation the spill over the step that led to the current sample; in a steady solve the net inflow of a full, filling tank."}
+modes:
+  - {name: empty, condition: "level <= 0.001", description: The tank is empty; outflow through the ports is blocked.}
+  - {name: overflowing, condition: "overflow_rate > 0", description: The tank is full and water spills over the rim.}
+  - {name: filling, condition: "net_inflow > 0.001", description: The level is rising.}
+  - {name: draining, condition: "net_inflow < -0.001", description: The level is falling.}
+  - {name: steady, condition: "true", description: No significant net flow; the level is constant.}
+envelope:
+  - code: tank_empty
+    severity: warning
+    condition: "level <= 0.001"
+    message: The tank is empty; outflow is blocked and a pump drawing from it would run dry.
+  - code: low_level
+    severity: info
+    condition: "fill_fraction < 10"
+    message: The tank is less than 10 % full.
+  - code: tank_overflow
+    severity: warning
+    condition: "overflow_rate > 0"
+    message: The tank is full and spills over the rim.
+scenarios:
+  - id: drain-through-valve
+    description: >-
+      Default tank (2 m level) drains through its outlet and a fully open Kv 2.5 valve to
+      atmosphere; inlet capped. Hand calculation: the port (Kv 200) and valve in series give
+      Kv_eff = 1/sqrt(1/2.5**2 + 1/200**2) = 2.4998047 m3/h; dp = rho g h = 998.2 * 9.80665 * 2
+      = 19578.2 Pa, so Q = Kv_eff * sqrt(0.195782 * 1000 / 998.2) = 1.107086 m3/h. The outlet
+      pressure is rho g h minus the port drop (Q/200)**2 * 0.9982 bar: 0.1957494 bar.
+      Volume pi * 1**2 * 2 = 6.283185 m3.
+    system:
+      components:
+        - {name: dut, type: tank}
+        - {name: v, type: valve}
+        - {name: sink, type: drain}
+      connections:
+        - [dut.outlet, v.port_a]
+        - [v.port_b, sink.port]
+    expect:
+      - {variable: dut.net_inflow, value: -1.1070862, rel_tol: 1.0e-5}
+      - {variable: dut.outlet.p, value: 0.1957494, abs_tol: 1.0e-6}
+      - {variable: dut.volume, value: 6.283185307, rel_tol: 1.0e-9}
+      - {variable: dut.fill_fraction, value: 66.666667, rel_tol: 1.0e-7}
+      - {variable: dut.level, value: 2.0}
+      - {variable: dut.overflow_rate, value: 0.0}
+      - {mode: dut, is: draining}
+      - {warning: dut.tank_empty, present: false}
+      - {warning: dut.tank_overflow, present: false}
+  - id: fill-to-overflow
+    description: >-
+      A 0.5 bar supply fills a 1 m high tank (0.5 m diameter) that starts at 0.99 m through a
+      Kv 2.5 valve; outlet capped. The tank is full within about 5 s, after which everything
+      that enters spills. Hand calculation at the full level: dp = 50000 - 998.2 * 9.80665 * 1
+      = 40210.9 Pa across the valve and port in series (Kv_eff 2.4998047), so
+      Q = 2.4998047 * sqrt(0.402109 * 1000 / 998.2) = 1.586608 m3/h, which is both the net
+      inflow and the overflow rate.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0.5, temperature: 15}}
+        - {name: v, type: valve}
+        - {name: dut, type: tank, parameters: {diameter: 0.5, height: 1.0, initial_level: 0.99}}
+      connections:
+        - [src.port, v.port_a]
+        - [v.port_b, dut.inlet]
+    simulate: {duration: 60 s, step: 1 s}
+    expect:
+      - {variable: dut.level, value: 1.0, abs_tol: 1.0e-12}
+      - {variable: dut.net_inflow, value: 1.586608, rel_tol: 1.0e-5}
+      - {variable: dut.overflow_rate, value: 1.586608, rel_tol: 1.0e-5}
+      - {variable: dut.fill_fraction, value: 100, abs_tol: 1.0e-9}
+      - {mode: dut, is: overflowing}
+      - {warning: dut.tank_overflow, present: true}
+  - id: drain-to-empty
+    description: >-
+      A small tank (0.1 m diameter, 5 cm of water) drains through a Kv 2.5 valve. By the
+      analytic drain law sqrt(h) = sqrt(h0) - k sqrt(rho g) t / (2 rho A), with k the series
+      mass-flow coefficient 0.0021941 kg/(s Pa^0.5), it empties in about 16 s; after 60 s the
+      tank is empty and the tank_empty warning is raised. (A gravity drain has no driving
+      head at level 0, so this scenario does not test the outflow block; pump-from-empty-tank
+      and break-tank do.)
+    system:
+      components:
+        - {name: dut, type: tank, parameters: {diameter: 0.1, height: 0.5, initial_level: 0.05}}
+        - {name: v, type: valve}
+        - {name: sink, type: drain}
+      connections:
+        - [dut.outlet, v.port_a]
+        - [v.port_b, sink.port]
+    simulate: {duration: 60 s, step: 0.25 s}
+    expect:
+      - {variable: dut.level, max: 0.001}
+      - {variable: dut.net_inflow, min: -1.0e-4, max: 1.0e-4}
+      - {mode: dut, is: empty}
+      - {warning: dut.tank_empty, present: true}
+      - {warning: dut.low_level, present: true}
+  - id: pump-from-empty-tank
+    description: >-
+      A default pump draws from an empty tank (level 0) and discharges through a Kv 15 valve
+      to atmosphere; tank inlet capped. Outflow from an empty tank is blocked: only the gate
+      leakage (1e-6 of the port Kv 200 m3/h) can pass, below 1e-3 m3/h even at the full
+      shut-off suction of the pump (34 m, 3.3 bar: 200e-6 * sqrt(3.3) = 3.7e-4 m3/h). The
+      pump runs dry and pulls its inlet below the vapour pressure.
+    system:
+      components:
+        - {name: dut, type: tank, parameters: {initial_level: 0}}
+        - {name: pump, type: centrifugal_pump}
+        - {name: v, type: valve, parameters: {kv: 15}}
+        - {name: sink, type: drain}
+      connections:
+        - [dut.outlet, pump.inlet]
+        - [pump.outlet, v.port_a]
+        - [v.port_b, sink.port]
+    expect:
+      - {variable: dut.net_inflow, min: -1.0e-3, max: 1.0e-9}
+      - {variable: pump.volume_flow, min: -1.0e-3, max: 1.0e-3}
+      - {mode: dut, is: empty}
+      - {warning: dut.tank_empty, present: true}
+      - {warning: pump.cavitation, present: true}
+  - id: break-tank
+    description: >-
+      Break tank: a 1 bar supply feeds an initially empty tank (1 m diameter) through a Kv 2.5
+      valve while a default pump draws from it into a Kv 15 valve and a drain; 600 s at a
+      1 s step. The feed is Kv_eff * sqrt(1 bar * 1000 / 998.2) = 2.4998047 * 1.0009012 =
+      2.502 m3/h (the few mm of static head change it by under 0.02 %); the pump could draw
+      23.9 m3/h but can deliver only what flows in. Each step may draw at most the water above
+      the 1 mm empty level, shared by the two connected ports, so the level settles at
+      1 mm + 2 Q dt / A = 0.001 + 2 * 6.95e-4 * 1 / 0.7854 = 2.77 mm and the pump delivers the
+      feed: net inflow zero, no water created.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 1.0}}
+        - {name: vin, type: valve, parameters: {kv: 2.5}}
+        - {name: dut, type: tank, parameters: {diameter: 1.0, initial_level: 0}}
+        - {name: pump, type: centrifugal_pump}
+        - {name: v, type: valve, parameters: {kv: 15}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, vin.port_a]
+        - [vin.port_b, dut.inlet]
+        - [dut.outlet, pump.inlet]
+        - [pump.outlet, v.port_a]
+        - [v.port_b, sink.port]
+    simulate: {duration: 600 s, step: 1 s}
+    expect:
+      - {variable: pump.volume_flow, value: 2.502, rel_tol: 1.0e-3}
+      - {variable: dut.net_inflow, value: 0.0, abs_tol: 1.0e-6}
+      - {variable: dut.level, value: 0.00277, abs_tol: 2.0e-5}
+      - {mode: dut, is: steady}
+      - {warning: pump.cavitation, present: true}
+  - id: warm-inflow-mixing
+    description: >-
+      A 1 bar, 40 degC supply fills a 1 m diameter tank holding 1 m of 15 degC water through a
+      Kv 2.5 valve for 10 min; outlet capped. Perfect mixing without outflow conserves the
+      volume-weighted temperature, V T = V0 T0 + (V - V0) T_in, with V0 = pi / 4 m3; about
+      0.4 m3 enters, so the final temperature is near 22 degC.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 1.0, temperature: 40}}
+        - {name: v, type: valve}
+        - {name: dut, type: tank, parameters: {diameter: 1.0, initial_level: 1.0, initial_temperature: 15}}
+      connections:
+        - [src.port, v.port_a]
+        - [v.port_b, dut.inlet]
+    simulate: {duration: 10 min, step: 5 s}
+    expect:
+      - {variable: dut.temperature, min: 20, max: 24}
+      - {variable: dut.level, min: 1.4, max: 1.6}
+      - {mode: dut, is: filling}
+      - {warning: dut.tank_overflow, present: false}
+contracts:
+  - id: mass-conservation
+    description: The port mass flows add up to the net inflow at every level, including an empty tank.
+    scenario: drain-through-valve
+    sweep: {variable: dut.initial_level, values: [0, 0.0005, 0.5, 1, 2, 3]}
+    check: {type: equal, left: dut.inlet.m_flow + dut.outlet.m_flow, right: dut.net_inflow * 998.2 / 3600, abs_tol: 1.0e-12, rel_tol: 1.0e-9}
+  - id: torricelli-kv-law
+    description: >-
+      The drain flow equals the series Kv (2.4998047 m3/h, port and valve) times the square
+      root of the static head in bar over the specific gravity, at every level. The tolerance
+      covers the regularisation of the large port Kv near zero flow (below 0.11 kg/s its law
+      is a C1 cubic; the port carries under 0.02 % of the drop here).
+    scenario: drain-through-valve
+    sweep: {variable: dut.initial_level, from: 0.1, to: 3, steps: 8}
+    check:
+      type: equal
+      left: -dut.net_inflow
+      right: "2.4998047103852 * sqrt(dut.level * 998.2 * 9.80665 / 1e5 * 1000 / 998.2)"
+      rel_tol: 1.0e-4
+  - id: outflow-increases-with-level
+    description: A fuller tank drains faster through the same valve.
+    scenario: drain-through-valve
+    sweep: {variable: dut.initial_level, from: 0.1, to: 3, steps: 8}
+    check: {type: monotonic, variable: dut.net_inflow, direction: decreasing, strict: true}
+  - id: perfect-mixing
+    description: >-
+      Without outflow the volume-weighted temperature is conserved exactly by the mixing rule:
+      T * V = 15 * V0 + T_supply * (V - V0) with V0 = pi / 4 m3, for any supply temperature.
+    scenario: warm-inflow-mixing
+    sweep: {variable: src.temperature, values: [5, 40, 80]}
+    check:
+      type: equal
+      left: dut.temperature * dut.volume
+      right: "15 * 0.7853981633974483 + src.temperature * (dut.volume - 0.7853981633974483)"
+      rel_tol: 1.0e-9
+  - id: tank-empty-warning
+    description: >-
+      The tank_empty warning is raised exactly when a pump cannot draw water out of the tank:
+      at 1 mm or below the outflow is blocked (only leakage, net inflow above -0.001 m3/h);
+      above it the pump draws its full flow (about 24 m3/h).
+    scenario: pump-from-empty-tank
+    sweep: {variable: dut.initial_level, values: [0, 0.0005, 0.001, 0.0015, 0.01, 2]}
+    check: {type: warning_iff, code: dut.tank_empty, condition: "dut.net_inflow > -0.001"}
+  - id: break-tank-delivers-the-feed
+    description: >-
+      A pump drawing from a break tank delivers exactly what flows into it, whatever the
+      feed pressure (feed 1.77, 2.50 and 3.54 m3/h at 0.5, 1 and 2 bar): mass is conserved
+      through the nearly empty tank. The valve flow is in L/min, the pump flow in m3/h.
+    scenario: break-tank
+    sweep: {variable: src.pressure, values: [0.5, 1.0, 2.0]}
+    check: {type: equal, left: pump.volume_flow, right: vin.volume_flow * 0.06, rel_tol: 1.0e-4}
+  - id: overflow-warning
+    description: >-
+      The tank overflows exactly when the supply can push water in against the head of the
+      full tank, 998.2 * 9.80665 * 1 / 1e5 = 0.0979 bar at 1 m. At 0.05 and 0.09 bar (below
+      the head at the starting level, 0.0969 bar) the tank drains back into the supply
+      instead; at 0.11 bar the net inflow is about 0.27 m3/h and fills the last centimetre
+      in under 30 s.
+    scenario: fill-to-overflow
+    sweep: {variable: src.pressure, values: [0.05, 0.09, 0.11, 0.2, 0.5, 1.0]}
+    check: {type: warning_iff, code: dut.tank_overflow, condition: "src.pressure > 0.0979"}
+  - id: low-level-info
+    description: The low_level info is raised exactly when the level is below 10 % of the height (0.3 m of the default 3 m).
+    scenario: drain-through-valve
+    sweep: {variable: dut.initial_level, values: [0, 0.1, 0.29, 0.31, 1, 3]}
+    check: {type: warning_iff, code: dut.low_level, condition: "dut.level < 0.1 * dut.height"}
+implementations:
+  reference: {python: "worldparts.components.tank:Tank"}
+  modelica:
+    class: Modelica.Fluid.Vessels.OpenTank
+    library: Modelica Standard Library 4.0.0
+    notes: >-
+      OpenTank with crossArea = pi * diameter**2 / 4, height, level_start and two bottom ports
+      (portsData with height 0 and a diameter that reproduces port_kv). MSL models the port
+      velocity head and has no Kv port resistance or spill accounting, so small differences are
+      expected. Binding not yet cross-validated in v0.1.
+  wntr:
+    element: Tank
+    notes: >-
+      Cylindrical tank with elevation at the datum, diameter, init_level = level,
+      min_level 0 and max_level = height; the port Kv becomes a short pipe or minor loss.
+      EPANET closes a full tank to inflow instead of spilling, and ignores temperature.
+      Binding not yet cross-validated in v0.1.
+provenance:
+  authors: [worldparts contributors]
+  sources:
+    - title: "White, F. M. Fluid Mechanics. McGraw-Hill."
+      notes: Hydrostatics, the quasi-steady draining of a tank (Torricelli with losses) and its analytic solution.
+    - title: "IEC 60534-2-1: Industrial-process control valves - Part 2-1: Flow capacity - Sizing equations for fluid flow under installed conditions"
+      notes: Definition of the flow coefficient Kv used for the port connections.
+    - title: Modelica Standard Library (Modelica.Fluid.Vessels.OpenTank)
+      url: https://github.com/modelica/ModelicaStandardLibrary
+      notes: Reference open-tank model with bottom ports, level state and perfect mixing.
+    - title: EPANET
+      url: https://github.com/OpenWaterAnalytics/EPANET
+      notes: Storage tanks in water network models (level from net inflow, full tank closed to inflow).
+  data:
+    acquisition: generic
+    notes: Default geometry (2 m diameter, 3 m high, 2 m level) and port Kv 200 m3/h (roughly a DN80 to DN100 nozzle) are generic illustrative values, not a specific product.
+  license: Apache-2.0
+  data_license: CC0-1.0

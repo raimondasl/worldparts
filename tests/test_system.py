@@ -673,3 +673,103 @@ def test_variables_mark_unreported_parameters_and_results_carry_references() -> 
     assert "reference" not in d["v.volume_flow"]
     r = s.solve()
     assert r.get("mains.port.p", unit="bar absolute") == pytest.approx(3 + 1.01325)
+
+
+# -- state re-initialisation, check_states and time_step (core changes for the tank) ---------
+
+
+def test_parameter_change_keeps_states_whose_initial_value_is_unchanged() -> None:
+    """A parameter batch re-initialises only the states whose initial value it changes.
+
+    Valve with a 10 s actuator closed at t = 0: after 5 s the position is exp(-0.5) =
+    0.60653. Changing kv does not change the initial position (the opening, 0), so the
+    actuator keeps its position; a batch that also changes the opening resets it.
+    """
+    s = basic(actuator_time="10 s")
+    s.simulate(5, events=[{"at": 0, "set": {"v.opening": 0}}])
+    lagged = math.exp(-0.5)
+    assert s.get("v.position") == pytest.approx(lagged)
+    s.set("v.kv", 3.0)
+    assert s.get("v.position") == pytest.approx(lagged)
+    s.set_values({"v.kv": 2.0, "v.opening": 0.25})
+    assert s.get("v.position") == pytest.approx(0.25)
+    s.set("v.position", 0.5)
+    s.reset_states()
+    assert s.get("v.position") == pytest.approx(0.25)
+
+
+def test_check_states_rejects_a_batch_and_is_reported_by_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Component.check_states`` sees the trial parameters and states of a batch; a failed
+    check leaves the system unchanged, and ``check()`` reports the current states."""
+    s = basic()
+    cls = type(s.component("v"))
+
+    def check_states(parameters: dict, states: dict) -> list[str]:
+        if states["position"] > parameters["kv"] * 3600.0 / 5.0:  # position <= kv (m3/h) / 5
+            return ["position too large for this kv"]
+        return []
+
+    monkeypatch.setattr(cls, "check_states", classmethod(lambda c, p, st: check_states(p, st)))
+    s.set_values({"v.kv": 10.0, "v.position": 1.0})  # 1.0 <= 10 / 5: accepted in one batch
+    with pytest.raises(wp.InvalidValueError, match="position too large"):
+        s.set("v.kv", 2.5)  # the kept position 1.0 > 0.5
+    assert s.get("v.kv") == 10.0
+    assert s.get("v.position") == 1.0
+    monkeypatch.setattr(cls, "check_states", classmethod(lambda c, p, st: ["always"]))
+    assert any(i.code == "invalid_value" and i.message == "always" for i in s.check())
+
+
+def test_time_step_is_the_step_that_follows_each_sample(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``Component.time_step`` is the step over which the solution will be integrated (the
+    step that led to the last sample at the end), and None in a steady solve."""
+    s = basic()
+    cls = type(s.component("v"))
+    seen: list[float | None] = []
+    original = cls.update_laws
+
+    def update_laws(self: wp.components.Component) -> None:
+        seen.append(self.time_step)
+        original(self)
+
+    monkeypatch.setattr(cls, "update_laws", update_laws)
+    s.simulate(2.5, step=1, events=[{"at": 1.5, "set": {"v.opening": 0.5}}])
+    assert seen[-5:] == pytest.approx([1.0, 0.5, 0.5, 0.5, 0.5])
+    assert s.component("v").time_step is None
+    seen.clear()
+    s.solve()
+    assert seen and all(t is None for t in seen)
+
+
+def _heater_line() -> wp.System:
+    """3 bar, 12 degC mains -> heater -> Kv 0.2 valve -> drain (heater holds 55 degC)."""
+    s = wp.System("heater-line")
+    s.add("mains", "supply", pressure=3, temperature=12)
+    s.add("h", "instantaneous_water_heater")
+    s.add("v", "valve", kv=0.2)
+    s.add("out", "drain")
+    s.connect("mains.port", "h.inlet")
+    s.connect("h.outlet", "v.port_a")
+    s.connect("v.port_b", "out.port")
+    return s
+
+
+def test_temperature_difference_results_convert_as_differences() -> None:
+    """A rise of 43 K is 43 degC and 77.4 degF; absolute temperatures keep their offset."""
+    s = _heater_line()
+    r = s.solve()
+    assert r["h.temperature_rise"] == pytest.approx(43.0, abs=1e-6)
+    assert r.references["h.temperature_rise"] == "difference"
+    assert r.get("h.temperature_rise", unit="degC") == pytest.approx(43.0, abs=1e-6)
+    assert r.get("h.temperature_rise", unit="degF") == pytest.approx(77.4, abs=1e-6)
+    assert r.get("h.outlet_temperature", unit="K") == pytest.approx(328.15, abs=1e-6)
+    assert "h.outlet_temperature" not in r.references
+    entry = r.to_dict(["h.temperature_rise"])["values"]["h.temperature_rise"]
+    assert entry == {"value": pytest.approx(43.0, abs=1e-6), "unit": "K", "reference": "difference"}
+    sim = s.simulate(duration=2, variables=["h.temperature_rise"])
+    assert sim.references == {"h.temperature_rise": "difference"}
+    assert sim.get("h.temperature_rise", unit="degC") == pytest.approx([43.0] * 3, abs=1e-6)
+    info = {v.path: v for v in s.variables()}["h.temperature_rise"]
+    assert info.quantity == "temperature_difference" and info.pressure_reference == "difference"
+    assert {v.path: v for v in s.variables()}["h.setpoint"].quantity is None

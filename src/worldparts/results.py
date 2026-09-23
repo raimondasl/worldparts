@@ -81,13 +81,16 @@ class VariableInfo:
         kind: ``parameter``, ``input``, ``state``, ``observable`` or ``port``.
         unit: Display unit.
         description: Text from the manifest.
-        pressure_reference: For pressures: ``gauge``, ``absolute`` or ``difference``.
+        pressure_reference: The reference used for unit conversion: for pressures
+            ``gauge``, ``absolute`` or ``difference``; ``difference`` for a temperature
+            difference (``quantity: temperature_difference``); None otherwise.
         type: Value type (``number``, ``integer``, ``boolean``, ``string``, ``table``).
         minimum: Hard lower limit (parameters and inputs).
         maximum: Hard upper limit.
         settable: Whether :meth:`worldparts.System.set` accepts the path.
         reported: Whether solve and simulation results include the path (False for string
             and table parameters; read those with :meth:`worldparts.System.get`).
+        quantity: ``temperature_difference`` for a temperature difference, else None.
     """
 
     path: str
@@ -100,6 +103,7 @@ class VariableInfo:
     maximum: float | None = None
     settable: bool = False
     reported: bool = True
+    quantity: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Plain-dict form without empty fields."""
@@ -165,7 +169,10 @@ class SolveResult:
         return iter(self.values)
 
     def get(self, path: str, unit: str | None = None) -> float | None:
-        """Value at ``path``, optionally converted to ``unit`` (same pressure reference).
+        """Value at ``path``, optionally converted to ``unit`` (same reference).
+
+        Pressures keep their reference unless ``unit`` names one (``"bar absolute"``);
+        temperature differences convert by scale only (a 35 K rise is 35 degC).
 
         Raises:
             UnknownVariableError: For unknown paths.
@@ -195,8 +202,9 @@ class SolveResult:
         """JSON-ready dict: values with units, modes, warnings and solver statistics.
 
         Each value is {"value", "unit"}, plus "reference" (gauge, absolute
-        or difference) for pressures, so a reader can tell a gauge port pressure from a
-        pressure drop.
+        or difference) for pressures and "difference" for temperature differences, so a
+        reader can tell a gauge port pressure from a pressure drop, and a temperature rise
+        in K from an absolute temperature.
         """
         paths = variables if variables is not None else list(self.values)
         out: dict[str, Any] = {

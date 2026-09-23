@@ -1,0 +1,295 @@
+manifest_version: "0.1"
+id: worldparts.hydraulic.instantaneous_water_heater
+version: "0.1.0"
+name: Instantaneous water heater
+summary: Flow-switched tankless water heater with an outlet setpoint, a power limit, an activation flow and a Kv pressure drop.
+description: |
+  A tankless (continuous-flow) water heater between `inlet` and `outlet`. Hydraulically it
+  is one Kv resistance (`kv`, m3/h of water at 1 bar). Thermally, for forward flow `m`
+  (kg/s) above `activation_flow`, the heater raises the water towards `setpoint` with at
+  most `enabled * max_power`:
+
+  `T_out = max(T_in, min(setpoint, T_in + enabled * max_power / (m * cp)))`
+
+  and otherwise (reverse flow, or flow at or below `activation_flow`, where a real
+  flow switch stays open) `T_out = T_in`. At low flow the outlet reaches the setpoint and
+  the heat rate is `m * cp * (setpoint - T_in)`; at high flow the heater saturates at
+  `max_power`, the outlet falls below the setpoint and `setpoint_not_met` is raised. The
+  outer `max` means the heater never cools water that arrives above the setpoint.
+
+  `heat_rate` is the power delivered to the water, `m * cp * (T_out - T_in)`, which is the
+  electrical (or fuel) input only for an ideal heater: efficiency and standby losses are not
+  modelled. `enabled` scales the available power (1 full power, 0 off), for example to
+  represent a stage or a power-limited supply.
+
+  Not modelled: heat-up delay and thermal mass (the response is instantaneous), the
+  modulation band and hysteresis of real controllers, stepped power stages, gas-burner
+  efficiency and minimum modulation, scale build-up, overheating cut-outs and temperature
+  dependence of water properties.
+tags: [heater, water-heater, tankless, instantaneous, continuous-flow, thermal, bathroom]
+classification:
+  ifc: {entity: IfcElectricAppliance, predefined_type: FREESTANDINGWATERHEATER}
+  other: {note: "Electric or gas continuous-flow heater; IFC has no dedicated tankless heater type, so the IfcElectricAppliance water-heater type is the nearest match for the electric variant."}
+fidelity:
+  level: lumped_quasi_steady
+  assumptions:
+    - Incompressible water with constant properties (998.2 kg/m3, 1.002e-3 Pa s, 4182 J/(kg K)).
+    - Turbulent Kv law for the pressure drop, exact above 0.2 % of the flow at 1 bar and regularised (C1 cubic) below it.
+    - Ideal, instantaneous heating (no thermal mass, no losses, 100 % efficiency); output limited by enabled * max_power.
+    - Ideal flow switch at activation_flow; no hysteresis.
+    - Heating acts on forward flow (inlet to outlet) only.
+ports:
+  - {name: inlet, type: fluid, medium: water, description: Cold water inlet (forward direction).}
+  - {name: outlet, type: fluid, medium: water, description: Heated water outlet (forward direction).}
+parameters:
+  - name: setpoint
+    description: Outlet temperature setpoint.
+    type: number
+    unit: degC
+    default: 55
+    minimum: 20
+    maximum: 95
+  - name: max_power
+    description: Maximum heating power delivered to the water.
+    type: number
+    unit: kW
+    default: 18
+    minimum: 0.1
+    maximum: 1000
+  - name: activation_flow
+    description: Flow at or below which the flow switch keeps the heater off.
+    type: number
+    unit: L/min
+    default: 2.0
+    minimum: 0
+    maximum: 100
+  - name: kv
+    description: Flow coefficient of the water path (m3/h of water at 1 bar pressure drop).
+    type: number
+    unit: m3/h
+    default: 1.5
+    minimum: 0.001
+    maximum: 1000
+inputs:
+  - {name: enabled, description: "Fraction of max_power available: 1 full power, 0 off.", unit: "1", default: 1.0, minimum: 0, maximum: 1}
+observables:
+  - {name: volume_flow, unit: L/min, description: Volume flow from inlet to outlet.}
+  - {name: outlet_temperature, unit: degC, description: "Temperature of the water leaving the heater (forward flow: after heating; reverse flow: the water passing through unheated); null when no upstream temperature is defined."}
+  - {name: temperature_rise, unit: K, quantity: temperature_difference, description: "Outlet minus inlet temperature of the water passing through (0 when not heating). A temperature difference: it converts by scale only (35 K = 35 degC = 63 degF)."}
+  - {name: heat_rate, unit: kW, description: "Heat delivered to the water, m * cp * (T_out - T_in)."}
+modes:
+  - name: idle
+    condition: "heat_rate <= 0"
+    description: >-
+      Not heating (no heat reaches the water): the flow is at or below activation_flow, so
+      the flow switch stays open (this includes zero and reverse flow); or the heater is
+      switched off (enabled = 0); or the water already arrives at or above the setpoint.
+      Design 8.7 writes this as volume_flow < activation_flow; the condition on heat_rate
+      agrees exactly with the flow switch (which fires only above activation_flow) and
+      also covers the switched-off heater.
+  - {name: saturated, condition: "outlet_temperature < setpoint - 0.01", description: "Firing at the available power limit (enabled * max_power); the outlet is below the setpoint."}
+  - {name: heating, condition: "true", description: Firing and holding the setpoint.}
+envelope:
+  - code: setpoint_not_met
+    severity: warning
+    condition: "volume_flow > activation_flow and outlet_temperature < setpoint - 1"
+    message: >-
+      Water flows above the activation flow but the outlet is more than 1 K below the
+      setpoint: the available power (enabled * max_power) is too small for this flow, or the
+      heater is switched off (enabled = 0). Reduce the flow, or raise enabled or max_power.
+  - code: below_activation_flow
+    severity: info
+    condition: "volume_flow > 0.01 and volume_flow <= activation_flow and heat_rate <= 0"
+    message: Water flows but at or below the activation flow, so the flow switch stays open, the heater does not fire and the water passes unheated.
+scenarios:
+  - id: low-flow-reaches-setpoint
+    description: >-
+      3 bar supply at 12 degC through the heater (Kv 1.5) and a Kv 0.2 valve to atmosphere.
+      Kv_eq = 1 / sqrt(1/1.5**2 + 1/0.2**2) = 0.198236 m3/h, Q = Kv_eq * sqrt(3 / 0.9982) =
+      0.343681 m3/h = 5.72801 L/min, m = 0.0952951 kg/s. Heating to 55 degC needs
+      m * 4182 * 43 = 17.1365 kW < 18 kW, so the outlet reaches the setpoint.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 3 bar, temperature: 12 degC}}
+        - {name: dut, type: instantaneous_water_heater}
+        - {name: v, type: valve, parameters: {kv: 0.2}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, v.port_a]
+        - [v.port_b, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 5.72801, rel_tol: 0.001}
+      - {variable: dut.outlet_temperature, value: 55.0, abs_tol: 1.0e-6}
+      - {variable: dut.temperature_rise, value: 43.0, abs_tol: 1.0e-6}
+      - {variable: dut.heat_rate, value: 17.1365, rel_tol: 0.001}
+      - {variable: sink.port.T, value: 55.0, abs_tol: 1.0e-6}
+      - {mode: dut, is: heating}
+      - {warning: dut.setpoint_not_met, present: false}
+      - {warning: dut.below_activation_flow, present: false}
+  - id: high-flow-saturates
+    description: >-
+      Same line with a Kv 0.3 valve: Kv_eq = 0.294174 m3/h, Q = 8.49973 L/min, m = 0.141407
+      kg/s. Heating to 55 degC would need 25.43 kW, so the heater saturates at 18 kW and
+      T_out = 12 + 18000 / (0.141407 * 4182) = 42.438 degC.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 3 bar, temperature: 12 degC}}
+        - {name: dut, type: instantaneous_water_heater}
+        - {name: v, type: valve, parameters: {kv: 0.3}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, v.port_a]
+        - [v.port_b, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 8.49973, rel_tol: 0.001}
+      - {variable: dut.outlet_temperature, value: 42.4381, abs_tol: 0.01}
+      - {variable: dut.heat_rate, value: 18.0, rel_tol: 1.0e-9}
+      - {mode: dut, is: saturated}
+      - {warning: dut.setpoint_not_met, present: true}
+  - id: below-activation
+    description: >-
+      Same line with a Kv 0.05 valve: Q = 1.44387 L/min, below the 2 L/min activation flow,
+      so the water passes unheated at 12 degC and the below_activation_flow info is raised.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 3 bar, temperature: 12 degC}}
+        - {name: dut, type: instantaneous_water_heater}
+        - {name: v, type: valve, parameters: {kv: 0.05}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, v.port_a]
+        - [v.port_b, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 1.44387, rel_tol: 0.001}
+      - {variable: dut.outlet_temperature, value: 12.0, abs_tol: 1.0e-9}
+      - {variable: dut.heat_rate, value: 0.0, abs_tol: 1.0e-12}
+      - {mode: dut, is: idle}
+      - {warning: dut.below_activation_flow, present: true}
+      - {warning: dut.setpoint_not_met, present: false}
+  - id: feeds-mixing-faucet
+    description: >-
+      The bathroom example: a 3.5 bar, 12 degC main feeds the faucet's cold inlet directly and
+      its hot inlet through the heater; lever fully open, half mixed. The hot path (heater
+      Kv 1.5 in series with the 0.3 m3/h cartridge) carries 7.3703 L/min, which needs more than
+      18 kW to reach 55 degC, so the heater saturates at 47.102 degC; the faucet discharges
+      14.8865 L/min at 29.379 degC (a two-unknown hand solve for the mixing and heater-outlet
+      pressures).
+    system:
+      components:
+        - {name: mains, type: supply, parameters: {pressure: 3.5 bar, temperature: 12 degC}}
+        - {name: dut, type: instantaneous_water_heater}
+        - {name: tap, type: mixing_faucet, inputs: {lift: 1, mix: 0.5}}
+      connections:
+        - [mains.port, dut.inlet]
+        - [mains.port, tap.cold]
+        - [dut.outlet, tap.hot]
+    expect:
+      - {variable: dut.volume_flow, value: 7.37029, rel_tol: 0.001}
+      - {variable: dut.outlet_temperature, value: 47.1024, abs_tol: 0.01}
+      - {variable: dut.heat_rate, value: 18.0, rel_tol: 1.0e-9}
+      - {variable: tap.flow, value: 14.8865, rel_tol: 0.001}
+      - {variable: tap.temperature, value: 29.3791, abs_tol: 0.01}
+      - {mode: dut, is: saturated}
+      - {warning: dut.setpoint_not_met, present: true}
+      - {warning: tap.scald_risk, present: false}
+contracts:
+  - id: mass-conservation
+    description: Mass entering the inlet leaves through the outlet at every supply pressure.
+    scenario: low-flow-reaches-setpoint
+    sweep: {variable: src.pressure, from: 0.05, to: 6, steps: 13}
+    check: {type: equal, left: dut.inlet.m_flow, right: -dut.outlet.m_flow, abs_tol: 1.0e-9}
+  - id: energy-balance
+    description: >-
+      The reported heat rate equals the enthalpy rise of the water that actually reaches the
+      drain, m * cp * (T_sink - T_supply), with the mass flow taken from the supply and the
+      temperature from the network at the drain port (not from the heater's own
+      observables), at every supply pressure including the idle and saturated points.
+    scenario: low-flow-reaches-setpoint
+    sweep: {variable: src.pressure, from: 0.05, to: 6, steps: 13}
+    check:
+      type: equal
+      left: dut.heat_rate
+      right: "src.volume_flow * 998.2 / 60000 * 4182 * (sink.port.T - src.temperature) / 1000"
+      abs_tol: 1.0e-9
+  - id: rise-matches-port-temperatures
+    description: >-
+      The reported temperature rise equals the difference of the network temperatures at the
+      outlet and inlet ports, which the solver propagates through the heater's thermal map.
+    scenario: low-flow-reaches-setpoint
+    sweep: {variable: src.pressure, from: 0.05, to: 6, steps: 13}
+    check: {type: equal, left: dut.temperature_rise, right: "dut.outlet.T - dut.inlet.T", abs_tol: 1.0e-9}
+  - id: power-limit
+    description: The heat rate never exceeds enabled * max_power.
+    scenario: low-flow-reaches-setpoint
+    sweep: {variable: src.pressure, from: 0.05, to: 6, steps: 13}
+    check: {type: bounds, variable: dut.heat_rate, min: 0, max: "dut.enabled * dut.max_power * (1 + 1e-12)"}
+  - id: outlet-between-inlet-and-setpoint
+    description: The outlet temperature stays between the inlet temperature and the setpoint.
+    scenario: low-flow-reaches-setpoint
+    sweep: {variable: src.pressure, from: 0.05, to: 6, steps: 13}
+    check: {type: bounds, variable: dut.outlet_temperature, min: src.temperature, max: dut.setpoint}
+  - id: outlet-rises-with-enabled
+    description: At high flow more available power gives a strictly hotter outlet.
+    scenario: high-flow-saturates
+    sweep: {variable: dut.enabled, from: 0, to: 1, steps: 11}
+    check: {type: monotonic, variable: dut.outlet_temperature, direction: increasing, strict: true}
+  - id: setpoint-not-met-iff-power-short
+    description: setpoint_not_met is raised exactly when the heater fires and the power needed to reach setpoint - 1 K from the supply temperature exceeds enabled * max_power.
+    scenario: low-flow-reaches-setpoint
+    sweep: {variable: src.pressure, from: 0.05, to: 6, steps: 13}
+    check:
+      type: warning_iff
+      code: dut.setpoint_not_met
+      condition: "src.volume_flow > dut.activation_flow and src.volume_flow * 998.2 / 60000 * 4182 * (dut.setpoint - 1 - src.temperature) > dut.enabled * dut.max_power * 1000"
+  - id: below-activation-iff
+    description: >-
+      below_activation_flow is raised exactly when the hand-calculated series flow is
+      positive and at or below the activation flow. Heater Kv 1.5 in series with the Kv 0.05
+      valve gives Kv_eq = 1 / sqrt(1/1.5**2 + 1/0.05**2) = 0.0499722 m3/h, so the flow
+      reaches the 2 L/min (0.12 m3/h) activation flow at p = 0.9982 * (0.12 / Kv_eq)**2 =
+      5.756 bar; the sweep brackets that threshold (5.7 and 5.8 bar) and includes zero flow.
+    scenario: below-activation
+    sweep: {variable: src.pressure, values: [0, 0.5, 1, 2, 3, 4, 5, 5.7, 5.8, 6]}
+    check:
+      type: warning_iff
+      code: dut.below_activation_flow
+      condition: >-
+        1 / sqrt(1 / dut.kv**2 + 1 / v.kv**2) * sqrt(src.pressure * 1000 / 998.2) * 1000 / 60 > 0.01
+        and 1 / sqrt(1 / dut.kv**2 + 1 / v.kv**2) * sqrt(src.pressure * 1000 / 998.2) * 1000 / 60
+        <= dut.activation_flow
+implementations:
+  reference: {python: "worldparts.components.heater:InstantaneousWaterHeater"}
+  modelica:
+    class: Buildings.Fluid.HeatExchangers.HeaterCooler_T
+    library: Modelica Buildings Library
+    notes: >-
+      Ideal heater with an outlet temperature setpoint and a heating capacity limit
+      (Q_flow_maxHeat = enabled * max_power), dp_nominal and m_flow_nominal chosen to reproduce
+      kv. The activation-flow switch is not part of that model and would need a hysteresis or
+      switch block driving the setpoint or capacity. Not yet cross-validated in v0.1.
+  wntr:
+    element: TCV
+    notes: >-
+      Hydraulics only: a throttle control valve (or a pipe minor loss) reproducing kv. WNTR has
+      no thermal model, so heating is not represented; the v0.1 adapter reports the heater as
+      unsupported. Not yet cross-validated.
+provenance:
+  authors: [worldparts contributors]
+  sources:
+    - title: "EN 50193-1: Closed electrical instantaneous water heaters - Part 1: Methods for measuring the performance"
+      notes: Product family and the flow-switched, power-limited behaviour modelled here.
+    - title: "Incropera, DeWitt, Bergman and Lavine: Fundamentals of Heat and Mass Transfer"
+      notes: Steady-flow energy balance Q = m * cp * (T_out - T_in).
+    - title: "IEC 60534-2-1: Industrial-process control valves - Part 2-1: Flow capacity - Sizing equations for fluid flow under installed conditions"
+      notes: Kv definition used for the water-path pressure drop.
+    - title: Modelica Buildings Library
+      url: https://simulationresearch.lbl.gov/modelica/
+      notes: HeaterCooler_T, the ideal setpoint heater with capacity limit used as the Modelica mapping target.
+  data:
+    acquisition: generic
+    notes: Default parameters (18 kW, 55 degC setpoint, 2 L/min activation flow, Kv 1.5 m3/h) are generic illustrative values for a three-phase electric continuous-flow heater, not a specific product.
+  license: Apache-2.0
+  data_license: CC0-1.0

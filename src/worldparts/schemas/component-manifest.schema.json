@@ -151,10 +151,18 @@
     "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
     "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
     "unit": {
-      "enum": ["1", "%", "Pa", "kPa", "bar", "m", "mm", "m/s", "m2", "m3", "L", "kg/s", "L/s", "L/min", "m3/h", "degC", "K", "W", "kW", "s", "min", "h", "rpm", "mW/cm2", "mJ/cm2", "kg/m3"],
+      "enum": ["1", "%", "Pa", "kPa", "bar", "m", "mm", "m/s", "m2", "m3", "L", "kg/s", "L/s", "L/min", "m3/h", "degC", "K", "W", "kW", "s", "min", "h", "rpm", "mW/cm2", "mJ/cm2", "kg/m3", "kWh/m3"],
       "description": "Unit vocabulary of design section 3.1."
     },
     "pressure_reference": {"enum": ["gauge", "absolute", "difference"]},
+    "variable_quantity": {
+      "enum": ["temperature_difference"],
+      "description": "What a number means when its unit alone is ambiguous. temperature_difference: a temperature difference (e.g. a rise in K), converted between units by scale only (35 K = 35 degC = 63 degF); only with unit K or degC."
+    },
+    "temperature_difference_unit": {
+      "if": {"required": ["quantity"], "properties": {"quantity": {"const": "temperature_difference"}}},
+      "then": {"properties": {"unit": {"enum": ["K", "degC"]}}}
+    },
     "expression": {
       "oneOf": [{"type": "string", "minLength": 1}, {"type": "number"}, {"type": "boolean"}],
       "description": "An expression of the worldparts expression language (design section 3.4)."
@@ -179,6 +187,7 @@
         "type": {"enum": ["number", "integer", "string", "boolean", "table"]}
       },
       "allOf": [
+        {"$ref": "#/$defs/temperature_difference_unit"},
         {
           "if": {"properties": {"type": {"const": "number"}}},
           "then": {
@@ -190,7 +199,8 @@
               "default": {"type": "number"},
               "minimum": {"type": "number"},
               "maximum": {"type": "number"},
-              "pressure_reference": {"$ref": "#/$defs/pressure_reference"}
+              "pressure_reference": {"$ref": "#/$defs/pressure_reference"},
+              "quantity": {"$ref": "#/$defs/variable_quantity"}
             }
           }
         },
@@ -276,8 +286,10 @@
         "default": {"type": "number"},
         "minimum": {"type": "number"},
         "maximum": {"type": "number"},
-        "pressure_reference": {"$ref": "#/$defs/pressure_reference"}
-      }
+        "pressure_reference": {"$ref": "#/$defs/pressure_reference"},
+        "quantity": {"$ref": "#/$defs/variable_quantity"}
+      },
+      "allOf": [{"$ref": "#/$defs/temperature_difference_unit"}]
     },
     "state": {
       "type": "object",
@@ -291,8 +303,10 @@
         "default": {"type": "number", "description": "Initial value when the implementation does not set one."},
         "minimum": {"type": "number"},
         "maximum": {"type": "number"},
-        "pressure_reference": {"$ref": "#/$defs/pressure_reference"}
-      }
+        "pressure_reference": {"$ref": "#/$defs/pressure_reference"},
+        "quantity": {"$ref": "#/$defs/variable_quantity"}
+      },
+      "allOf": [{"$ref": "#/$defs/temperature_difference_unit"}]
     },
     "observable": {
       "type": "object",
@@ -302,8 +316,10 @@
         "name": {"$ref": "#/$defs/name"},
         "description": {"type": "string", "minLength": 1},
         "unit": {"$ref": "#/$defs/unit"},
-        "pressure_reference": {"$ref": "#/$defs/pressure_reference"}
-      }
+        "pressure_reference": {"$ref": "#/$defs/pressure_reference"},
+        "quantity": {"$ref": "#/$defs/variable_quantity"}
+      },
+      "allOf": [{"$ref": "#/$defs/temperature_difference_unit"}]
     },
     "mode": {
       "type": "object",

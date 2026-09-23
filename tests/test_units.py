@@ -231,3 +231,48 @@ def test_unit_messages_are_agent_friendly() -> None:
         parse_value("12 C", "degC", "src.temperature")
     with pytest.raises(UnitError, match="a pressure such as"):
         parse_value("3 L/min", "bar", "src.pressure")
+
+
+# -- temperature differences -------------------------------------------------------------
+def test_temperature_difference_converts_by_scale_only() -> None:
+    """A 35.1 K rise is a 35.1 degC rise and a 63.18 degF rise, not -238.05 degC."""
+    assert convert(35.1, "K", "degC", "difference") == pytest.approx(35.1, abs=1e-12)
+    assert convert(35.1, "K", "degF", "difference") == pytest.approx(63.18, abs=1e-12)
+    assert convert(20.0, "degC", "K", "difference") == pytest.approx(20.0, abs=1e-12)
+    assert convert(35.1, "K", "delta_degC", "difference") == pytest.approx(35.1, abs=1e-12)
+    conv = converter("degC", "difference")
+    assert conv.reference == "difference" and conv.offset == 0.0 and conv.to_si(5.0) == 5.0
+    # absolute temperatures keep their offsets
+    assert convert(300.0, "K", "degC") == pytest.approx(26.85, abs=1e-12)
+    assert convert(55.0, "degC", "degF") == pytest.approx(131.0, abs=1e-12)
+    assert converter("degC").reference is None
+
+
+def test_temperature_difference_parsing() -> None:
+    assert parse_value("5 degC", "K", "x", "difference") == pytest.approx(5.0, abs=1e-12)
+    assert parse_value("9 degF", "K", "x", "difference") == pytest.approx(5.0, abs=1e-12)
+    assert parse_value("5 K", "degC", "x", "difference") == pytest.approx(5.0, abs=1e-12)
+    assert parse_value(7, "K", "x", "difference") == 7.0
+    # an absolute temperature string still converts with the offset
+    assert parse_value("55 degC", "K", "x") == pytest.approx(328.15, abs=1e-12)
+    with pytest.raises(InvalidValueError, match="temperature difference"):
+        parse_value("5 K absolute", "K", "x", "difference")
+
+
+def test_temperature_reference_errors() -> None:
+    with pytest.raises(UnitError, match="temperature-difference unit"):
+        convert(300.0, "K", "delta_degC")
+    with pytest.raises(UnitError, match="absolute"):
+        converter("K", "gauge")
+    with pytest.raises(UnitError, match="not a gauge or absolute pressure"):
+        convert(35.0, "K", "degC absolute", "difference")
+
+
+def test_energy_per_volume_is_not_a_pressure() -> None:
+    """kWh/m3 has the dimension of a pressure but no gauge offset (specific energy)."""
+    assert not is_pressure_unit("kWh/m3")
+    assert is_pressure_unit("bar") and is_pressure_unit("kPa")
+    conv = converter("kWh/m3")
+    assert conv.reference is None and conv.offset == 0.0
+    assert conv.to_si(1.0) == pytest.approx(3.6e6)
+    assert parse_value("3.6 MJ/m3", "kWh/m3") == pytest.approx(1.0)

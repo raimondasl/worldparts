@@ -367,9 +367,10 @@ class System:
     def set(self, path: str, value: Any) -> None:
         """Set an input, parameter or state. Plain numbers are in the declared unit.
 
-        Changing a parameter re-initialises the component's states (outside simulations), so
-        set a state after the parameters it depends on, or in the same :meth:`set_values`
-        batch.
+        Changing a parameter re-initialises (outside simulations) the states whose initial
+        value it changes, e.g. a tank's ``initial_level`` resets its ``level``, while other
+        parameter changes keep the current states. Use :meth:`reset_states` to restart every
+        state.
 
         Raises:
             UnknownVariableError: Unknown or read-only path (lists the settable names).
@@ -383,9 +384,11 @@ class System:
         Every value is parsed and range-checked, and each component's cross-parameter rules
         (``check_parameters``) are applied to the batch as a whole, before anything is
         changed; a rejected batch leaves the system unchanged, and the result does not depend
-        on the key order. Parameters are applied first, then inputs; states are then
-        re-initialised once (outside simulations) if a parameter changed, and finally the
-        states given in the batch are applied, so they are never discarded.
+        on the key order. Parameters are applied first, then inputs; then (outside
+        simulations) every state whose initial value (``init_states()``) the batch changes is
+        re-initialised, the other states keep their values, and finally the states given in
+        the batch are applied, so they are never discarded. The resulting states are checked
+        with the component's ``check_states`` before anything is changed.
 
         Raises:
             UnknownVariableError: Unknown or read-only path (lists the settable names).
@@ -407,18 +410,48 @@ class System:
             problems = type(inst.component).check_parameters(trial)
             if problems:
                 raise InvalidValueError(f"{', '.join(paths)}: " + " ".join(problems))
+        # Trial states: a parameter change re-initialises (outside simulations) only the
+        # states whose initial value it changes, so a tank keeps its water when its port Kv
+        # changes; states given in the batch are applied last. check_states sees the result.
+        new_states: dict[str, tuple[_Instance, dict[str, Any], list[str]]] = {}
+        for inst, name, spec, _, _ in plan:
+            if spec.kind in ("parameter", "state"):
+                entry = new_states.setdefault(inst.name, (inst, dict(inst.component.states), []))
+                entry[2].append(f"{inst.name}.{name}")
+        for inst, states, _ in new_states.values():
+            comp = inst.component
+            if inst.name in trials and not self._simulating:
+                inputs = dict(comp.inputs)
+                for other, name, spec, _, si in plan:
+                    if other is inst and spec.kind == "input":
+                        inputs[name] = si
+                before = _initial_states(comp, comp.parameters, comp.inputs)
+                after = _initial_states(comp, trials[inst.name][1], inputs)
+                for name, value in after.items():
+                    if name not in before or before[name] != value:
+                        states[name] = value
+            for other, name, spec, _, si in plan:
+                if other is inst and spec.kind == "state":
+                    states[name] = si
+        for inst, states, paths in new_states.values():
+            params = trials[inst.name][1] if inst.name in trials else inst.component.parameters
+            problems = type(inst.component).check_states(params, states)
+            if problems:
+                raise InvalidValueError(f"{', '.join(paths)}: " + " ".join(problems))
         for kind in ("parameter", "input", "state"):
             if kind == "state":
-                for inst, _, _ in trials.values():
-                    if not self._simulating:
-                        inst.component.init_states()
-                    self._dirty = True
+                for inst, states, _ in new_states.values():
+                    inst.component.states.update(states)
+                    if inst.name in trials:
+                        self._dirty = True
             for inst, name, spec, disp, si in plan:
                 if spec.kind != kind:
                     continue
                 comp = inst.component
-                store = {"parameter": comp.parameters, "input": comp.inputs}.get(kind, comp.states)
-                store[name] = si
+                if kind == "parameter":
+                    comp.parameters[name] = si
+                elif kind == "input":
+                    comp.inputs[name] = si
                 if kind in ("parameter", "input"):
                     inst.explicit[name] = disp
                 inst.bad.pop(name, None)
@@ -475,6 +508,7 @@ class System:
                             s.maximum,
                             kind != "observable",
                             reported=s.type not in ("string", "table"),
+                            quantity=s.quantity,
                         )
                     )
             for port in m.ports:
@@ -553,7 +587,9 @@ class System:
         issues.extend(i for _, i in self._bad_connections if i is not None)
         for inst in self._instances.values():
             issues.extend(issue for _, issue in inst.bad.values())
-            problems = type(inst.component).check_parameters(inst.component.parameters)
+            cls = type(inst.component)
+            problems = cls.check_parameters(inst.component.parameters)
+            problems += cls.check_states(inst.component.parameters, inst.component.states)
             for p in problems:
                 issues.append(Issue("error", "invalid_value", p, inst.name))
         connected = {p for c in self._connections for p in c}
@@ -690,6 +726,7 @@ class System:
         """
         issues = self._preflight()
         for inst in self._instances.values():
+            inst.component.time_step = None
             inst.component.settle()
         result, _ = self._snapshot(None)
         result.issues = issues
@@ -923,8 +960,12 @@ class System:
                 while ev_i < len(parsed) and parsed[ev_i].time <= t + tol:
                     self.set_values(dict(parsed[ev_i].values))
                     ev_i += 1
+                step_ahead = (
+                    grid[k + 1] - t if k + 1 < len(grid) else t - grid[k - 1] if k else None
+                )
                 for inst in self._instances.values():
                     inst.component.update_fast_states(0.0)
+                    inst.component.time_step = step_ahead
                 try:
                     result, sol = self._snapshot(t)
                 except WorldpartsError as exc:
@@ -962,6 +1003,8 @@ class System:
                         inst.component.integrate(h, NetworkView(sol, inst.builder))
         finally:
             self._simulating = False
+            for inst in self._instances.values():
+                inst.component.time_step = None
         assert result is not None
         result.issues = issues
         units = {p: result.units[p] for p in series}
@@ -1109,6 +1152,24 @@ class System:
             self._bad_connections.append(
                 ((a, b), Issue("error", exc.code, str(exc), f"{a} -- {b}"))
             )
+
+
+def _initial_states(
+    comp: Component, parameters: Mapping[str, Any], inputs: Mapping[str, Any]
+) -> dict[str, Any]:
+    """The states ``init_states()`` gives for these parameters and inputs (SI).
+
+    The component is left exactly as it was (``init_states`` only writes ``states``).
+    """
+    saved = (comp.parameters, comp.inputs, dict(comp.states))
+    try:
+        comp.parameters, comp.inputs = dict(parameters), dict(inputs)
+        comp.init_states()
+        return dict(comp.states)
+    finally:
+        comp.parameters, comp.inputs = saved[0], saved[1]
+        comp.states.clear()
+        comp.states.update(saved[2])
 
 
 def _changed_states(inst: _Instance) -> dict[str, Any]:

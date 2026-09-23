@@ -4,7 +4,10 @@ Inside worldparts everything is SI (pressure in Pa **absolute**, temperature in 
 kg/s or m3/s). At the API boundary values are in the unit a manifest declares. Plain numbers
 are interpreted in that unit; strings with units (``"3 bar"``, ``"12 L/min"``, ``"55 degC"``)
 are parsed with pint and converted. Pressures are gauge (relative to :data:`P_ATM`) unless a
-variable declares ``pressure_reference: absolute`` or ``difference``.
+variable declares ``pressure_reference: absolute`` or ``difference``. Temperatures are absolute
+unless a variable declares ``quantity: temperature_difference`` (for example a temperature
+rise in K): a difference converts by scale only, so a 35 K rise is a 35 degC rise and a
+63 degF rise, never -238 degC.
 
 Conversions between a declared unit and SI are affine (``si = value * scale + offset``); the
 factors are computed once per unit with pint and cached, so runtime conversion is cheap.
@@ -30,10 +33,13 @@ __all__ = [
     "MANIFEST_UNITS",
     "PRESSURE_REFERENCES",
     "P_ATM",
+    "QUANTITIES",
+    "TEMPERATURE_REFERENCES",
     "UnitConverter",
     "convert",
     "converter",
     "is_pressure_unit",
+    "is_temperature_unit",
     "normalize_unit",
     "parse_duration",
     "parse_quantity",
@@ -74,10 +80,17 @@ MANIFEST_UNITS: tuple[str, ...] = (
     "mW/cm2",
     "mJ/cm2",
     "kg/m3",
+    "kWh/m3",
 )
 
 #: Allowed values of ``pressure_reference``.
 PRESSURE_REFERENCES: tuple[str, ...] = ("gauge", "absolute", "difference")
+
+#: References a temperature may have: an absolute temperature or a temperature difference.
+TEMPERATURE_REFERENCES: tuple[str, ...] = ("absolute", "difference")
+
+#: Allowed values of a manifest variable's ``quantity`` field, with the reference each implies.
+QUANTITIES: dict[str, str] = {"temperature_difference": "difference"}
 
 #: The shared pint registry. Offset units (degC) auto-convert to kelvin in arithmetic.
 ureg = pint.UnitRegistry(autoconvert_offset_to_baseunit=True)
@@ -137,14 +150,37 @@ def _pressure_dimensionality() -> Any:
     return ureg.Unit("Pa").dimensionality
 
 
+def _energy_dimensionality() -> Any:
+    return ureg.Unit("J").dimensionality
+
+
 def same_dimension(unit_a: str, unit_b: str) -> bool:
     """Return True when two unit strings have the same physical dimension."""
     return _pint_unit(unit_a).dimensionality == _pint_unit(unit_b).dimensionality
 
 
+@lru_cache(maxsize=512)
 def is_pressure_unit(unit: str) -> bool:
-    """Return True when ``unit`` is a pressure unit (Pa, kPa, bar, ...)."""
-    return _pint_unit(unit).dimensionality == _pressure_dimensionality()
+    """Return True when ``unit`` is a pressure unit (Pa, kPa, bar, ...).
+
+    An energy per volume (``kWh/m3``, ``J/m3``) has the dimension of a pressure but is not
+    one: it has no gauge reference, so it is not treated as a pressure.
+    """
+    pu = _pint_unit(unit)
+    if pu.dimensionality != _pressure_dimensionality():
+        return False
+    energy = _energy_dimensionality()
+    return not any(ureg.Unit(name).dimensionality == energy for name in pu._units)
+
+
+def is_temperature_unit(unit: str) -> bool:
+    """Return True when ``unit`` is a temperature unit (K, degC, degF, delta_degC, ...)."""
+    return str(_pint_unit(unit).dimensionality) == "[temperature]"
+
+
+def _is_delta_unit(unit: str) -> bool:
+    """True for pint's temperature-difference units such as ``delta_degC``."""
+    return any(str(name).startswith("delta_") for name in _pint_unit(unit)._units)
 
 
 def _clean(x: float) -> float:
@@ -188,8 +224,10 @@ def converter(unit: str, pressure_reference: str | None = None) -> UnitConverter
 
     Args:
         unit: Declared unit string, e.g. ``"bar"``, ``"L/min"``, ``"degC"``.
-        pressure_reference: For pressure units: ``gauge`` (the default), ``absolute`` or
-            ``difference``. Ignored for other dimensions.
+        pressure_reference: The variable's reference. For pressure units: ``gauge`` (the
+            default), ``absolute`` or ``difference``. For temperature units: ``absolute``
+            (the default) or ``difference`` (a temperature difference, converted by scale
+            only: 1 K = 1 degC = 1.8 degF, no offset). Ignored for other dimensions.
 
     Returns:
         A :class:`UnitConverter`.
@@ -199,8 +237,12 @@ def converter(unit: str, pressure_reference: str | None = None) -> UnitConverter
     q1 = ureg.Quantity(1.0, pu).to_base_units()
     offset = _clean(float(q0.magnitude))
     scale = _clean(float(q1.magnitude) - float(q0.magnitude))
+    if offset != 0.0 and is_temperature_unit(unit):
+        # Exact scale of an offset unit from its delta unit (1 delta_degF = 5/9 K).
+        delta = ureg.Quantity(1.0, f"delta_{pu}").to_base_units()
+        scale = float(delta.magnitude)
     reference = None
-    if pu.dimensionality == _pressure_dimensionality():
+    if is_pressure_unit(unit):
         reference = pressure_reference or "gauge"
         if reference not in PRESSURE_REFERENCES:
             raise UnitError(
@@ -209,6 +251,18 @@ def converter(unit: str, pressure_reference: str | None = None) -> UnitConverter
             )
         if reference == "gauge":
             offset += P_ATM
+    elif is_temperature_unit(unit):
+        if pressure_reference not in (None, *TEMPERATURE_REFERENCES):
+            raise UnitError(
+                f"A temperature is 'absolute' or a 'difference', not '{pressure_reference}'."
+            )
+        if pressure_reference == "difference":
+            reference, offset = "difference", 0.0
+        elif _is_delta_unit(unit):
+            raise UnitError(
+                f"'{unit}' is a temperature-difference unit, but the value is an absolute "
+                "temperature; use K, degC or degF."
+            )
     si_unit = f"{q1.units:~}" if str(q1.units) != "dimensionless" else "1"
     return UnitConverter(unit, scale, offset, si_unit, reference)
 
@@ -274,6 +328,9 @@ def parse_value(
     Plain numbers are taken to be in ``unit``. Strings with units and pint quantities are
     converted to ``unit``; offsets such as degC are handled.
 
+    For a temperature difference (``pressure_reference="difference"`` with a temperature
+    unit) a string converts by scale only: ``"5 degC"`` is 5 K and ``"9 degF"`` is 5 K.
+
     For pressures, ``pressure_reference`` is the declared reference of the variable
     (``gauge``, ``absolute`` or ``difference``). A string may then name its own reference
     (``"2 bar absolute"``, ``"1.5 bara"``, ``"3 bar (g)"``) and is converted to the declared
@@ -296,8 +353,9 @@ def parse_value(
         text, given_ref = split_pressure_reference(value)
         if given_ref is not None and given_ref != pressure_reference:
             if pressure_reference == "difference":
+                kind = "temperature" if is_temperature_unit(unit) else "pressure"
                 raise InvalidValueError(
-                    f"{what}: '{value}' names a {given_ref} pressure, but {what} is a pressure "
+                    f"{what}: '{value}' names a {given_ref} value, but {what} is a {kind} "
                     f"difference; write it without a reference, e.g. '0.5 {unit}'."
                 )
             number = parse_value(text, unit, what)
@@ -355,6 +413,16 @@ def parse_value(
             raise InvalidValueError(f"{what}: NaN is not a valid value.")
         return number
     target = _pint_unit(unit)
+    if (
+        pressure_reference == "difference"
+        and q.dimensionality == target.dimensionality
+        and is_temperature_unit(unit)
+    ):
+        # A temperature difference: scale only (5 degC of rise is 5 K, not 278.15 K).
+        diff = converter(f"{q.units}", "difference").to_si(float(q.magnitude))
+        out = converter(unit, "difference").from_si(diff)
+        assert out is not None
+        return out
     if q.dimensionality != target.dimensionality:
         hint = ""
         if str(target.dimensionality) == "[temperature]" and given_unit.strip() in ("C", "F"):
@@ -377,7 +445,8 @@ def convert(
 
     Both units share ``pressure_reference`` (for example gauge bar to gauge kPa), unless
     ``to_unit`` names its own reference (``"bar absolute"``, ``"bara"``, ``"kPa (g)"``) and the
-    value is a gauge or absolute pressure.
+    value is a gauge or absolute pressure. A temperature difference (reference
+    ``difference``) converts by scale only: 35 K is 35 degC and 63 degF.
 
     Args:
         value: The number in ``from_unit`` (None passes through).
@@ -395,7 +464,7 @@ def convert(
         return None
     to_unit, to_ref = split_pressure_reference(to_unit)
     if to_ref is not None and to_ref != pressure_reference:
-        if pressure_reference not in ("gauge", "absolute"):
+        if pressure_reference not in ("gauge", "absolute") or not is_pressure_unit(to_unit):
             raise UnitError(
                 f"Cannot convert to '{to_unit} {to_ref}': the value is not a gauge or absolute "
                 f"pressure (reference: {pressure_reference})."

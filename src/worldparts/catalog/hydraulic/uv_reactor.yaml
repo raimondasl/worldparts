@@ -1,0 +1,373 @@
+manifest_version: "0.1"
+id: worldparts.hydraulic.uv_reactor
+version: "0.1.0"
+name: UV disinfection reactor
+summary: UV reactor with a quadratic pressure drop through its rated point and an idealised plug-flow average UV dose.
+description: |
+  A UV disinfection chamber between `inlet` and `outlet`. Hydraulically it is a quadratic
+  resistance through its rated point: `rated_pressure_drop` at `rated_flow` (a Kv law).
+
+  The delivered UV dose is the idealised plug-flow average: with `Q` the volume flow,
+
+  - `residence_time = volume / |Q|`
+  - `dose = fluence_rate * lamp_output * residence_time` (mW/cm2 x s = mJ/cm2)
+
+  both capped at 1e6 (s and mJ/cm2), so zero flow gives finite values. The cap is the valid
+  range of the observables: a residence time of 1e6 s means "at least 1e6 s". It can bind
+  at a legal flowing point (a chamber above about 2.8 m3 barely above the 0.01 m3/h idle
+  threshold, e.g. 100 m3 at 0.05 m3/h is truly 7.2e6 s); the `underdose` verdict is then
+  unchanged whenever `lamp_output >= 0.01`, because the capped dose is at least
+  0.1 mW/cm2 x 0.01 x 1e6 s = 1000 mJ/cm2, the largest legal `required_dose`. Dose falls
+  in inverse proportion to flow: with the defaults (15 L, 20 mW/cm2) the dose is 54 mJ/cm2
+  at the rated 20 m3/h and drops below the required 40 mJ/cm2 above 27 m3/h, which is the
+  `underdose` diagnostic of the purification example. `lamp_output` is the fraction of the
+  nominal fluence rate reaching the water (lamp ageing, sleeve fouling, UV transmittance
+  loss or a failed lamp all lower it).
+
+  This is an average, not a validated dose. Real reactors deliver a dose distribution
+  (short-circuiting paths receive much less), and regulatory practice uses a reduction
+  equivalent dose (RED) from biodosimetry, validated flow and UV transmittance limits and a
+  UV intensity sensor. None of that is modelled: no UV transmittance, no fluence-rate field,
+  no dose distribution, no lamp warm-up or ageing dynamics, no log-inactivation of any
+  organism, no temperature effects.
+
+  Reverse flow (outlet to inlet) is hydraulically symmetric: `volume_flow` and
+  `pressure_drop` are negative (design 3.2) and the dose uses `|Q|`, so -20 m3/h receives
+  the same 54 mJ/cm2 as +20 m3/h. The `underdose` and `lamp_off` envelope rules check
+  forward flow only (design 8.11); instead, reverse flow above 0.01 m3/h raises the
+  code-emitted `reverse_flow` warning, whose message says when the dose is below
+  `required_dose` or the lamp is off, so an `underdosing` mode in reverse flow is never
+  silent.
+tags: [uv, disinfection, treatment, purification, dose]
+classification:
+  other:
+    ifc_note: IFC 4.3 has no dedicated UV disinfection entity; the nearest supertype is IfcFlowTreatmentDevice, typically exchanged with a user-defined type.
+fidelity:
+  level: lumped_quasi_steady
+  assumptions:
+    - Incompressible water with constant properties (998.2 kg/m3, 1.002e-3 Pa s).
+    - Turbulent quadratic pressure drop through the rated point, regularised (C1 cubic) below 0.2 % of the flow at 1 bar.
+    - Ideal plug flow; the dose is the average fluence rate times the mean residence time (no dose distribution, no short-circuiting).
+    - Fluence rate proportional to lamp_output; UV transmittance and sleeve fouling are folded into lamp_output.
+    - Quasi-steady; lamp response is instantaneous.
+ports:
+  - {name: inlet, type: fluid, medium: water, description: Inlet (forward direction).}
+  - {name: outlet, type: fluid, medium: water, description: Disinfected-water outlet (forward direction).}
+parameters:
+  - name: rated_flow
+    description: Rated volume flow at which rated_pressure_drop is specified.
+    type: number
+    unit: m3/h
+    default: 20
+    minimum: 0.01
+    maximum: 100000
+  - name: rated_pressure_drop
+    description: Pressure drop at the rated flow.
+    type: number
+    unit: bar
+    pressure_reference: difference
+    default: 0.1
+    minimum: 0.001
+    maximum: 10
+  - name: volume
+    description: Irradiated water volume of the chamber.
+    type: number
+    unit: L
+    default: 15
+    minimum: 0.1
+    maximum: 100000
+  - name: fluence_rate
+    description: Average fluence rate in the irradiated volume at full lamp output.
+    type: number
+    unit: mW/cm2
+    default: 20
+    minimum: 0.1
+    maximum: 1000
+  - name: required_dose
+    description: Dose required for disinfection (40 mJ/cm2 is a common drinking-water reference).
+    type: number
+    unit: mJ/cm2
+    default: 40
+    minimum: 1
+    maximum: 1000
+inputs:
+  - {name: lamp_output, description: "Fraction of the nominal fluence rate delivered: 1 new lamp and clean sleeve, 0 lamp off.", unit: "1", default: 1.0, minimum: 0, maximum: 1}
+observables:
+  - {name: volume_flow, unit: m3/h, description: Volume flow from inlet to outlet.}
+  - {name: pressure_drop, unit: bar, pressure_reference: difference, description: Pressure at the inlet minus pressure at the outlet.}
+  - {name: residence_time, unit: s, description: Plug-flow residence time volume / |Q| (capped at 1e6 s).}
+  - {name: dose, unit: mJ/cm2, description: Average UV dose fluence_rate * lamp_output * residence_time (capped at 1e6 mJ/cm2).}
+modes:
+  - {name: idle, condition: "abs(volume_flow) < 0.01", description: No significant flow.}
+  - {name: underdosing, condition: "dose < required_dose", description: Water passes with less than the required dose.}
+  - {name: disinfecting, condition: "true", description: Water receives at least the required dose.}
+envelope:
+  - code: underdose
+    severity: warning
+    condition: "volume_flow > 0.01 and dose < required_dose"
+    message: The average UV dose is below the required dose; the water may not be disinfected (flow too high or lamp output too low).
+  - code: lamp_off
+    severity: warning
+    condition: "lamp_output < 0.01 and volume_flow > 0.01"
+    message: Water flows through the reactor with the lamp off; it is not disinfected.
+warnings:
+  - {code: reverse_flow, severity: warning, description: "Water flows backwards through the reactor (volume_flow below -0.01 m3/h). underdose and lamp_off only check forward flow; the message says when the reverse-flow dose is below required_dose or the lamp is off."}
+scenarios:
+  - id: rated-flow
+    description: |
+      Default reactor between a 0.1 bar supply and a drain. Hand calculation: the drop at
+      rated flow is 0.1 bar by definition, so Q = 20 m3/h; residence time
+      15 L / (20 m3/h) = 0.015 m3 / 0.0055556 m3/s = 2.7 s; dose 20 mW/cm2 x 2.7 s = 54 mJ/cm2.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0.1}}
+        - {name: dut, type: uv_reactor}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 20.0, rel_tol: 1.0e-6}
+      - {variable: dut.pressure_drop, value: 0.1, abs_tol: 1.0e-7}
+      - {variable: dut.residence_time, value: 2.7, rel_tol: 1.0e-6}
+      - {variable: dut.dose, value: 54.0, rel_tol: 1.0e-6}
+      - {warning: dut.underdose, present: false}
+      - {warning: dut.lamp_off, present: false}
+      - {mode: dut, is: disinfecting}
+  - id: over-rated-underdose
+    description: |
+      Default reactor at 0.25 bar. Hand calculation: Q = 20 * sqrt(0.25 / 0.1) = 31.6228 m3/h;
+      residence time 3.6 * 15 / 31.6228 = 1.70763 s; dose 34.1526 mJ/cm2 < 40, so underdose.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0.25}}
+        - {name: dut, type: uv_reactor}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 31.62278, rel_tol: 1.0e-6}
+      - {variable: dut.residence_time, value: 1.707630, rel_tol: 1.0e-6}
+      - {variable: dut.dose, value: 34.15260, rel_tol: 1.0e-6}
+      - {warning: dut.underdose, present: true}
+      - {mode: dut, is: underdosing}
+  - id: lamp-failure
+    description: |
+      Rated flow; the lamp fails at 10 s. Hand calculation: after the event the dose is
+      0 x 2.7 s = 0 mJ/cm2 while 20 m3/h still flows, so lamp_off and underdose are raised.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0.1}}
+        - {name: dut, type: uv_reactor}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, sink.port]
+    simulate:
+      duration: 20 s
+      step: 1 s
+      events:
+        - {at: 10 s, set: {dut.lamp_output: 0}}
+    expect:
+      - {variable: dut.volume_flow, value: 20.0, rel_tol: 1.0e-6}
+      - {variable: dut.dose, value: 0.0, abs_tol: 1.0e-12}
+      - {warning: dut.lamp_off, present: true}
+      - {warning: dut.underdose, present: true}
+      - {mode: dut, is: underdosing}
+  - id: idle
+    description: |
+      Supply at 0 bar gauge (atmospheric) and a drain: no flow. The residence time is capped at
+      1e6 s and the dose at 1e6 mJ/cm2 (20 x 1e6 would be 2e7), no warning is raised.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0}}
+        - {name: dut, type: uv_reactor}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 0.0, abs_tol: 1.0e-9}
+      - {variable: dut.residence_time, value: 1.0e+6, rel_tol: 1.0e-9}
+      - {variable: dut.dose, value: 1.0e+6, rel_tol: 1.0e-9}
+      - {warning: dut.underdose, present: false}
+      - {warning: dut.lamp_off, present: false}
+      - {mode: dut, is: idle}
+  - id: reverse-flow
+    description: |
+      Supply at 0 bar on the inlet and 0.1 bar on the outlet, so water flows backwards.
+      Hand calculation: the law is symmetric, |dp| = 0.1 bar gives |Q| = 20 m3/h, so
+      volume_flow = -20 m3/h and pressure_drop = -0.1 bar (design 3.2 signs; inlet m_flow
+      -20 / 3600 * 998.2 = -5.545556 kg/s); the dose uses |Q|: 15 L / (20 m3/h) = 2.7 s,
+      20 x 2.7 = 54 mJ/cm2, so no underdose. The forward-flow rules stay silent and
+      reverse_flow is raised.
+    system:
+      components:
+        - {name: a, type: supply, parameters: {pressure: 0}}
+        - {name: dut, type: uv_reactor}
+        - {name: b, type: supply, parameters: {pressure: 0.1}}
+      connections:
+        - [a.port, dut.inlet]
+        - [dut.outlet, b.port]
+    expect:
+      - {variable: dut.volume_flow, value: -20.0, rel_tol: 1.0e-6}
+      - {variable: dut.pressure_drop, value: -0.1, abs_tol: 1.0e-7}
+      - {variable: dut.residence_time, value: 2.7, rel_tol: 1.0e-6}
+      - {variable: dut.dose, value: 54.0, rel_tol: 1.0e-6}
+      - {variable: dut.inlet.m_flow, value: -5.545556, rel_tol: 1.0e-6}
+      - {warning: dut.underdose, present: false}
+      - {warning: dut.lamp_off, present: false}
+      - {warning: dut.reverse_flow, present: true}
+      - {mode: dut, is: disinfecting}
+  - id: reverse-underdose
+    description: |
+      Outlet side at 1 bar, inlet at 0 bar. Hand calculation: Q = -20 * sqrt(1 / 0.1) =
+      -63.24555 m3/h, pressure_drop -1 bar, dose 1080 / 63.24555 = 17.07630 mJ/cm2 < 40:
+      the mode reads underdosing and reverse_flow is raised (underdose checks forward flow
+      only).
+    system:
+      components:
+        - {name: a, type: supply, parameters: {pressure: 0}}
+        - {name: dut, type: uv_reactor}
+        - {name: b, type: supply, parameters: {pressure: 1.0}}
+      connections:
+        - [a.port, dut.inlet]
+        - [dut.outlet, b.port]
+    expect:
+      - {variable: dut.volume_flow, value: -63.24555, rel_tol: 1.0e-6}
+      - {variable: dut.pressure_drop, value: -1.0, abs_tol: 1.0e-6}
+      - {variable: dut.dose, value: 17.07630, rel_tol: 1.0e-6}
+      - {warning: dut.underdose, present: false}
+      - {warning: dut.reverse_flow, present: true}
+      - {mode: dut, is: underdosing}
+  - id: lamp-off
+    description: |
+      Lamp off at the rated 0.1 bar. Hand calculation: Q = 20 m3/h, dose 0 x 2.7 s = 0, so
+      lamp_off and underdose are raised and the mode is underdosing.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0.1}}
+        - {name: dut, type: uv_reactor, inputs: {lamp_output: 0}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 20.0, rel_tol: 1.0e-6}
+      - {variable: dut.dose, value: 0.0, abs_tol: 1.0e-12}
+      - {warning: dut.lamp_off, present: true}
+      - {warning: dut.underdose, present: true}
+      - {warning: dut.reverse_flow, present: false}
+      - {mode: dut, is: underdosing}
+  - id: purification-train
+    description: |
+      Supply 0.3 bar, clean media filter, UV reactor, drain (the purification example).
+      Hand calculation: at 20 m3/h the filter drops 0.2 bar and the reactor 0.1 bar, which add
+      up to the 0.3 bar available, so both pass exactly the rated 20 m3/h and the dose is
+      54 mJ/cm2.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0.3}}
+        - {name: filt, type: media_filter}
+        - {name: dut, type: uv_reactor}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, filt.inlet]
+        - [filt.outlet, dut.inlet]
+        - [dut.outlet, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 20.0, rel_tol: 1.0e-6}
+      - {variable: filt.pressure_drop, value: 0.2, abs_tol: 1.0e-6}
+      - {variable: dut.pressure_drop, value: 0.1, abs_tol: 1.0e-6}
+      - {variable: dut.inlet.p, value: 0.1, abs_tol: 1.0e-6}
+      - {variable: dut.dose, value: 54.0, rel_tol: 1.0e-6}
+      - {mode: dut, is: disinfecting}
+      - {mode: filt, is: clean}
+contracts:
+  - id: mass-conservation
+    description: Mass entering the inlet leaves through the outlet at every supply pressure, including reverse flow.
+    scenario: rated-flow
+    sweep: {variable: src.pressure, from: -0.5, to: 2, steps: 11}
+    check: {type: equal, left: dut.inlet.m_flow, right: -dut.outlet.m_flow, abs_tol: 1.0e-9}
+  - id: quadratic-pressure-drop
+    description: The drop follows the rated point with the sign of the flow, dp = rated_pressure_drop * Q * |Q| / rated_flow**2, in both directions above the regularisation band (supply from -0.9 to 2 bar; no sweep point is within 0.1 bar of zero).
+    scenario: rated-flow
+    sweep: {variable: src.pressure, from: -0.9, to: 2, steps: 12}
+    check: {type: equal, left: dut.pressure_drop, right: "dut.rated_pressure_drop * dut.volume_flow * abs(dut.volume_flow) / dut.rated_flow**2", rel_tol: 1.0e-6}
+  - id: flow-sign-follows-pressure
+    description: Design 3.2 signs. Hand calculation with the drain at 0 bar, Q = 20 * sqrt(|p| / 0.1) m3/h with the sign of the supply pressure p, in both directions.
+    scenario: rated-flow
+    sweep: {variable: src.pressure, values: [-0.9, -0.3, -0.05, 0.05, 0.3, 2]}
+    check: {type: equal, left: dut.volume_flow, right: "20 * sqrt(abs(src.pressure) / 0.1) * src.pressure / abs(src.pressure)", rel_tol: 1.0e-6}
+  - id: dose-inverse-to-flow
+    description: Dose is fluence_rate * lamp_output * volume / |Q| in both directions; with Q in m3/h and volume in L the residence time is 3.6 * volume / |Q| s.
+    scenario: rated-flow
+    sweep: {variable: src.pressure, from: -0.9, to: 2, steps: 12}
+    check: {type: equal, left: dut.dose, right: "dut.fluence_rate * dut.lamp_output * 3.6 * dut.volume / abs(dut.volume_flow)", rel_tol: 1.0e-9}
+  - id: dose-falls-with-flow
+    description: Raising the supply pressure raises the flow and strictly lowers the dose.
+    scenario: rated-flow
+    sweep: {variable: src.pressure, from: 0.02, to: 1, steps: 10}
+    check: {type: monotonic, variable: dut.dose, direction: decreasing, strict: true}
+  - id: underdose-above-27
+    description: With the defaults the dose falls below 40 mJ/cm2 exactly above 3.6 * 15 * 20 / 40 = 27 m3/h (supply 0.18225 bar); underdose is raised exactly then.
+    scenario: rated-flow
+    sweep: {variable: src.pressure, from: 0, to: 0.5, steps: 11}
+    check: {type: warning_iff, code: dut.underdose, condition: "dut.volume_flow > 27"}
+  - id: underdose-with-lamp-output
+    description: At rated flow the dose is 54 * lamp_output, so underdose is raised exactly when lamp_output < 40 / 54 = 0.7407.
+    scenario: rated-flow
+    sweep: {variable: dut.lamp_output, from: 0, to: 1, steps: 11}
+    check: {type: warning_iff, code: dut.underdose, condition: "dut.lamp_output < 40 / 54"}
+  - id: lamp-off-iff
+    description: At rated flow, lamp_off is raised exactly when the lamp output is below 1 %.
+    scenario: rated-flow
+    sweep: {variable: dut.lamp_output, values: [0, 0.005, 0.02, 0.5, 1]}
+    check: {type: warning_iff, code: dut.lamp_off, condition: "dut.lamp_output < 0.01"}
+  - id: lamp-off-needs-forward-flow
+    description: With the lamp off, lamp_off is raised exactly when the supply is above the drain (forward flow; 0.0001 bar already gives 20 * sqrt(0.001) = 0.63 m3/h), not at zero or reverse flow.
+    scenario: lamp-off
+    sweep: {variable: src.pressure, values: [-0.5, -0.0001, 0, 0.0001, 0.1, 1]}
+    check: {type: warning_iff, code: dut.lamp_off, condition: "src.pressure > 0"}
+  - id: reverse-flow-iff
+    description: reverse_flow is raised exactly when the supply is below the drain (-0.0001 bar already gives -0.63 m3/h), never at zero or forward flow.
+    scenario: rated-flow
+    sweep: {variable: src.pressure, values: [-0.9, -0.1, -0.0001, 0, 0.0001, 0.1, 2]}
+    check: {type: warning_iff, code: dut.reverse_flow, condition: "src.pressure < 0"}
+implementations:
+  reference: {python: "worldparts.components.treatment:UVReactor"}
+  modelica:
+    class: Buildings.Fluid.FixedResistances.PressureDrop
+    library: Modelica Buildings Library
+    notes: >-
+      Quadratic flow resistance with m_flow_nominal = rho * rated_flow and
+      dp_nominal = rated_pressure_drop; the dose is an output computed from the flow
+      (volume / V_flow * fluence), with no Modelica counterpart. Binding not yet cross-validated
+      in v0.1.
+  wntr:
+    element: Pipe
+    notes: >-
+      Equivalent resistance: a short pipe (or throttle control valve) whose minor-loss
+      coefficient reproduces rated_pressure_drop at rated_flow. The dose is not exported.
+      Binding not yet cross-validated in v0.1.
+provenance:
+  authors: [worldparts contributors]
+  sources:
+    - title: "Ultraviolet Disinfection Guidance Manual for the Final Long Term 2 Enhanced Surface Water Treatment Rule (EPA 815-R-06-007), US EPA, 2006"
+      notes: UV dose as fluence rate times exposure time; dose distribution, reduction equivalent dose and reactor validation, which this model does not reproduce.
+    - title: "Bolton, J. R. and Linden, K. G. (2003). Standardization of methods for fluence (UV dose) determination in bench-scale UV experiments. Journal of Environmental Engineering 129(3), 209-215"
+      notes: Fluence (mJ/cm2) as average fluence rate (mW/cm2) times exposure time (s).
+    - title: DVGW W 294 (UV devices for disinfection in drinking water supply)
+      notes: Reference fluence of 400 J/m2 (40 mJ/cm2) used as the default required_dose.
+    - title: Modelica Buildings Library
+      url: https://simulationresearch.lbl.gov/modelica/
+      notes: Quadratic flow resistance through a nominal point (Buildings.Fluid.FixedResistances.PressureDrop).
+  data:
+    acquisition: generic
+    notes: >-
+      Default parameters (20 m3/h, 0.1 bar, 15 L, 20 mW/cm2 average fluence rate, 40 mJ/cm2
+      required) are generic illustrative values chosen so that the rated point gives 54
+      mJ/cm2, not a specific product.
+  license: Apache-2.0
+  data_license: CC0-1.0
