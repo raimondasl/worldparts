@@ -21,20 +21,18 @@ and, later, fault diagnosis.
 ## What an agent can do
 
 The call sequence below builds a small purification skid over MCP (tank, pump, media
-filter, throttling valve, UV reactor, discharge), finds a problem and fixes it. The
-arguments are abbreviated; each line is one typed MCP tool call with its result.
+filter, throttling valve, UV reactor, discharge), finds a problem and fixes it in five
+calls. The arguments are abbreviated; each call is one typed MCP tool call with its result.
 
 ```text
 list_components(query="uv")                          -> uv_reactor
-create_system(name="skid")                           -> system_id "s1"
-add_component(s1, "raw", "tank")
-add_component(s1, "pump", "centrifugal_pump")
-add_component(s1, "filter", "media_filter")
-add_component(s1, "valve", "valve", parameters={"kv": 40})
-add_component(s1, "uv", "uv_reactor")
-add_component(s1, "out", "drain")
-connect(s1, "raw.outlet", "pump.inlet")              ... and so on down the line to out.port
-check_system(s1)                                     -> ok, 0 errors (raw.inlet is capped)
+describe_component(["tank", "centrifugal_pump", "media_filter", "valve", "uv_reactor",
+                    "drain"])                        -> ports, parameters, units, limits
+load_system({"worldparts_system": "0.1", "name": "skid",
+             "components": [{"name": "raw", "type": "tank"}, ...,
+               {"name": "valve", "type": "valve", "parameters": {"kv": 40}}, ...],
+             "connections": [["raw.outlet", "pump.inlet"], ... down the line to out.port]})
+                                   -> system_id "s1", issues: 0 errors (raw.inlet is capped)
 solve(s1)                                            -> pump 36.8 m3/h, UV dose 29.3 mJ/cm2
     warnings: pump.beyond_curve, filter.over_rated_flow, uv.underdose
 solve_for(s1, target="uv.dose", value="45 mJ/cm2", vary="valve.opening", lower=0.05, upper=1)
@@ -103,6 +101,14 @@ variable and writes one input); `solve`, `solve_for` and `simulate` report them 
 `controls`, and `variables=["control"]` selects their results. When the `wntr` package is installed, the
 [WNTR adapter](docs/wntr-adapter.md) adds `export_system` and `compare_with_wntr`. Systems
 live as long as the server process; `get_system` and `load_system` save and restore them.
+
+The server's instructions steer an agent to the short path for a new system, the one in
+the sequence above: `list_components`, then `describe_component` with every part in one
+call (it takes a list of up to 12 ids or aliases and returns `{components: [...]}` in that
+order), then one `load_system` call with the complete document (components with parameters
+and inputs, connections and controls). Its `issues` are the `check_system` report, so the
+next call is `solve`, `solve_for` or `simulate`. The step-by-step tools (`create_system`,
+`add_component`, `connect`, `set_values`) are for editing, with `check_system` after edits.
 
 ## Python in 20 lines
 

@@ -7,6 +7,8 @@ client, with each successful call's ``structuredContent`` validated against the 
 
 from __future__ import annotations
 
+import ast
+import copy
 import json
 import math
 from collections.abc import Awaitable, Callable
@@ -18,7 +20,7 @@ import pytest
 from mcp import Client
 
 import worldparts as wp
-from worldparts.mcp_server import INSTRUCTIONS, compact_schema, create_server
+from worldparts.mcp_server import INSTRUCTIONS, MAX_DESCRIBE, compact_schema, create_server
 from worldparts.media import RHO, G
 from worldparts.units import P_ATM
 
@@ -128,8 +130,10 @@ def _keys(schema: Any, key: str) -> int:
 def test_tools_list_is_compact() -> None:
     """No titles, output schemas without per-field prose, dedented descriptions.
 
-    The trial measured about 62 KB (15 tools) pretty-printed; the compact form of all 16
-    tools now stays under 36 KB, and no output schema exceeds 4.5 KB.
+    The trial measured about 62 KB (15 tools) pretty-printed. The compact form of all 20
+    tools (18 core, 2 WNTR) is about 35.6 KB; the 36 KB budget is kept on purpose, so a
+    new tool or a longer description has to be paid for by trimming elsewhere. No output
+    schema exceeds 4.5 KB.
     """
 
     async def body(s: Session) -> None:
@@ -185,6 +189,38 @@ def test_compact_schema_keeps_structure() -> None:
     assert inputs["properties"]["description"]["description"] == "d"
 
 
+def test_compact_schema_drops_additional_properties_true() -> None:
+    """``additionalProperties: true`` is the JSON Schema default: dropping it keeps the
+    validation and saves about 30 bytes per free-form object in tools/list."""
+    schema = {
+        "type": "object",
+        "additionalProperties": True,
+        "properties": {
+            "additionalProperties": {"type": "object", "additionalProperties": True},
+            "names": {"type": "object", "additionalProperties": {"type": "string"}},
+            "closed": {"type": "object", "additionalProperties": False},
+        },
+    }
+    expected = {
+        "type": "object",
+        "properties": {
+            "additionalProperties": {"type": "object"},
+            "names": {"type": "object", "additionalProperties": {"type": "string"}},
+            "closed": {"type": "object", "additionalProperties": False},
+        },
+    }
+    for output in (False, True):
+        out = compact_schema(schema, output)
+        assert out == expected
+        for sample, ok in (
+            ({"extra": 1, "additionalProperties": {"x": 1}, "names": {"a": "b"}}, True),
+            ({"names": {"a": 1}}, False),
+            ({"closed": {"a": 1}}, False),
+        ):
+            for s in (schema, out):
+                assert jsonschema.Draft202012Validator(s).is_valid(sample) is ok, (s, sample)
+
+
 # ----------------------------------------------------------------------------------------
 # major: describe_component detail
 # ----------------------------------------------------------------------------------------
@@ -208,6 +244,181 @@ def test_describe_component_is_brief_by_default() -> None:
         assert all("system" in x and "expect" in x for x in full["scenarios"])
         small, big = len(json.dumps(brief)), len(json.dumps(full))
         assert small < 15_000 and small < 0.5 * big, (small, big)
+
+    run(body)
+
+
+# ----------------------------------------------------------------------------------------
+# benchmark pilot: the short path (describe every part in one call, build in one call)
+# ----------------------------------------------------------------------------------------
+PARTS = ["centrifugal_pump", "tank", "valve", "pipe", "drain"]
+
+
+def test_describe_component_takes_a_list() -> None:
+    """A list returns {components: [...]} in the order given; one id keeps the flat shape."""
+
+    async def body(s: Session) -> None:
+        batch = await s.call("describe_component", component=PARTS)
+        assert list(batch) == ["components"]
+        assert [d["alias"] for d in batch["components"]] == PARTS
+        for alias, d in zip(PARTS, batch["components"], strict=True):
+            assert d == await s.call("describe_component", component=alias)
+        assert all(d["detail"] == "brief" and "provenance" not in d for d in batch["components"])
+        # Full ids and aliases mix; the order is kept, a repeated entry is described twice.
+        mixed = ["worldparts.hydraulic.drain", "valve", "worldparts.hydraulic.valve", "drain"]
+        got = await s.call("describe_component", component=mixed)
+        assert [d["id"] for d in got["components"]] == [
+            "worldparts.hydraulic.drain",
+            "worldparts.hydraulic.valve",
+            "worldparts.hydraulic.valve",
+            "worldparts.hydraulic.drain",
+        ]
+        # detail applies to every entry.
+        full = await s.call("describe_component", component=["pipe", "tank"], detail="full")
+        assert [d["detail"] for d in full["components"]] == ["full", "full"]
+        assert full["components"][1] == await s.call(
+            "describe_component", component="tank", detail="full"
+        )
+        assert all("provenance" in d for d in full["components"])
+        # A one-element list is still a list; a single id is one description as before.
+        one = await s.call("describe_component", component=["pipe"])
+        assert [d["alias"] for d in one["components"]] == ["pipe"]
+        single = await s.call("describe_component", component="pipe")
+        assert "components" not in single and single["alias"] == "pipe"
+        assert single == one["components"][0]
+        # Up to MAX_DESCRIBE entries.
+        many = await s.call("describe_component", component=["pipe"] * MAX_DESCRIBE)
+        assert len(many["components"]) == MAX_DESCRIBE
+
+    run(body)
+
+
+def test_describe_component_list_errors_name_every_unknown_entry() -> None:
+    async def body(s: Session) -> None:
+        err = await s.fail(
+            "describe_component", component=["tank", "pmup", "pipe", "centrifugal_pmp"]
+        )
+        assert "[unknown_component]" in err
+        assert "component[1]: Unknown component type 'pmup'." in err
+        assert (
+            "component[3]: Unknown component type 'centrifugal_pmp'. "
+            "Did you mean 'centrifugal_pump'?" in err
+        )
+        assert "component[0]" not in err and "component[2]" not in err
+        # The valid choices (aliases and full ids) are listed once.
+        assert err.count("Valid:") == 1
+        assert "Valid: centrifugal_pump, check_valve, drain" in err
+        assert "worldparts.hydraulic.uv_reactor" in err
+        err = await s.fail("describe_component", component=["valve", "vlave"])
+        assert "component[1]: Unknown component type 'vlave'. Did you mean 'valve'?" in err
+        assert err.count("Valid:") == 1
+        # A comma-separated string is one unknown id; the error says to pass a list.
+        err = await s.fail("describe_component", component="tank, pipe")
+        assert "Unknown component type 'tank, pipe'." in err and err.count("Valid:") == 1
+        assert "pass a list, e.g. ['tank', 'pipe']" in err
+        err = await s.fail("describe_component", component="pmup")
+        assert "pass a list" not in err and err.count("Valid:") == 1
+        # An empty list and a list over the limit are rejected by the argument schema.
+        await s.fail("describe_component", component=[])
+        err = await s.fail("describe_component", component=["pipe"] * (MAX_DESCRIBE + 1))
+        assert f"at most {MAX_DESCRIBE} items" in err
+
+    run(body)
+
+
+def test_instructions_and_descriptions_recommend_the_short_path() -> None:
+    """list -> describe (all parts, one call) -> load_system (whole document, one call; its
+    issues are the check report) -> solve; the incremental tools are named as the way to
+    edit, with check_system after edits."""
+    workflow = INSTRUCTIONS[INSTRUCTIONS.index("Recommended workflow") :]
+    steps = ["list_components", "describe_component", "load_system", "solve"]
+    at = [workflow.index(step) for step in steps]
+    assert at == sorted(at), at
+    # No separate check_system step between load_system and solve: load_system's issues
+    # are the check_system report; check_system is named for use after edits.
+    between = workflow[workflow.index("load_system") : workflow.index("-> solve")]
+    assert "its `issues` are the check_system report" in between
+    assert "fix every error" in between
+    assert "check_system after edits" in workflow
+    assert len(INSTRUCTIONS) < 2_700, len(INSTRUCTIONS)  # sent to every session
+    assert "EVERY component you need in ONE call" in INSTRUCTIONS
+    assert "COMPLETE system document in ONE call" in INSTRUCTIONS
+    for word in ("parameters and inputs", "connections", "controls", "solve_for", "simulate"):
+        assert word in workflow, word
+    assert "Edit a system with set_values, add_component, connect or add_control" in INSTRUCTIONS
+
+    async def body(s: Session) -> None:
+        tools = {t.name: t for t in (await s.client.list_tools()).tools}
+        describe = tools["describe_component"]
+        assert "as a list in one call" in (describe.description or "")
+        component = describe.input_schema["properties"]["component"]
+        assert {b["type"] for b in component["anyOf"]} == {"string", "array"}
+        assert component["anyOf"][1]["maxItems"] == MAX_DESCRIBE
+        assert "one call" in (tools["list_components"].description or "")
+        assert "load_system" in (tools["create_system"].description or "")
+        load = tools["load_system"]
+        assert (load.description or "").startswith("Build a whole system in one call")
+        assert "then solve" in (load.description or "")
+        assert "check_system report, no need to call it" in (load.description or "")
+        # The example document in load_system's argument help loads and solves as it is.
+        doc_help = load.input_schema["properties"]["document"]["description"]
+        example = ast.literal_eval(doc_help[doc_help.index("{") : doc_help.index(". Components")])
+        assert example["components"][1]["inputs"] == {"opening": 0.5}
+        loaded = await s.call("load_system", document=example)
+        assert loaded["issues"] == []
+        solved = await s.call("solve", system_id=loaded["system_id"])
+        assert solved["converged"] and solved["values"]["v.volume_flow"]["value"] > 0
+
+    run(body)
+
+
+def test_short_path_matches_the_step_by_step_build() -> None:
+    """The four-call path gives the numbers of the thirty-call path."""
+    doc = copy.deepcopy(LIFT)
+    doc["components"][2]["inputs"] = {"opening": 0.8}
+    fill = {"name": "fill", "type": "hysteresis", "measure": "tank.level",
+            "actuate": "pump.speed", "on_below": "0.5 m", "off_above": "1.8 m",
+            "on_value": 1, "off_value": 0, "initial": "on"}  # fmt: skip
+    doc["controls"] = [fill]
+
+    async def body(s: Session) -> None:
+        # Short path: list, describe all parts at once, load the whole document, solve.
+        await s.call("list_components")
+        described = await s.call("describe_component", component=PARTS)
+        assert len(described["components"]) == len(PARTS)
+        loaded = await s.call("load_system", document=doc)
+        assert loaded["controls"] and "fill" in loaded["controls"]
+        short = loaded["system_id"]
+        assert [i["where"] for i in loaded["issues"]] == ["tank.inlet"]
+        assert all(i["severity"] == "warning" for i in loaded["issues"])
+        a = await s.call("solve", system_id=short)
+        # load_system's issues are exactly what check_system reports (so the path skips it).
+        check = await s.call("check_system", system_id=short)
+        assert check["ok"] and check["issues"] == loaded["issues"]
+
+        # Step by step: create, add each part, connect each pair, add the control.
+        long = (await s.call("create_system", name="rooftop lift"))["system_id"]
+        for c in doc["components"]:
+            await s.call("add_component", system_id=long, name=c["name"], component=c["type"],
+                         parameters=c.get("parameters"), inputs=c.get("inputs"))  # fmt: skip
+        for x, y in doc["connections"]:
+            await s.call("connect", system_id=long, a=x, b=y)
+        settings = {
+            k: v for k, v in fill.items() if k not in ("name", "type", "measure", "actuate")
+        }
+        await s.call("add_control", system_id=long, name="fill", type="hysteresis",
+                     measure="tank.level", actuate="pump.speed", settings=settings)  # fmt: skip
+        b = await s.call("solve", system_id=long)
+
+        assert a["values"] == b["values"] and a["controls"] == b["controls"]
+        assert a["values"]["pump.volume_flow"]["value"] > 0
+        assert a["controls"]["fill"]["state"] == "on"
+        # Both documents are the same system.
+        doc_a = (await s.call("get_system", system_id=short))["document"]
+        doc_b = (await s.call("get_system", system_id=long))["document"]
+        assert doc_a["components"] == doc_b["components"]
+        assert doc_a["connections"] == doc_b["connections"]
+        assert doc_a["controls"] == doc_b["controls"]
 
     run(body)
 

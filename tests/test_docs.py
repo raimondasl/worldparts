@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import importlib.util
 import io
@@ -165,6 +166,13 @@ def test_readme_agent_sequence() -> None:
         ("valve.port_b", "uv.inlet"),
         ("uv.outlet", "out.port"),
     ]
+    # The README's describe_component call names every part type, in order.
+    listed = re.search(r"describe_component\((\[.*?\])\)", text, re.DOTALL)
+    assert listed, "README has no describe_component([...]) call"
+    types = ast.literal_eval(listed.group(1))
+    assert types == [component for _, component, _ in parts]
+    assert '{"worldparts_system": "0.1", "name": "skid"' in text
+    assert '"parameters": {"kv": 40}' in text and '["raw.outlet", "pump.inlet"]' in text
     seen: dict[str, Any] = {}
 
     async def call(client: Client, tool: str, **args: Any) -> dict[str, Any]:
@@ -177,19 +185,21 @@ def test_readme_agent_sequence() -> None:
         async with Client(create_server()) as client:  # type: ignore[arg-type]
             found = await call(client, "list_components", query="uv")
             seen["found"] = [c["alias"] for c in found["components"]]
-            sid = (await call(client, "create_system", name="skid"))["system_id"]
+            described = await call(client, "describe_component", component=types)
+            seen["described"] = [d["alias"] for d in described["components"]]
+            document = {
+                "worldparts_system": "0.1",
+                "name": "skid",
+                "components": [
+                    {"name": name, "type": component} | ({"parameters": p} if p else {})
+                    for name, component, p in parts
+                ],
+                "connections": [list(link) for link in links],
+            }
+            loaded = await call(client, "load_system", document=document)
+            sid = loaded["system_id"]
             seen["sid"] = sid
-            for name, component, parameters in parts:
-                await call(
-                    client,
-                    "add_component",
-                    system_id=sid,
-                    name=name,
-                    component=component,
-                    parameters=parameters,
-                )
-            for a, b in links:
-                await call(client, "connect", system_id=sid, a=a, b=b)
+            seen["loaded"] = loaded
             seen["check"] = await call(client, "check_system", system_id=sid)
             seen["solve"] = await call(client, "solve", system_id=sid)
             seen["solve_for"] = await call(
@@ -206,10 +216,14 @@ def test_readme_agent_sequence() -> None:
     anyio.run(main)
 
     assert seen["found"] == ["uv_reactor"]
+    assert seen["described"] == types
     assert seen["sid"] == "s1"
+    # load_system's issues are the check_system report: no errors, raw.inlet is capped.
+    issues = seen["loaded"]["issues"]
+    assert [i["where"] for i in issues] == ["raw.inlet"]
+    assert all(i["severity"] != "error" for i in issues)
     check = seen["check"]
-    assert check["ok"] and check["errors"] == 0
-    assert [i["where"] for i in check["issues"]] == ["raw.inlet"]
+    assert check["ok"] and check["errors"] == 0 and check["issues"] == issues
 
     solved = seen["solve"]
     flow = solved["values"]["pump.volume_flow"]["value"]

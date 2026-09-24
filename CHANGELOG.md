@@ -46,6 +46,30 @@ wear, a leak component and top-fed tanks.
   inlet at most the water above the mouth. The WNTR adapter exports the inlet bottom-fed
   and lists it as an approximation.
 - **Example** `examples/booster_station.yaml`: a PI booster pump with a demand ramp.
+- **Batched `describe_component`**: `component` also takes a list of up to 12 ids or
+  aliases; the result is then `{components: [...]}` in the order given (brief by default,
+  `detail="full"` for every entry). A single id returns one description as before. Unknown
+  entries are all named by index, with the valid choices listed once.
+- **Ramp events in component-manifest scenarios**: `scenarios[].simulate.events` accept
+  `{at, ramp: {path: [start, end]}, over}` (the schema now matches `system.schema.json`; the
+  scenario runner already called `System.simulate`).
+
+### Changed
+
+- **MCP: the short path is the recommended one** (benchmark pilot: one model built a pump
+  station in 5 calls, another in 30). The server instructions and the tool descriptions of
+  `list_components`, `describe_component`, `create_system` and `load_system` recommend
+  `list_components` -> `describe_component` (all parts, one call) -> `load_system` (the
+  complete document, one call; its `issues` are the `check_system` report, so no separate
+  check is needed) -> `solve`/`solve_for`/`simulate`, with `add_component`, `connect` and
+  `set_values` for edits and `check_system` after edits. `load_system`'s example document
+  shows inputs as well as parameters. The README's headline MCP example now uses this
+  path. A comma-separated string passed to `describe_component` gets a hint to pass a
+  list. To keep `tools/list` within its budget, tool
+  descriptions are unwrapped (one line per paragraph) and `additionalProperties: true` (the
+  JSON Schema default) is left out of the tool schemas.
+- The benchmark reference executor hands ramp events straight to `System.simulate`
+  instead of expanding them itself (the frozen expected answers are unchanged).
 
 ### Fixed (review of the part 1 work)
 

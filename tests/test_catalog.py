@@ -13,6 +13,7 @@ import pytest
 import worldparts as wp
 from worldparts.catalog import package_manifest_paths
 from worldparts.components.base import Component
+from worldparts.errors import format_choices
 from worldparts.manifest import Manifest, _schema_errors, load_yaml
 
 RAW: dict[str, dict[str, Any]] = {}
@@ -34,6 +35,22 @@ def test_catalogue_is_not_empty() -> None:
         m.rsplit(".", 1)[-1] for m in IDS
     }
     assert len(wp.default_catalog()) == len(IDS)
+
+
+def test_unknown_component_message_with_and_without_the_valid_list() -> None:
+    cat = wp.default_catalog()
+    assert cat.choices() == [*cat.aliases(), *cat.ids()]
+    with pytest.raises(wp.UnknownComponentError) as full:
+        cat.get("vlave")
+    with pytest.raises(wp.UnknownComponentError) as short:
+        cat.get("vlave", list_valid=False)
+    assert str(short.value) == "Unknown component type 'vlave'. Did you mean 'valve'?"
+    assert str(full.value) == f"{short.value} {format_choices('', cat.choices())}"
+    with pytest.raises(wp.UnknownComponentError) as none:
+        cat.get("zzz", list_valid=False)
+    assert str(none.value) == "Unknown component type 'zzz'."
+    assert format_choices("x", [], list_valid=False) == ""
+    assert format_choices("x", []) == "There are no valid alternatives."
 
 
 @pytest.mark.parametrize("mid", IDS)

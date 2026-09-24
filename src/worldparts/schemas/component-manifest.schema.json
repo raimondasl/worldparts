@@ -397,17 +397,37 @@
     },
     "quantity": {"oneOf": [{"type": "number"}, {"type": "string", "minLength": 1}]},
     "event": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["at", "set"],
-      "properties": {
-        "at": {"$ref": "#/$defs/quantity"},
-        "set": {
+      "oneOf": [
+        {
           "type": "object",
-          "minProperties": 1,
-          "additionalProperties": {"$ref": "#/$defs/value"}
+          "description": "Set values at time 'at'.",
+          "additionalProperties": false,
+          "required": ["at", "set"],
+          "properties": {
+            "at": {"$ref": "#/$defs/quantity"},
+            "set": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {"$ref": "#/$defs/value"}
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "Ramp values linearly from [start, end] between 'at' and 'at' + 'over' (one set event per step; docs/design.md section 13.2).",
+          "additionalProperties": false,
+          "required": ["at", "ramp", "over"],
+          "properties": {
+            "at": {"$ref": "#/$defs/quantity"},
+            "ramp": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/quantity"}}
+            },
+            "over": {"$ref": "#/$defs/quantity"}
+          }
         }
-      }
+      ]
     },
     "simulate": {
       "type": "object",

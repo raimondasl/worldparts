@@ -354,10 +354,12 @@ or rows for tables. Each connection is a pair of `<instance>.<port>` paths.
 
 `simulate` takes a `duration` and an optional `step` (default `1 s`). Both are numbers in
 seconds or strings with a time unit. `events` is a list of `{at, set}`, where `set` maps
-paths to values. Samples fall at every multiple of the step, at every event time and at the
-duration. Events after the duration are rejected. With `simulate`, expectations refer to
-the **final sample**, at exactly `duration`: its values, modes and the warnings raised at
-that sample.
+paths to values, or of ramps `{at, ramp: {path: [start, end]}, over}`, which change the
+values linearly from `at` to `at + over` (one set event per step, as in a system document;
+design section 13.2). Samples fall at every multiple of the step, at every event time and
+at the duration. Events after the duration, and ramps that end after it, are rejected.
+With `simulate`, expectations refer to the **final sample**, at exactly `duration`: its
+values, modes and the warnings raised at that sample.
 
 Each expectation takes one of four forms:
 

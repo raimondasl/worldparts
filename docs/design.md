@@ -487,6 +487,11 @@ Revised after the agent usability trial:
 - `list_components` shows table columns as `name [unit]`; `add_component` returns a `hint` that wiring issues clear once connected.
 - Output schemas are structure-only (no titles, descriptions or defaults) to keep `tools/list` small; meanings live in the tool descriptions.
 - `export_system` is registered only when an exporter exists (the WNTR adapter adds it).
+Revised before the v0.2 full benchmark run (efficiency):
+- `describe_component(component, detail="brief")` takes an id or alias, or a list of 1 to 12 (`MAX_DESCRIBE`); a list returns `{components: [...]}` in the order given, with `detail` applied to every entry; every unknown entry is named by index with close matches and the valid choices are listed once; a comma-separated string gets a hint to pass a list. A single id keeps the flat shape.
+- The instructions recommend: `list_components`, then `describe_component` with every needed component in one call, then `load_system` with the complete document in one call (its `issues` are the `check_system` report, so no separate check), then `solve`, `solve_for` or `simulate`. The incremental tools are for editing, with `check_system` after edits.
+- `compact_schema` also drops `additionalProperties: true`; tool descriptions are unwrapped. The tools/list budget stays at 36 KB on purpose: a new tool must be paid for by trimming elsewhere.
+- Measured on benchmark task pump-station-01: the recommended path takes 4 calls and 69 KB of result text against 25 calls and 82 KB for the incremental path with per-type describes; the saving is mostly in turns (each turn re-reads the context).
 
 ## 10. CLI
 
@@ -562,6 +567,7 @@ Semantics:
 ### 13.2 Ramp events in system documents (issue #20)
 
 `System.simulate` and the system document's `simulation.events` accept the ramp form the MCP tool already takes: `{at, ramp: {path: [start, end]}, over}`. The expansion into one set event per step moves from the MCP server into the core, and `system.schema.json` validates both forms.
+Also accepted in component-manifest scenario `simulate.events` (validated by component-manifest.schema.json); the benchmark reference executor passes ramps to `System.simulate` unchanged.
 
 ### 13.3 Pump wear (issue #13)
 

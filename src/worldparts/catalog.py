@@ -103,11 +103,13 @@ class Catalog:
             out.setdefault(mid.rsplit(".", 1)[-1], []).append(mid)
         return out
 
-    def get(self, key: str) -> Manifest:
+    def get(self, key: str, *, list_valid: bool = True) -> Manifest:
         """Resolve a full id or a short alias.
 
         Raises:
-            UnknownComponentError: Listing valid ids and aliases.
+            UnknownComponentError: Naming close matches and listing valid ids and aliases
+                (only the close matches when ``list_valid`` is False; see
+                :meth:`choices`).
         """
         if key in self._by_id:
             return self._by_id[key]
@@ -118,10 +120,12 @@ class Catalog:
             raise UnknownComponentError(
                 f"Component alias '{key}' is ambiguous; use a full id: {', '.join(matches)}."
             )
-        valid = list(self.aliases()) + self.ids()
-        raise UnknownComponentError(
-            f"Unknown component type '{key}'. " + format_choices(key, valid)
-        )
+        hint = format_choices(key, self.choices(), list_valid=list_valid)
+        raise UnknownComponentError(f"Unknown component type '{key}'. {hint}".rstrip())
+
+    def choices(self) -> list[str]:
+        """Every key :meth:`get` accepts: the aliases, then the full ids."""
+        return list(self.aliases()) + self.ids()
 
     def search(self, query: str | None = None) -> list[Manifest]:
         """Manifests whose id, name, summary, description or tags contain every query word."""

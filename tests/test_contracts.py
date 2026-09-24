@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import copy
+import math
 from typing import Any
 
 import pytest
 
 import worldparts as wp
 from worldparts.contracts import _evaluate_check
-from worldparts.manifest import Manifest
+from worldparts.manifest import Manifest, validate_manifest_data
 from worldparts.results import ComponentWarning, SolveResult
 
 
@@ -92,6 +93,58 @@ def test_run_scenario_catches_system_errors() -> None:
     out = wp.run_scenario(valve(), scen)
     assert not out.passed
     assert "no_pressure_reference" in out.failures[0]
+
+
+def test_scenario_with_a_ramp_event() -> None:
+    """A scenario's simulate.events accept the ramp form (design 13.2): the schema allows it
+    and the scenario runner hands it to System.simulate.
+
+    Hand calculation: the command ramps 0 -> 0.5 over 10 s, so it is 0.05 k during the
+    step that starts at k s; the 10 s actuator follows each step exactly,
+    x_(k+1) = u_k + (x_k - u_k) a with a = exp(-1 s / 10 s), from x_0 = 0.
+    """
+    data = copy.deepcopy(valve().data)
+    scen = copy.deepcopy(valve().scenario("actuator-lag"))
+    a = math.exp(-0.1)
+    position = sum(0.05 * k * (1 - a) * a ** (9 - k) for k in range(10))
+    assert position == pytest.approx(0.05 * (10 - 1 / (1 - a) + a**10 / (1 - a)), rel=1e-12)
+    scen.update(
+        id="actuator-ramp",
+        description="The command ramps from closed to half open over 10 s.",
+        simulate={
+            "duration": "10 s",
+            "step": "1 s",
+            "events": [{"at": "0 s", "ramp": {"dut.opening": [0, 0.5]}, "over": "10 s"}],
+        },
+        expect=[
+            {"variable": "dut.opening", "value": 0.5, "abs_tol": 1e-12},
+            {"variable": "dut.position", "value": position, "abs_tol": 1e-9},
+            {"mode": "dut", "is": "throttling"},
+        ],
+    )
+    data["scenarios"] = [*data["scenarios"], scen]
+    assert validate_manifest_data(data) == []
+    m = Manifest.from_dict(data)
+    out = wp.run_scenario(m, "actuator-ramp")
+    assert out.passed, out.failures
+    # The same ramp written as one set event per step gives the same final sample.
+    steps = [{"at": k, "set": {"dut.opening": 0.05 * k}} for k in range(11)]
+    explicit = {**scen, "simulate": {**scen["simulate"], "events": steps}}
+    assert wp.run_scenario(m, explicit).passed
+    # The schema still rejects malformed events: a ramp without 'over', set and ramp together.
+    for event in (
+        {"at": "0 s", "ramp": {"dut.opening": [0, 0.5]}},
+        {"at": "0 s", "set": {"dut.opening": 1}, "ramp": {"dut.opening": [0, 1]}, "over": 5},
+        {"at": "0 s", "ramp": {"dut.opening": [0]}, "over": 5},
+    ):
+        bad = copy.deepcopy(data)
+        bad["scenarios"][-1]["simulate"]["events"] = [event]
+        assert validate_manifest_data(bad), event
+    # A ramp that ends after the simulation fails the scenario with the reason.
+    late = copy.deepcopy(scen)
+    late["simulate"]["events"][0]["over"] = "20 s"
+    failed = wp.run_scenario(m, late)
+    assert not failed.passed and "after the end of the simulation" in failed.failures[0]
 
 
 def test_run_contract_by_id_and_failure() -> None:

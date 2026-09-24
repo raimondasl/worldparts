@@ -32,24 +32,30 @@ __all__ = [
 ]
 
 
-def format_choices(name: str, choices: Iterable[str], limit: int = 40) -> str:
+def format_choices(
+    name: str, choices: Iterable[str], limit: int = 40, *, list_valid: bool = True
+) -> str:
     """Return a sentence listing valid choices, with close matches to ``name`` first.
 
     Args:
         name: The value that was not recognised.
         choices: The valid alternatives.
         limit: Maximum number of alternatives to list.
+        list_valid: False keeps only the close matches (``""`` when there are none), for
+            a message that names several unknown values and lists the valid ones once.
 
     Returns:
         A string such as ``"Did you mean 'valve'? Valid: a, b, c."``.
     """
     options = sorted(dict.fromkeys(str(c) for c in choices))
     if not options:
-        return "There are no valid alternatives."
+        return "There are no valid alternatives." if list_valid else ""
     close = difflib.get_close_matches(str(name), options, n=3, cutoff=0.6)
     parts = []
     if close:
         parts.append("Did you mean " + " or ".join(f"'{c}'" for c in close) + "?")
+    if not list_valid:
+        return " ".join(parts)
     shown = options[:limit]
     more = f" (and {len(options) - limit} more)" if len(options) > limit else ""
     parts.append("Valid: " + ", ".join(shown) + more + ".")

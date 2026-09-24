@@ -19,9 +19,18 @@ Run it with ``worldparts mcp`` (stdio). Tools: ``list_components``, ``describe_c
 
 The tool list is kept small for the agent's context: the generated JSON schemas are
 compacted after registration (:func:`compact_schema`: no ``title`` keys, no ``null`` branch
-for output fields that are left out when empty) and tool descriptions are dedented.
+for output fields that are left out when empty, no ``additionalProperties: true``) and tool
+descriptions are dedented and unwrapped (one line per paragraph).
 ``describe_component`` is brief by default; ``detail='full'`` adds the scenario systems,
-contract rules, implementation notes and provenance.
+contract rules, implementation notes and provenance. It takes one id or alias (the result is
+one description) or a list of up to :data:`MAX_DESCRIBE` (the result is ``{components:
+[...]}`` in the order given), so an agent describes every part it needs in one call.
+
+The instructions and tool descriptions steer an agent to the short path for a new system:
+``list_components`` -> ``describe_component`` (all parts in one call) -> ``load_system``
+(the whole document in one call; its ``issues`` are the ``check_system`` report) ->
+``solve``/``solve_for``/``simulate``; ``create_system``, ``add_component``, ``connect`` and
+``set_values`` remain for editing, with ``check_system`` after edits.
 
 Extension point: a registrar is a function ``(server, store) -> None`` that declares tools
 with ``server.tool()`` and reads systems with ``store.get(system_id)``; append it to
@@ -50,7 +59,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ResourceNotFoundError, ToolError
 from mcp.server.mcpserver.resources import TextResource
 from mcp_types import ToolAnnotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 from scipy.optimize import brentq
 
 import worldparts as wp
@@ -66,6 +75,7 @@ __all__ = [
     "AUTOSAVE_ENV",
     "EXTRA_TOOL_REGISTRARS",
     "INSTRUCTIONS",
+    "MAX_DESCRIBE",
     "RESOURCE_PREFIX",
     "SystemStore",
     "UnknownSystemError",
@@ -80,16 +90,22 @@ RESOURCE_PREFIX = "worldparts://components/"
 #: to ``<dir>/<system_id>.json`` after each tool call that changes it.
 AUTOSAVE_ENV = "WORLDPARTS_AUTOSAVE_DIR"
 
+#: Most components one describe_component call accepts.
+MAX_DESCRIBE = 12
+
 INSTRUCTIONS = """\
 worldparts gives you tested physical component models (supplies, drains, pipes, valves, \
 pumps, tanks, ...) that you compose into a system and solve, instead of writing physics code.
-Workflow: list_components (search the catalogue) -> describe_component (ports, parameters \
-with units and limits, observables, modes, warning codes) -> create_system (returns a \
-system_id) -> add_component (one instance per part) -> connect (port paths \
-'<instance>.<port>'; several ports on one node form a junction) -> check_system (fix every \
-error) -> solve (steady state) or simulate (time series with events). Use set_values to \
-change inputs or parameters, list_variables to see every path, get_system/load_system to \
-save and restore the system document.
+Recommended workflow: list_components (search the catalogue) -> describe_component with \
+EVERY component you need in ONE call (a list of ids or aliases: ports, parameters with units \
+and limits, observables, modes, warning codes) -> load_system with the COMPLETE system \
+document in ONE call (components with parameters and inputs, connections as \
+'<instance>.<port>' pairs, where several ports on one node form a junction, and controls); \
+its `issues` are the check_system report, so fix every error there -> solve (steady \
+state), solve_for or simulate (time series with events). Edit a system with set_values, \
+add_component, connect or add_control (create_system starts an empty one; check_system \
+after edits); list_variables shows every path; get_system returns the document for a \
+later load_system.
 Values: a plain number is in the variable's declared unit (see describe_component); a \
 string may carry its own unit ('3.5 bar', '12 L/min', '55 degC'). Pressures are gauge \
 (relative to atmosphere) unless marked otherwise ('2 bar absolute' is accepted); port \
@@ -104,8 +120,8 @@ every matching path in one unit. solve_for finds the value of one input or param
 gives a target result (e.g. the pump speed for 15 m3/h). add_control adds a PI loop (e.g. \
 pump speed holding a pressure; solve then finds the steady output, simulate runs it as a \
 sampled controller) or a hysteresis switch (e.g. a tank level switch starting a pump). \
-describe_component is brief by default; detail='full' adds scenario systems, contract \
-rules and provenance.
+describe_component is brief by default; detail='full' adds scenario systems (templates), \
+contract rules and provenance.
 Systems live only as long as this server process: keep a system with get_system and \
 restore it in a new session with load_system. (Operators only: when the environment \
 variable WORLDPARTS_AUTOSAVE_DIR is set, the server also writes each changed system \
@@ -330,6 +346,19 @@ class ComponentDescription(BaseModel):
     resource_uri: str = Field(description="URI of the full manifest resource.")
 
 
+class ComponentDescriptions(BaseModel):
+    """Result of describe_component for a list of components."""
+
+    components: list[ComponentDescription] = Field(description="In the order requested.")
+
+
+class DescribeOutput(RootModel[ComponentDescription | ComponentDescriptions]):
+    """Result of describe_component: one description for one id, ``{components: [...]}``
+    for a list (so a single-id call keeps its flat shape)."""
+
+    model_config = ConfigDict(json_schema_extra={"type": "object"})
+
+
 class SystemSummary(BaseModel):
     """A system's composition."""
 
@@ -496,7 +525,7 @@ class ContractReport(BaseModel):
 
 
 class Event(BaseModel):
-    """A simulation event: set values at a time, or ramp them linearly from that time."""
+    """A timed event: set values, or ramp them linearly."""
 
     at: float | str = Field(description="Time: seconds or a string such as '60 s', '2 min'.")
     set: dict[str, Any] | None = Field(
@@ -523,7 +552,7 @@ Units = Annotated[
     dict[str, str] | None,
     Field(
         description="Unit per path, e.g. {'v.volume_flow': 'L/s', 'mains.port.p': "
-        "'bar absolute'}; a key '*.<name>' applies to every path ending in '.<name>'."
+        "'bar absolute'}; a key '*.<name>' matches every path ending in '.<name>'."
     ),
 ]
 
@@ -834,7 +863,8 @@ def _key_parameters(m: Manifest) -> list[KeyParameter]:
 def compact_schema(schema: Any, output: bool = False) -> Any:
     """A JSON schema without the noise pydantic adds, for a smaller tools/list.
 
-    Drops every ``title`` keyword (property names are kept). With ``output`` true, an
+    Drops every ``title`` keyword and every ``additionalProperties: true`` (the JSON Schema
+    default, so validation is unchanged; property names are kept). With ``output`` true, an
     optional property whose default is null and whose type is ``anyOf [X, null]`` becomes
     plain ``X``: the output models leave such fields out when they are empty (:func:`_opt`),
     so null never appears in the output. Output schemas also lose their ``description`` and
@@ -851,6 +881,8 @@ def compact_schema(schema: Any, output: bool = False) -> Any:
     required = set(schema.get("required", []))
     for key, value in schema.items():
         if key == "title" and isinstance(value, str):
+            continue
+        if key == "additionalProperties" and value is True:
             continue
         if output and key == "description" and isinstance(value, str):
             continue
@@ -883,10 +915,16 @@ def _drop_null_branch(sub: Any) -> Any:
     return {"anyOf": kept, **rest}
 
 
+def _unwrap(text: str) -> str:
+    """Dedent a docstring and join the wrapped lines of each paragraph."""
+    paragraphs = inspect.cleandoc(text).split("\n\n")
+    return "\n\n".join(" ".join(p.split()) for p in paragraphs)
+
+
 def _compact_tools(server: MCPServer) -> None:
-    """Compact every registered tool's schemas and dedent its description."""
+    """Compact every registered tool's schemas; dedent and unwrap its description."""
     for tool in server._tool_manager.list_tools():
-        tool.description = inspect.cleandoc(tool.description or "")
+        tool.description = _unwrap(tool.description or "")
         tool.parameters = compact_schema(tool.parameters)
         meta = tool.fn_metadata
         if meta.output_schema is not None:
@@ -971,7 +1009,7 @@ def create_server(
 
         Returns id, alias, name, summary, ports, key parameters (with units and defaults),
         fidelity level and tags of every matching component. Call without a query to list
-        everything, then describe_component for the details of one.
+        everything, then describe_component with all the components you need in one call.
         """
         found = cat.search(query)
         items = []
@@ -1002,28 +1040,58 @@ def create_server(
     @server.tool(annotations=read_only)
     @tool_call
     def describe_component(
-        component: Annotated[str, Field(description="Full id or short alias, e.g. 'valve'.")],
+        component: Annotated[
+            str | Annotated[list[str], Field(min_length=1, max_length=MAX_DESCRIBE)],
+            Field(
+                description=f"Id or alias, or a list of up to {MAX_DESCRIBE} to describe "
+                "in one call, e.g. ['tank', 'centrifugal_pump', 'pipe']."
+            ),
+        ],
         detail: Annotated[
             Literal["brief", "full"],
             Field(
-                description="'brief' (default): what is needed to use the part. 'full' adds "
-                "scenario systems and expectations (templates), contract rules and sweeps, "
-                "binding notes and provenance (several times larger)."
+                description="'brief': what is needed to use the part. 'full' adds scenario "
+                "systems and expectations (templates), contract rules, binding notes and "
+                "provenance (several times larger)."
             ),
         ] = "brief",
-    ) -> ComponentDescription:
-        """Describe a component type: everything needed to use it.
+    ) -> DescribeOutput:
+        """Describe component types: everything needed to use them.
 
-        Ports; parameters and inputs with units, defaults and hard limits (table columns in
-        row order); states and observables; modes (the first whose condition holds is
-        reported); warning codes; scenario and contract ids; bindings. Plain numbers you
-        pass are in these units; pressures are gauge unless stated, and quantity
-        'temperature_difference' converts by scale only. A state's `steady` is 'settle'
-        (solve sets its equilibrium) or 'hold' (solve keeps it, e.g. a tank level). A
-        warning's `source` is 'envelope' (its `condition` holds) or 'component' (raised by
-        code; `message` says when).
+        Pass every component you need as a list in one call: the result is then
+        {components: [...]} in that order (one id: one description). Each has ports;
+        parameters and inputs with units, defaults and hard limits (table columns in row
+        order); states and observables; modes (the first whose condition holds is
+        reported); warning codes; scenario and contract ids; bindings. Plain numbers are in
+        these units; pressures are gauge unless stated; quantity 'temperature_difference'
+        converts by scale only. A state's `steady` is 'settle' (solve sets its equilibrium)
+        or 'hold' (solve keeps it, e.g. a tank level). A warning's `source` is 'envelope'
+        (its `condition` holds) or 'component' (raised by code; `message` says when).
         """
-        return describe_manifest(cat.get(component), detail)
+        if isinstance(component, str):
+            try:
+                manifest = cat.get(component)
+            except UnknownComponentError as exc:
+                if "," not in component:
+                    raise
+                raise UnknownComponentError(
+                    f"{exc} To describe several components pass a list, e.g. "
+                    "['tank', 'pipe'], not one comma-separated string."
+                ) from exc
+            return DescribeOutput(describe_manifest(manifest, detail))
+        found: list[Manifest] = []
+        unknown: list[str] = []
+        for i, key in enumerate(component):
+            try:
+                found.append(cat.get(key, list_valid=False))
+            except UnknownComponentError as exc:
+                unknown.append(f"component[{i}]: {exc}")
+        if unknown:  # every unknown entry, then the valid choices once
+            valid = format_choices("", cat.choices())
+            raise UnknownComponentError(" ".join([*unknown, valid]))
+        return DescribeOutput(
+            ComponentDescriptions(components=[describe_manifest(m, detail) for m in found])
+        )
 
     @server.tool(annotations=read_only)
     @tool_call
@@ -1060,7 +1128,7 @@ def create_server(
     ) -> SystemSummary:
         """Create a new empty system and return its system_id.
 
-        Next: add_component for each part, then connect their ports.
+        For building step by step; a new system is quicker as one load_system call.
         """
         system_id = store.create(name, description)
         return _summary(system_id, store.get(system_id))
@@ -1489,10 +1557,7 @@ def create_server(
         ] = 200,
         restore: Annotated[
             bool,
-            Field(
-                description="Put parameters, inputs and states (tank levels) back afterwards, "
-                "so the next run starts from the same point."
-            ),
+            Field(description="Put parameters, inputs and states (tank levels) back afterwards."),
         ] = False,
     ) -> SimulateOutput:
         """Simulate over time with a fixed step and timed events (set or linear ramp).
@@ -1571,19 +1636,21 @@ def create_server(
                 description="A system document (object, or YAML/JSON text), e.g. "
                 "{'worldparts_system': '0.1', 'name': 'line', 'components': [{'name': "
                 "'mains', 'type': 'supply', 'parameters': {'pressure': '3 bar'}}, {'name': "
-                "'out', 'type': 'drain'}], 'connections': [['mains.port', 'out.port']]}. "
-                "Components are {name, type, parameters?, inputs?, states?}; optional "
-                "'controls' ({name, type, measure, actuate, ...settings of add_control}) "
-                "and 'simulation' {duration, step?, events?}."
+                "'v', 'type': 'valve', 'inputs': {'opening': 0.5}}, {'name': 'out', 'type': "
+                "'drain'}], 'connections': [['mains.port', 'v.port_a'], ['v.port_b', "
+                "'out.port']]}. Components are {name, type, parameters?, inputs?, states?}; "
+                "optional 'controls' ({name, type, measure, actuate, ...settings of "
+                "add_control}) and 'simulation' {duration, step?, events?}."
             ),
         ],
     ) -> LoadedSystem:
-        """Create a system from a system document and return its new system_id.
+        """Build a whole system in one call from a system document; returns its system_id.
 
-        get_system returns such a document. A document of the wrong shape fails with every
-        schema error and the expected shape of the offending part. Unknown component types,
-        ports and invalid values do not fail the load: they are kept and listed in `issues`
-        (the same codes as check_system) so you can fix them all.
+        The quickest way to create a system: every component (with parameters and inputs),
+        connection and control in one document, then solve. get_system returns such a
+        document. A wrong shape fails with every schema error and the expected shape of the
+        offending part; unknown types, ports and invalid values are kept and listed in
+        `issues` (the check_system report, no need to call it): fix every error, then solve.
         """
         doc = document
         if isinstance(doc, str):

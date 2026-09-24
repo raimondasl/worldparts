@@ -25,6 +25,7 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+import worldparts as wp  # noqa: E402
 from benchmarks.composition.harness import __main__ as cli  # noqa: E402
 from benchmarks.composition.harness import grading, regen, report, runner  # noqa: E402
 from benchmarks.composition.harness.reference import (  # noqa: E402
@@ -391,6 +392,46 @@ def test_reference_ramp_events_match_the_mcp_tool(task: Any) -> None:
         out["level"] = r.structured_content["variables"]["tank.level"]["final"]
 
     assert _mcp(calls)["level"] == pytest.approx(ref, rel=1e-5)
+
+
+def test_reference_hands_ramp_events_to_system_simulate(task: Any) -> None:
+    """The executor passes ramps to System.simulate unchanged (design 13.2). Its answers
+    equal the same ramp written out as one set event per step (what the executor used to
+    expand itself) and a direct System.simulate run."""
+    ramp = {"at": "1 min", "ramp": {"pump.speed": [1.0, 0.7]}, "over": "5 min"}
+
+    def answers(events: list[dict[str, Any]]) -> dict[str, Any]:
+        data = fixture_data()
+        data["answers"] = [
+            {"key": "level", "description": "x", "unit": "m", "abs_tol": 0.01},
+            {"key": "low", "description": "x", "unit": "m3/h", "abs_tol": 0.01},
+            {"key": "high", "description": "x", "unit": "m3/h", "abs_tol": 0.01},
+        ]
+        data["reference"]["steps"] = [
+            {"op": "simulate", "duration": "10 min", "step": "10 s", "events": events,
+             "read_final": {"level": "tank.level"}, "read_min": {"low": "pump.volume_flow"},
+             "read_max": {"high": "pump.volume_flow"}},
+        ]  # fmt: skip
+        data["reference"].pop("expected")
+        return run_reference(task_from_dict(data, FIXTURE))
+
+    # One set event at 'at' and every step after it; the last exactly at 'at' + 'over'.
+    t0, span, dt = 60.0, 300.0, 10.0
+    times = [t0 + i * dt for i in range(30)] + [t0 + span]
+    written_out = [
+        {"at": t, "set": {"pump.speed": 1.0 + (0.7 - 1.0) * min((t - t0) / span, 1.0)}}
+        for t in times
+    ]
+    got = answers([ramp])
+    assert got == answers(written_out)
+    assert got["high"] > got["low"]  # the ramp slowed the pump
+    sim = wp.System.from_dict(task.system).simulate("10 min", "10 s", [ramp])
+    assert got["level"] == sim.final["tank.level"]
+    assert got["low"] == min(v for v in sim.get("pump.volume_flow", "m3/h") if v is not None)
+    # Errors come from System.simulate and still name the step.
+    late = {**ramp, "over": "20 min"}
+    with pytest.raises(ReferenceStepError, match=r"steps\[0\] \(simulate\).*after the end"):
+        answers([late])
 
 
 def test_reference_errors_name_the_step() -> None:

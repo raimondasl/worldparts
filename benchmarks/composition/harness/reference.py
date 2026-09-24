@@ -7,10 +7,11 @@ Ops (executed in order on one :class:`worldparts.System` built from ``reference.
 - ``solve_for``: goal seek with exactly the MCP ``solve_for`` semantics (Brent's method on
   ``vary`` between ``lower`` and ``upper``; ``vary`` stays at the root); ``read`` is taken
   from the steady result at the root.
-- ``simulate``: ``duration``, ``step`` (default 1 s), ``events`` (set events, or ramp events
-  expanded as the MCP ``simulate`` tool does), ``restore`` (default false, as in MCP);
-  reads ``read_final`` / ``read_min`` / ``read_max`` (paths) and ``read_first_warning``
-  (``{warning: <instance>.<code>, unit: min}``: time of the first occurrence).
+- ``simulate``: ``duration``, ``step`` (default 1 s), ``events`` (set or ramp events, passed
+  to ``System.simulate`` unchanged, as the MCP ``simulate`` tool does), ``restore`` (default
+  false, as in MCP); reads ``read_final`` / ``read_min`` / ``read_max`` (paths) and
+  ``read_first_warning`` (``{warning: <instance>.<code>, unit: min}``: time of the first
+  occurrence).
 - ``answer``: constant ``values`` (choice and boolean answers, constants).
 
 Every read is converted to the answer's unit. Paths that are not in a solve result
@@ -19,13 +20,12 @@ Every read is converted to the answer's unit. Paths that are not in a solve resu
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 from scipy.optimize import brentq
 
 import worldparts as wp
-from worldparts.units import convert, parse_duration, parse_value
+from worldparts.units import convert, parse_value
 
 from .tasks import Task
 
@@ -101,39 +101,6 @@ def solve_for(
         raise
 
 
-def expand_events(
-    system: wp.System, events: list[dict[str, Any]] | None, duration: Any, step: Any
-) -> list[dict[str, Any]]:
-    """Set events plus ramp events expanded into one set event per step (as MCP simulate)."""
-    total = parse_duration(duration, "duration")
-    dt = parse_duration(step, "step")
-    out: list[dict[str, Any]] = []
-    for k, ev in enumerate(events or []):
-        if "set" in ev:
-            out.append({"at": ev["at"], "set": ev["set"]})
-            continue
-        t0 = parse_duration(ev["at"], f"events[{k}].at")
-        span = parse_duration(ev["over"], f"events[{k}].over")
-        if span <= 0 or dt <= 0:
-            raise ReferenceStepError(f"events[{k}].over must be positive")
-        if t0 + span > total + 1e-9 * dt:
-            raise ReferenceStepError(f"events[{k}]: the ramp ends after the simulation")
-        ends: dict[str, tuple[float, float]] = {}
-        for path, pair in ev["ramp"].items():
-            system.get(path)
-            inst, _, local = path.partition(".")
-            spec = system.manifest(inst).variable(local)
-            a = float(spec.parse(pair[0], f"events[{k}].ramp.{path}[0]"))
-            b = float(spec.parse(pair[1], f"events[{k}].ramp.{path}[1]"))
-            ends[path] = (a, b)
-        n = max(math.ceil(span / dt - 1e-9), 1)
-        for i in range(n + 1):
-            t = t0 + span if i == n else t0 + i * dt
-            frac = min((t - t0) / span, 1.0)
-            out.append({"at": t, "set": {p: a + (b - a) * frac for p, (a, b) in ends.items()}})
-    return out
-
-
 def run_reference(task: Task) -> dict[str, Any]:
     """Execute the task's reference steps; return {answer key: value in the answer unit}."""
     try:
@@ -167,12 +134,10 @@ def run_reference(task: Task) -> dict[str, Any]:
                 for key, path in (step.get("read") or {}).items():
                     out[key] = _read(system, result, path, unit_of(key))
             elif op == "simulate":
-                duration = step["duration"]
-                dt = step.get("step", "1 s")
                 sim = system.simulate(
-                    duration,
-                    dt,
-                    expand_events(system, step.get("events"), duration, dt),
+                    step["duration"],
+                    step.get("step", "1 s"),
+                    step.get("events"),
                     restore=bool(step.get("restore", False)),
                 )
                 for key, path in (step.get("read_final") or {}).items():
