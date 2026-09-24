@@ -260,7 +260,12 @@ SETTINGS = {"disableAllHooks": True}
 
 
 def claude_executable() -> str:
-    return shutil.which("claude") or "claude"
+    """The Claude Code CLI to run: $WPBENCH_CLAUDE if set, else `claude` on PATH.
+
+    Set WPBENCH_CLAUDE when the CLI on PATH is too old for the model under test (for example
+    to the newer executable bundled with the Claude desktop app).
+    """
+    return os.environ.get("WPBENCH_CLAUDE") or shutil.which("claude") or "claude"
 
 
 def build_command(

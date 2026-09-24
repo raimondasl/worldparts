@@ -857,3 +857,11 @@ def test_child_env_drops_nonblocking_mcp_and_parent_base_url(monkeypatch) -> Non
     assert "ANTHROPIC_BASE_URL" not in env
     cfg = runner.mcp_config("mcp", runner.REPO_ROOT / "tmp-systems")
     assert cfg["mcpServers"][runner.MCP_SERVER_NAME]["alwaysLoad"] is True
+
+
+def test_claude_executable_can_be_overridden(monkeypatch) -> None:
+    """WPBENCH_CLAUDE selects the CLI, e.g. a newer build than the one on PATH."""
+    from benchmarks.composition.harness import runner
+
+    monkeypatch.setenv("WPBENCH_CLAUDE", "C:/tools/claude-new.exe")
+    assert runner.claude_executable() == "C:/tools/claude-new.exe"
