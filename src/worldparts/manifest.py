@@ -2,7 +2,8 @@
 
 A manifest is a YAML file validated against ``schemas/component-manifest.schema.json`` and
 then checked semantically (unique names, defaults inside limits, table shapes, parseable
-expressions that only reference known names, declared warning codes, scenario references).
+expressions that only reference known names, declared warning codes, scenario references,
+fault modes that vary a number parameter or input within its limits).
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import math
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from functools import cache
+from functools import cache, cached_property
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,7 @@ from worldparts.units import (
 __all__ = [
     "PORT_VARIABLES",
     "ColumnSpec",
+    "FaultSpec",
     "Manifest",
     "ModeSpec",
     "PortSpec",
@@ -256,6 +258,9 @@ class VariableSpec:
         steady: For states, ``settle`` or ``hold``.
         quantity: ``temperature_difference`` for a temperature difference (e.g. a rise in K),
             which converts between units by scale only; None otherwise.
+        measurable: False for an observable that is a model quantity rather than a physical
+            state of the plant (for example a property of a fitted curve), which is never
+            proposed as a sensor.
     """
 
     name: str
@@ -272,21 +277,23 @@ class VariableSpec:
     pressure_reference: str | None = None
     steady: str | None = None
     quantity: str | None = None
+    measurable: bool = True
 
     @property
     def is_numeric(self) -> bool:
         """True for number and integer variables."""
         return self.type in ("number", "integer")
 
-    @property
+    @cached_property
     def converter(self) -> UnitConverter:
-        """Converter between the declared unit and SI (numeric variables only)."""
+        """Converter between the declared unit and SI (numeric variables only; computed
+        once, since solves convert every value)."""
         assert self.unit is not None
         return converter(self.unit, self.reference)
 
-    @property
+    @cached_property
     def reference(self) -> str | None:
-        """Effective reference used for unit conversion.
+        """Effective reference used for unit conversion (computed once).
 
         Pressures: ``gauge`` (default), ``absolute`` or ``difference``. Temperature
         differences (``quantity: temperature_difference``): ``difference``. Otherwise None.
@@ -462,6 +469,55 @@ class WarningSpec:
         return self.condition is not None
 
 
+@dataclass(frozen=True)
+class FaultSpec:
+    """A fault mode declared in a manifest (design 14.3): a failure that shows as one
+    numeric parameter or input moving within a plausible range.
+
+    Attributes:
+        name: Fault name, unique within the manifest (``worn_impeller``); a system refers
+            to it as ``<instance>.<name>``.
+        description: What the failure is and how it shows.
+        path: Local name of the number parameter or input the fault varies.
+        lower: Lower end of the range, in the variable's declared unit (a multiple of its
+            current value when ``relative``).
+        upper: Upper end of the range, likewise.
+        healthy: The value without the fault, inside ``[lower, upper]``, likewise.
+        relative: When true, ``lower``, ``upper`` and ``healthy`` are non-negative multiples
+            of the value the variable has in the system being diagnosed (for a commanded
+            input such as a valve opening, or a value that varies by installation such as a
+            pipe's roughness).
+    """
+
+    name: str
+    description: str
+    path: str
+    lower: float
+    upper: float
+    healthy: float
+    relative: bool = False
+
+    def resolve(self, current: float) -> tuple[float, float, float]:
+        """``(lower, upper, healthy)`` in the variable's unit for a variable whose value in
+        the system is ``current`` (unchanged unless the fault is relative)."""
+        if not self.relative:
+            return self.lower, self.upper, self.healthy
+        return self.lower * current, self.upper * current, self.healthy * current
+
+    def to_dict(self) -> dict[str, Any]:
+        """The manifest form ``{name, description, vary: {path, lower, upper, relative?},
+        healthy}``."""
+        vary: dict[str, Any] = {"path": self.path, "lower": self.lower, "upper": self.upper}
+        if self.relative:
+            vary["relative"] = True
+        return {
+            "name": self.name,
+            "description": self.description,
+            "vary": vary,
+            "healthy": self.healthy,
+        }
+
+
 def _cond_text(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -487,6 +543,7 @@ class Manifest:
     modes: list[ModeSpec] = field(init=False)
     envelope: list[WarningSpec] = field(init=False)
     warnings: dict[str, WarningSpec] = field(init=False)
+    faults: dict[str, FaultSpec] = field(init=False)
 
     def __post_init__(self) -> None:
         d = self.data
@@ -510,6 +567,21 @@ class Manifest:
         for w in d.get("warnings", []):
             self.warnings.setdefault(
                 w["code"], WarningSpec(w["code"], w["severity"], w["description"])
+            )
+        self.faults = {}
+        for f in d.get("faults", []):
+            vary = f["vary"]
+            self.faults.setdefault(
+                f["name"],
+                FaultSpec(
+                    f["name"],
+                    f["description"],
+                    vary["path"],
+                    float(vary["lower"]),
+                    float(vary["upper"]),
+                    float(f["healthy"]),
+                    bool(vary.get("relative", False)),
+                ),
             )
 
     # -- convenience ------------------------------------------------------------------------
@@ -782,6 +854,94 @@ class Manifest:
                         out.append(f"contract '{c['id']}' {key}: {exc}")
         if self.contracts and not has_equal:
             out.append("contracts: at least one 'equal' check (mass conservation) is required.")
+        out.extend(self._fault_problems(seen))
+        return out
+
+    def _fault_problems(self, names: Mapping[str, str]) -> list[str]:
+        """Problems of the ``faults`` list (design 14.3): unique names that do not shadow a
+        variable or port, a path that is a number parameter or input, ``lower < upper``,
+        absolute bounds within the variable's hard limits, relative bounds not negative,
+        and ``healthy`` within the bounds."""
+        out: list[str] = []
+        raw = [f["name"] for f in self.data.get("faults", [])]
+        dups = sorted({n for n in raw if raw.count(n) > 1})
+        if dups:
+            out.append(f"faults: duplicate names {dups}.")
+        numeric = [
+            n
+            for group in (self.parameters, self.inputs)
+            for n, s in group.items()
+            if s.type == "number"
+        ]
+        for f in self.faults.values():
+            label = f"fault '{f.name}'"
+            if f.name in names:
+                kind = names[f.name]
+                article = "an" if kind[0] in "aeiou" else "a"
+                out.append(
+                    f"{label}: the name is already used by {article} {kind}; a fault is "
+                    f"referred to as '<instance>.{f.name}', so give it a name of its own."
+                )
+            spec = self.parameters.get(f.path) or self.inputs.get(f.path)
+            if spec is None or spec.type != "number":
+                if spec is not None:
+                    article = "an" if spec.type[0] in "aeiou" else "a"
+                    what = f"{article} {spec.type} {spec.kind}"
+                elif f.path in self.states:
+                    what = "a state"
+                elif f.path in self.observables:
+                    what = "an observable"
+                else:
+                    what = "not a variable of this component"
+                out.append(
+                    f"{label}: vary.path '{f.path}' is {what}; a fault varies a number "
+                    "parameter or input. " + format_choices(f.path, numeric)
+                )
+                continue
+            infinite = [
+                key
+                for key, value in (
+                    ("vary.lower", f.lower),
+                    ("vary.upper", f.upper),
+                    ("healthy", f.healthy),
+                )
+                if not math.isfinite(value)
+            ]
+            if infinite:
+                what = "a finite number" if len(infinite) == 1 else "finite numbers"
+                out.append(
+                    f"{label}: {' and '.join(infinite)} must be {what}, not infinity or NaN (a "
+                    f"fault's range is fitted, so it needs finite ends within the hard limits "
+                    f"of '{f.path}', {spec.limits_text()})."
+                )
+                continue
+            if not f.lower < f.upper:
+                out.append(
+                    f"{label}: vary.lower ({f.lower:g}) must be below vary.upper ({f.upper:g})."
+                )
+                continue
+            if f.relative:
+                if f.lower < 0:
+                    out.append(
+                        f"{label}: relative bounds are non-negative multiples of the current "
+                        f"value of '{f.path}'; vary.lower is {f.lower:g}."
+                    )
+            else:
+                tol = 1e-12 * max(1.0, abs(f.lower), abs(f.upper))
+                if (spec.minimum is not None and f.lower < spec.minimum - tol) or (
+                    spec.maximum is not None and f.upper > spec.maximum + tol
+                ):
+                    out.append(
+                        f"{label}: the range [{f.lower:g}, {f.upper:g}]"
+                        f"{_unit_suffix(spec.unit, spec.reference)} must lie within the hard "
+                        f"limits of '{f.path}', {spec.limits_text()}."
+                    )
+            if not f.lower <= f.healthy <= f.upper:
+                kind = "multiple of the current value" if f.relative else "value"
+                out.append(
+                    f"{label}: healthy ({f.healthy:g}) must lie within the range "
+                    f"[{f.lower:g}, {f.upper:g}] (a {kind})."
+                )
         return out
 
 
@@ -848,6 +1008,7 @@ def _var(item: Mapping[str, Any], kind: str) -> VariableSpec:
         pressure_reference=item.get("pressure_reference"),
         steady=item.get("steady"),
         quantity=item.get("quantity"),
+        measurable=bool(item.get("measurable", True)),
     )
 
 

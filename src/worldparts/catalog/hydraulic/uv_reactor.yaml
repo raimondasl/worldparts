@@ -95,7 +95,7 @@ inputs:
 observables:
   - {name: volume_flow, unit: m3/h, description: Volume flow from inlet to outlet.}
   - {name: pressure_drop, unit: bar, pressure_reference: difference, description: Pressure at the inlet minus pressure at the outlet.}
-  - {name: residence_time, unit: s, description: Plug-flow residence time volume / |Q| (capped at 1e6 s).}
+  - {name: residence_time, unit: s, description: Plug-flow residence time volume / |Q| (capped at 1e6 s)., measurable: false}
   - {name: dose, unit: mJ/cm2, description: Average UV dose fluence_rate * lamp_output * residence_time (capped at 1e6 mJ/cm2).}
 modes:
   - {name: idle, condition: "abs(volume_flow) < 0.01", description: No significant flow.}
@@ -112,6 +112,11 @@ envelope:
     message: Water flows through the reactor with the lamp off; it is not disinfected.
 warnings:
   - {code: reverse_flow, severity: warning, description: "Water flows backwards through the reactor (volume_flow below -0.01 m3/h). underdose and lamp_off only check forward flow; the message says when the reverse-flow dose is below required_dose or the lamp is off."}
+faults:
+  - name: lamp_degraded
+    description: "The lamp delivers less UV than nominal (lamp ageing, sleeve fouling, a failing ballast): the dose falls in proportion to lamp_output; the hydraulics are unchanged."
+    vary: {path: lamp_output, lower: 0.0, upper: 1.0}
+    healthy: 1.0
 scenarios:
   - id: rated-flow
     description: |

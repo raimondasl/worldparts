@@ -146,6 +146,9 @@ class Network:
         self.nodes: list[Node] = []
         self.branches: list[Branch] = []
         self.injections: list[Injection] = []
+        # unreferenced_subnetworks() by (node count, branch count): the structure only grows
+        # by the add_* methods, and a simulation solves the same structure at every step.
+        self._unreferenced: tuple[tuple[int, int], list[list[Node]]] | None = None
 
     # -- construction -----------------------------------------------------------------------
     def add_node(self, node: Node) -> Node:
@@ -189,7 +192,14 @@ class Network:
         return list(groups.values())
 
     def unreferenced_subnetworks(self) -> list[list[Node]]:
-        """Sub-networks that contain branches but no fixed-pressure node."""
+        """Sub-networks that contain branches but no fixed-pressure node (computed once per
+        structure)."""
+        key = (len(self.nodes), len(self.branches))
+        if self._unreferenced is None or self._unreferenced[0] != key:
+            self._unreferenced = (key, self._find_unreferenced())
+        return [list(group) for group in self._unreferenced[1]]
+
+    def _find_unreferenced(self) -> list[list[Node]]:
         touched = {br.a.index for br in self.branches} | {br.b.index for br in self.branches}
         out = []
         for group in self.subnetworks():

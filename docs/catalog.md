@@ -137,6 +137,14 @@ transients and inertia, and the temperature rise of the water through the pump.
 | `motor_overload` | warning | component | Shaft power exceeds motor_power; the motor overheats and trips. |
 | `reverse_flow` | warning | component | Water flows backwards through the pump (volume_flow below -0.01 m3/h). |
 
+**Fault modes** (hypotheses for `worldparts.diagnose`)
+
+| Fault | Varies | Range | Healthy | Description |
+|---|---|---|---|---|
+| `worn_impeller` | `wear_head` | [0, 0.5] | 0 | Impeller or wear-ring wear, or a partly blocked impeller: the head falls by the same fraction at every flow and speed (wear_head), and the shaft power with it. |
+| `efficiency_loss` | `wear_efficiency` | [0, 0.5] | 0 | Mechanical or hydraulic losses (worn bearings, rubbing, internal recirculation): more shaft power for the same flow and head (wear_efficiency); the hydraulics are unchanged. |
+| `running_slow` | `speed` | 0.5 to 1 times its value | its value | The pump turns slower than commanded (belt slip, a wrong drive frequency, a motor fault): head, flow and power fall by the affinity laws. The range is 0.5 to 1 times the commanded speed. |
+
 **Tests**
 
 10 scenarios (0 simulated) and 23 contracts (1 bounds, 11 equal, 5 monotonic, 6 warning_iff), run by `worldparts check-catalog`.
@@ -431,6 +439,12 @@ flow only (design 8.10); instead, reverse flow above 0.01 m3/h raises the code-e
 | `over_rated_flow` | warning | envelope | `volume_flow > 1.25 * rated_flow`: Flow above 125 % of the rated flow; a real filter loses removal efficiency and may break through. |
 | `reverse_flow` | warning | component | Water flows backwards through the filter (volume_flow below -0.01 m3/h) and may flush retained solids to the raw-water side. change_required and over_rated_flow only check forward flow; the message says when the reverse drop or flow would exceed them. |
 
+**Fault modes** (hypotheses for `worldparts.diagnose`)
+
+| Fault | Varies | Range | Healthy | Description |
+|---|---|---|---|---|
+| `clogged` | `clogging` | [0, 0.99] | 0 | Solids load the media: its resistance rises as 1 / (1 - clogging), raising the pressure drop and cutting the flow. |
+
 **Tests**
 
 6 scenarios (0 simulated) and 9 contracts (1 bounds, 4 equal, 1 monotonic, 3 warning_iff), run by `worldparts check-catalog`.
@@ -558,6 +572,12 @@ silent.
 | `lamp_off` | warning | envelope | `lamp_output < 0.01 and volume_flow > 0.01`: Water flows through the reactor with the lamp off; it is not disinfected. |
 | `reverse_flow` | warning | component | Water flows backwards through the reactor (volume_flow below -0.01 m3/h). underdose and lamp_off only check forward flow; the message says when the reverse-flow dose is below required_dose or the lamp is off. |
 
+**Fault modes** (hypotheses for `worldparts.diagnose`)
+
+| Fault | Varies | Range | Healthy | Description |
+|---|---|---|---|---|
+| `lamp_degraded` | `lamp_output` | [0, 1] | 1 | The lamp delivers less UV than nominal (lamp ageing, sleeve fouling, a failing ballast): the dose falls in proportion to lamp_output; the hydraulics are unchanged. |
+
 **Tests**
 
 8 scenarios (1 simulated) and 10 contracts (4 equal, 1 monotonic, 5 warning_iff), run by `worldparts check-catalog`.
@@ -667,6 +687,12 @@ laminar-turbulent transition (the Churchill correlation gives one smooth curve t
 | `high_velocity` | warning | envelope | `abs(velocity) > 3`: Velocity above 3 m/s; expect noise, erosion and water hammer risk in a real installation (typical design limit 1.5 to 3 m/s). |
 | `high_relative_roughness` | warning | envelope | `roughness / diameter > 0.05`: Relative roughness above 0.05 is outside the range the Churchill (1977) friction factor was fitted to; the friction is extrapolated. |
 | `below_vapour_pressure` | warning | component | The pressure at a pipe end is below the vapour pressure of water (static head in a riser or siphon, or pump suction). A real pipe would cavitate or its water column would separate, so the result is not physical. |
+
+**Fault modes** (hypotheses for `worldparts.diagnose`)
+
+| Fault | Varies | Range | Healthy | Description |
+|---|---|---|---|---|
+| `scaled` | `roughness` | 1 to 20 times its value | its value | Scale, corrosion or biofilm roughens the wall: the roughness rises up to 20 times its value, raising the friction loss (the narrowing of the bore by the deposit is not modelled). |
 
 **Tests**
 
@@ -779,6 +805,12 @@ itself produces, hysteresis, dead band and actuator force limits.
 | Code | Severity | Source | Condition or description |
 |---|---|---|---|
 | `high_pressure_drop` | warning | envelope | `pressure_drop > 3`: Pressure drop above 3 bar; cavitation and noise are likely in a real valve and the Kv law may overpredict flow (choked flow is not modelled). |
+
+**Fault modes** (hypotheses for `worldparts.diagnose`)
+
+| Fault | Varies | Range | Healthy | Description |
+|---|---|---|---|---|
+| `partly_closed` | `opening` | 0 to 1 times its value | its value | The valve is less open than commanded (a sticking actuator, a wrong manual setting, debris in the seat): the opening is 0 to 1 times the commanded opening. |
 
 **Tests**
 

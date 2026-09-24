@@ -81,7 +81,7 @@ states:
 observables:
   - {name: volume_flow, unit: L/min, description: Volume flow from port_a to port_b.}
   - {name: pressure_drop, unit: bar, pressure_reference: difference, description: Pressure at port_a minus pressure at port_b.}
-  - {name: effective_kv, unit: m3/h, description: Kv at the current position (kv times the characteristic).}
+  - {name: effective_kv, unit: m3/h, description: Kv at the current position (kv times the characteristic)., measurable: false}
 modes:
   - {name: closed, condition: "position <= 0.001", description: Valve closed; only seat leakage passes.}
   - {name: throttling, condition: "position < 0.999", description: Partly open.}
@@ -91,6 +91,11 @@ envelope:
     severity: warning
     condition: "pressure_drop > 3"
     message: Pressure drop above 3 bar; cavitation and noise are likely in a real valve and the Kv law may overpredict flow (choked flow is not modelled).
+faults:
+  - name: partly_closed
+    description: "The valve is less open than commanded (a sticking actuator, a wrong manual setting, debris in the seat): the opening is 0 to 1 times the commanded opening."
+    vary: {path: opening, lower: 0.0, upper: 1.0, relative: true}
+    healthy: 1.0
 scenarios:
   - id: kv-at-1-bar
     description: Fully open linear valve between 1 bar gauge and atmosphere; the flow reproduces the Kv definition.

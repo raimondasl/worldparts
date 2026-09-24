@@ -8,9 +8,78 @@ interfaces. Each such change is listed here and in [docs/design.md](docs/design.
 ## [Unreleased]
 
 Milestone v0.3, part 1 (design section 13): control loops, ramp events in documents, pump
-wear, a leak component and top-fed tanks.
+wear, a leak component and top-fed tanks. Part 2 (design section 14) has begun with
+measurements, calibration, identifiability and fault diagnosis.
 
 ### Added
+
+- **Measurement sets** (design 14.1, `worldparts.measurements`). Operating points with
+  optional settings, an optional time and measured values with units and uncertainties;
+  `wp.load_measurements` reads YAML, JSON or a long-format CSV (`point, time, path, value,
+  unit, sigma`, optional `kind`), `wp.MeasurementSet.from_dict` plain data. Values convert
+  to each variable's unit and pressure reference; sigmas convert by scale only. Without a
+  sigma, `wp.default_sigma` gives 1 % of the value floored per kind of quantity (0.01 bar,
+  0.05 m3/h, 0.1 K, 0.01 kW, 0.01 m and so on for every unit dimension in the catalogue).
+  Every problem is listed in one `MeasurementError` (code `invalid_measurements`),
+  including settings of an input a control writes, keys given twice, non-finite times and
+  implausibly small sigmas.
+- **Calibration** (design 14.2): `wp.calibrate(system, measurements, parameters, *,
+  method="trf", apply=False, step=None)` fits parameters or inputs within bounds with
+  `scipy.optimize.least_squares` on uncertainty-weighted residuals: steady points apply
+  their settings and solve, timed points run one simulation with the settings as events.
+  `CalibrationResult` reports each fitted value with its standard error (`s**2 (J^T J)^-1`,
+  `s**2` the reduced chi-square when above 1), a verdict (`identifiable`, `weak`,
+  `not_identifiable`) and an at-bound flag, the correlation matrix, singular values,
+  condition number and null directions of the range-scaled Jacobian, per-path residuals and
+  RMS, the reduced chi-square and its p-value, model failures during the fit and notes. The
+  system is restored unless `apply=True`. `CalibrationError` (code `calibration_failed`).
+  Timed points are predicted by Richardson extrapolation to zero step, with a step chosen
+  and checked for accuracy (`step`, `step_extrapolated`, `step_change` in the result), so
+  the explicit-Euler error of a coarse step does not bias the estimates. Finite-difference
+  steps and the start margin follow each parameter's own scale, so plain paths with wide
+  hard limits fit exactly as tight bounds do; null directions are judged per direction
+  against the Jacobian's own error bound and an absolute floor; `at_bound` flags only a
+  value the data push onto a bound, with how far in standard errors; a fit that ends worse
+  than its start reports `success` False.
+- **Identifiability** (design 14.2): `wp.identifiability(system, sensors, parameters,
+  points=None, *, candidates=None)` says before any data exists which parameters the
+  sensors can determine with default uncertainties, and which candidate sensor most
+  improves the worst-determined one (`SensorCandidate` gives `sensor_unit` and
+  `parameter_unit`, the unit of its standard error).
+- **Example** `examples/calibrate_pump_wear.py` with `examples/pump_wear_readings.yaml`:
+  identifiability, calibration of pump wear to a field survey, and the energy cost of wear.
+- **Fault modes in manifests** (design 14.3): an optional `faults` list, `{name,
+  description, vary: {path, lower, upper, relative?}, healthy}`, validated by the schema
+  and the loader (a number parameter or input, bounds within its limits, `healthy` within
+  the bounds; `relative: true` gives bounds as multiples of the value in the system being
+  diagnosed). The catalogue declares pump `worn_impeller`, `efficiency_loss` and
+  `running_slow`, filter `clogged`, valve `partly_closed`, UV reactor `lamp_degraded` and
+  pipe `scaled` (roughness up to 20 times its value); docs/catalog.md lists them.
+- **Fault diagnosis** (design 14.3): `wp.diagnose(system, measurements, hypotheses=None, *,
+  max_faults=1, include_leaks=False, step=None)` scores the system as given and each fault
+  hypothesis (default: every fault mode; `leak_at:<port>` adds a leak at a junction, every
+  junction with `include_leaks=True`; `max_faults=2` tries pairs) by fitting it with
+  `calibrate` and ranking by AIC on the weighted residuals. `DiagnosisResult` gives a
+  one-word `conclusion` (`fault`, `no_fault`, `ambiguous`, `weak_evidence`,
+  `unexplained`, `untested`), each hypothesis's fitted magnitude with its standard error,
+  at-bound flag and residuals, Akaike weights, the measurements that discriminate the best
+  from the runner-up, the unmeasured variables that separate the plausible hypotheses of an
+  ambiguous diagnosis, the faults the measurements cannot see (`undetectable`, each with a
+  sensor that would), a false-alarm bound for a detected fault, and notes. A hypothesis
+  that only adds a fault to a better or equal one is not counted as a separate explanation
+  (Arnold 2010), so a fault fitted to noise does not make every diagnosis ambiguous. Every
+  fault of a combination must beat the combination without it (`false_alarm_against`
+  names the weakest); a fault is fitted only on its side of the system as given, so a
+  repaired pump is not "diagnosed" as worn. Nothing is applied to the system. About 0.2 s
+  for a nine-component treatment skid with its nine fault modes.
+- Observables may be marked `measurable: false` (model quantities such as the pump's
+  `bep_flow`, `npsh_required` and `curve_fit_rms`, the pipe's `reynolds` and
+  `friction_factor`, the valve's `effective_kv`, the filter's `dp_ratio` and the UV
+  reactor's `residence_time`), which are not proposed as sensors by `identifiability` or
+  `diagnose`.
+- Calibration's solves and simulations collect only the measured paths (about twice as fast
+  for diagnosis); a fit whose end point is worse than its start only by round-off is no
+  longer reported as a failure.
 
 - **Control loops** (design 13.1, `worldparts.controls`). A system may carry `controls`: a
   `pi` loop or a `hysteresis` switch that reads one reported numeric variable and writes

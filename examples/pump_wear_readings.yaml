@@ -1,0 +1,35 @@
+# Field readings on the rooftop lift's pump (pump_lift.yaml) after some years in service, at
+# four positions of the discharge valve. A measurement set (docs/design.md, section 14.1):
+# each point applies its settings to the system, which is then solved and compared with the
+# measured values. sigma is the standard uncertainty of each instrument: a pressure gauge on
+# the pump outlet (0.02 bar), a clamp-on flow meter (0.2 m3/h) and the drive's shaft power
+# estimate (0.03 kW).
+#
+# The readings are synthetic, made with worldparts itself: the lift with 10 % head wear and
+# 12 % efficiency wear, plus random instrument errors, rounded as a gauge would be read.
+name: rooftop lift pump survey
+points:
+  - name: valve open
+    settings: {valve.opening: 1.0}
+    measured:
+      pump.volume_flow: {value: 16.71 m3/h, sigma: 0.2 m3/h}
+      pump.outlet.p: {value: 3.32 bar, sigma: 0.02 bar}
+      pump.shaft_power: {value: 2.55 kW, sigma: 0.03 kW}
+  - name: valve 15 %
+    settings: {valve.opening: 0.15}
+    measured:
+      pump.volume_flow: {value: 14.74 m3/h, sigma: 0.2 m3/h}
+      pump.outlet.p: {value: 3.52 bar, sigma: 0.02 bar}
+      pump.shaft_power: {value: 2.43 kW, sigma: 0.03 kW}
+  - name: valve 10 %
+    settings: {valve.opening: 0.10}
+    measured:
+      pump.volume_flow: {value: 12.44 m3/h, sigma: 0.2 m3/h}
+      pump.outlet.p: {value: 3.64 bar, sigma: 0.02 bar}
+      pump.shaft_power: {value: 2.28 kW, sigma: 0.03 kW}
+  - name: valve 7 %
+    settings: {valve.opening: 0.07}
+    measured:
+      pump.volume_flow: {value: 10.26 m3/h, sigma: 0.2 m3/h}
+      pump.outlet.p: {value: 3.78 bar, sigma: 0.02 bar}
+      pump.shaft_power: {value: 2.13 kW, sigma: 0.03 kW}

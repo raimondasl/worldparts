@@ -138,10 +138,10 @@ observables:
   - {name: efficiency, unit: "%", description: "Hydraulic over shaft power; 0 when flow, head or power is not positive."}
   - {name: specific_energy, unit: kWh/m3, description: "Shaft energy per pumped volume, shaft_power / volume_flow (= rho g H / efficiency), before motor and drive losses. None unless the flow is above 0.01 m3/h."}
   - {name: npsh_available, unit: m, description: "NPSH available, (p_inlet_abs - p_vapour(T_inlet)) / (rho g). Port pressures neglect velocity head (as in EPANET), so this is already the suction energy balance: do not add v^2/2g."}
-  - {name: npsh_required, unit: m, description: NPSH required from the fitted curve at the current flow and speed (not below 0).}
+  - {name: npsh_required, unit: m, description: NPSH required from the fitted curve at the current flow and speed (not below 0)., measurable: false}
   - {name: speed_rpm, unit: rpm, description: Rotational speed.}
-  - {name: bep_flow, unit: m3/h, description: Best-efficiency flow (new pump) at the current speed.}
-  - {name: curve_fit_rms, unit: m, description: RMS residual of the head-curve fit over the tabulated points.}
+  - {name: bep_flow, unit: m3/h, description: Best-efficiency flow (new pump) at the current speed., measurable: false}
+  - {name: curve_fit_rms, unit: m, description: RMS residual of the head-curve fit over the tabulated points., measurable: false}
 modes:
   - {name: "off", condition: "speed <= 0.01", description: The pump is stopped; it acts as a resistance.}
   - {name: reverse_flow, condition: "volume_flow < -0.01", description: Water flows backwards through the running pump.}
@@ -155,6 +155,19 @@ warnings:
   - {code: outside_preferred_region, severity: info, description: "Running (speed above 0.01), neither low_flow nor beyond_curve, and the flow is outside preferred_min_fraction to preferred_max_fraction of the best-efficiency flow (the preferred operating region); fine briefly, but not for continuous duty."}
   - {code: motor_overload, severity: warning, description: Shaft power exceeds motor_power; the motor overheats and trips.}
   - {code: reverse_flow, severity: warning, description: Water flows backwards through the pump (volume_flow below -0.01 m3/h).}
+faults:
+  - name: worn_impeller
+    description: "Impeller or wear-ring wear, or a partly blocked impeller: the head falls by the same fraction at every flow and speed (wear_head), and the shaft power with it."
+    vary: {path: wear_head, lower: 0.0, upper: 0.5}
+    healthy: 0.0
+  - name: efficiency_loss
+    description: "Mechanical or hydraulic losses (worn bearings, rubbing, internal recirculation): more shaft power for the same flow and head (wear_efficiency); the hydraulics are unchanged."
+    vary: {path: wear_efficiency, lower: 0.0, upper: 0.5}
+    healthy: 0.0
+  - name: running_slow
+    description: "The pump turns slower than commanded (belt slip, a wrong drive frequency, a motor fault): head, flow and power fall by the affinity laws. The range is 0.5 to 1 times the commanded speed."
+    vary: {path: speed, lower: 0.5, upper: 1.0, relative: true}
+    healthy: 1.0
 scenarios:
   - id: operating-point
     description: >-

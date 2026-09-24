@@ -32,7 +32,7 @@ DOCUMENTS = [
     "domestic_hot_water.yaml",
     "booster_station.yaml",
 ]
-SCRIPTS = ["purification_skid.py", "pump_lift.py"]
+SCRIPTS = ["purification_skid.py", "pump_lift.py", "calibrate_pump_wear.py"]
 MAX_LINES = 60
 RHO, G, CP = 998.2, 9.80665, 4182.0
 #: check() issues each document is expected to have: the lift's tanks are capped on purpose.
@@ -67,6 +67,12 @@ def skid_run() -> tuple[dict[str, Any], list[str]]:
 def lift_run() -> tuple[dict[str, Any], list[str]]:
     """Results and printed lines of examples/pump_lift.py."""
     return _run("pump_lift.py")
+
+
+@pytest.fixture(scope="module")
+def wear_run() -> tuple[dict[str, Any], list[str]]:
+    """Results and printed lines of examples/calibrate_pump_wear.py."""
+    return _run("calibrate_pump_wear.py")
 
 
 def _run(name: str) -> tuple[dict[str, Any], list[str]]:
@@ -254,6 +260,68 @@ def test_lift_drain_down(lift_run: tuple[dict[str, Any], list[str]]) -> None:
     sim = results["sim"]
     moved = math.pi * 2.5**2 / 4 * (sim.final["roof.level"] - 0.3)
     assert moved == pytest.approx(volume, rel=2e-3)  # the water ends up on the roof
+
+
+# ----------------------------------------------------------------------------------------
+# pump wear calibration (design 14.1 and 14.2)
+# ----------------------------------------------------------------------------------------
+#: The wear the survey readings were made with (examples/pump_wear_readings.yaml).
+WEAR_TRUTH = {"pump.wear_head": 0.10, "pump.wear_efficiency": 0.12}
+
+
+def test_wear_readings_are_a_valid_measurement_set() -> None:
+    survey = wp.load_measurements(EXAMPLES / "pump_wear_readings.yaml")
+    assert len(survey) == 4 and survey.n_values == 12
+    resolved = survey.resolve(load_system("pump_lift.yaml"))
+    assert {v.sigma for v in resolved.values} == {0.2, 0.02, 0.03}
+    assert not any(v.sigma_default for v in resolved.values)
+
+
+def test_wear_plan_needs_a_power_reading(wear_run: tuple[dict[str, Any], list[str]]) -> None:
+    """Pressure and flow determine head wear only; the recommended extra sensor is one
+    that sees the shaft power."""
+    results, lines = wear_run
+    assert len(lines) <= MAX_LINES
+    plan = results["plan"]
+    assert plan.parameters["pump.wear_head"].verdict == "identifiable"
+    assert plan.parameters["pump.wear_efficiency"].verdict == "not_identifiable"
+    rec = plan.recommendation
+    assert rec is not None and rec.parameter == "pump.wear_efficiency"
+    assert rec.sensor in ("pump.efficiency", "pump.shaft_power", "pump.specific_energy")
+    assert rec.verdict == "identifiable"
+
+
+def test_wear_fit_recovers_the_survey_wear(wear_run: tuple[dict[str, Any], list[str]]) -> None:
+    """The fit finds the wear the readings were made with, within two standard errors,
+    and the misfit is what the instrument uncertainties explain."""
+    fit = wear_run[0]["fit"]
+    for path, truth in WEAR_TRUTH.items():
+        est = fit.parameters[path]
+        assert est.verdict == "identifiable"
+        assert abs(est.value - truth) < 2 * est.standard_error
+        assert est.standard_error < 0.01
+    assert fit.dof == 10 and 0.3 < fit.reduced_chi_square < 2.0
+    # Without the power readings efficiency wear has no estimate, and says so.
+    partial = wear_run[0]["partial"]
+    assert partial.parameters["pump.wear_efficiency"].verdict == "not_identifiable"
+    assert partial.parameters["pump.wear_efficiency"].standard_error is None
+    assert partial.parameters["pump.wear_efficiency"].value == 0.0  # left at the start
+    # ... which is not a fit pushed onto the lower bound (review finding).
+    assert partial.parameters["pump.wear_efficiency"].at_bound is None
+    assert not any("bound" in note for note in partial.notes)
+    assert partial["pump.wear_head"] == pytest.approx(fit["pump.wear_head"], abs=0.005)
+
+
+def test_wear_costs_flow_and_energy(wear_run: tuple[dict[str, Any], list[str]]) -> None:
+    """The worn pump: head (1 - w_h) H_new, efficiency (1 - w_e) at the same flow (design
+    13.3); on the lift's system curve it delivers less water at more energy per m3."""
+    results, lines = wear_run
+    new, worn, fit = results["new"], results["worn"], results["fit"]
+    assert new["pump.volume_flow"] == pytest.approx(18.65, abs=0.05)  # the lift example
+    assert worn["pump.volume_flow"] < new["pump.volume_flow"]
+    assert worn["pump.specific_energy"] > new["pump.specific_energy"]
+    assert worn["pump.wear_head"] == pytest.approx(fit["pump.wear_head"], rel=1e-12)
+    assert any("more energy per m3" in line for line in lines)
 
 
 # ----------------------------------------------------------------------------------------
