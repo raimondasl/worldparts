@@ -383,7 +383,7 @@ def test_unsupported_components_raise(component: str) -> None:
     text = str(info.value)
     for alias in ("supply", "pipe", "valve", "centrifugal_pump", "tank", "uv_reactor"):
         assert alias in text
-    assert len(SUPPORTED_COMPONENTS) == 9
+    assert len(SUPPORTED_COMPONENTS) == 10
 
 
 def test_system_errors_and_unknown_simulator() -> None:
@@ -513,3 +513,192 @@ def test_friction_regimes(
     s.connect("p.port_b", "o.port")
     rel = compare_with_wntr(s).link("p").rel_diff
     assert rel is not None and low <= rel < high
+
+
+# ----------------------------------------------------------------------------------------
+# v0.3 part 1: leak (emitter), pump wear, top-fed tank (design 13.3 to 13.5)
+# ----------------------------------------------------------------------------------------
+def leak_line(pressure: str = "3 bar", diameter: float = 5.0, pipes: bool = True) -> wp.System:
+    """Case 5: supply -> [pipe] -> junction with a leak -> [pipe] -> valve (Kv 3) -> drain."""
+    s = wp.System("leak_line")
+    s.add("mains", "supply", pressure=pressure)
+    s.add("lk", "leak", diameter=diameter)
+    s.add("v", "valve", kv=3)
+    s.add("out", "drain")
+    if pipes:
+        s.add("p1", "pipe", length=50, diameter="32 mm", roughness="0.05 mm")
+        s.add("p2", "pipe", length=50, diameter="32 mm", roughness="0.05 mm")
+        s.connect("mains.port", "p1.port_a")
+        s.connect("p1.port_b", "lk.port")
+        s.connect("p1.port_b", "p2.port_a")
+        s.connect("p2.port_b", "v.port_a")
+    else:
+        s.add("v0", "valve", kv=5)
+        s.connect("mains.port", "v0.port_a")
+        s.connect("v0.port_b", "lk.port")
+        s.connect("v0.port_b", "v.port_a")
+    s.connect("v.port_b", "out.port")
+    return s
+
+
+def test_leak_emitter_coefficient_units(tmp_path: Path) -> None:
+    """Q = Cd A sqrt(2 dp / rho) = Cd A sqrt(2 g) sqrt(h) with h = dp / (rho g) the pressure
+    head, so an EPANET emitter Q = C h**0.5 with C = Cd A sqrt(2 g) reproduces it. WNTR keeps
+    emitter coefficients in SI, m3/s per m**0.5 (wntr.epanet.util.HydParam.EmitterCoeff
+    divides by the flow-unit factor only, adding sqrt(psi) conversions for US units), and
+    writes them to a CMH .inp times 3600. For the 5 mm, Cd 0.6 leak:
+    C = 0.6 * 1.9634954e-5 * sqrt(2 * 9.80665) = 5.2174281e-5 m3/s/m**0.5 = 0.18782741
+    m3/h/m**0.5."""
+    s = leak_line()
+    tr = translate(s)
+    em = tr.emitters["lk"]
+    c_hand = 0.6 * math.pi * 0.005**2 / 4 * math.sqrt(2 * G)
+    assert em.coefficient == pytest.approx(c_hand, rel=1e-12)
+    assert em.coefficient == pytest.approx(5.2174281e-5, rel=1e-7)
+    junction = tr.node_of_port("lk.port")
+    assert junction is not None and em.junction == junction.name
+    assert tr.model.get_node(em.junction).emitter_coefficient == pytest.approx(c_hand, rel=1e-12)
+    assert tr.model.options.hydraulic.emitter_exponent == 0.5
+    target = tmp_path / "leak.inp"
+    text = export_inp(s, target)
+    section = text[text.index("[EMITTERS]") :].splitlines()
+    row = next(line.split() for line in section[1:] if line and not line.startswith(";"))
+    assert row[0] == em.junction and float(row[1]) == pytest.approx(c_hand * 3600, rel=1e-9)
+    back = wntr.network.WaterNetworkModel(str(target))
+    assert back.get_node(em.junction).emitter_coefficient == pytest.approx(c_hand, rel=1e-9)
+    # A closed leak keeps 1e-6 of its area in worldparts, and so does the emitter.
+    s.set("lk.opening", 0.0)
+    assert translate(s).emitters["lk"].coefficient == pytest.approx(c_hand * 1e-6, rel=1e-9)
+
+
+@pytest.mark.parametrize(
+    ("pressure", "diameter", "pipes", "tolerance"),
+    [
+        # Valves only: the emitter is the orifice equation exactly. Measured 3.4e-7.
+        ("3 bar", 5.0, False, 1e-5),
+        # Backflow at -0.3 bar: EPANET 2.2 emitters take water in too. Measured 3.6e-7.
+        ("-0.3 bar", 5.0, False, 1e-5),
+        # Pipes around the leak: measured 0.008 % (5 mm, leak flow 0.93 m3/h) and 0.025 %
+        # (20 mm, 7.96 m3/h), the pipes' friction factor as in case 1.
+        ("3 bar", 5.0, True, 5e-3),
+        ("3 bar", 20.0, True, 5e-3),
+    ],
+)
+def test_case5_leak_cross_validation(
+    pressure: str, diameter: float, pipes: bool, tolerance: float
+) -> None:
+    """The leak's flow and the pressures around it agree with EPANET within 0.5 % (the
+    requirement), in practice far closer."""
+    s = leak_line(pressure, diameter, pipes)
+    report = compare_with_wntr(s)
+    assert_consistent(report, s)
+    leak = report.link("lk.volume_flow")
+    assert leak.kind == "emitter"
+    assert leak.rel_diff is not None and leak.rel_diff < tolerance
+    assert report.max_flow_rel_diff < tolerance
+    assert report.max_pressure_abs_diff < 2e-3
+    if pressure.startswith("-"):
+        assert leak.worldparts < 0 and leak.wntr_value < 0  # backflow in both
+    # Mass balance in EPANET: the supply feeds the leak and the drain.
+    flows = {c.path: c.wntr_value for c in report.links}
+    assert flows["mains.volume_flow"] == pytest.approx(
+        flows["out.volume_flow"] + flows["lk.volume_flow"], rel=1e-5, abs=1e-6
+    )
+
+
+def test_two_leaks_at_one_junction_share_the_emitter() -> None:
+    """EPANET has one emitter per junction: two leaks at one node add their coefficients,
+    and each leak's flow is its coefficient's share of the node's emitter flow (exact, as
+    both see the same pressure)."""
+    s = leak_line(pipes=False)
+    s.add("lk2", "leak", diameter=10, discharge_coefficient=0.8)
+    s.connect("lk.port", "lk2.port")
+    tr = translate(s)
+    c1, c2 = tr.emitters["lk"].coefficient, tr.emitters["lk2"].coefficient
+    assert c2 / c1 == pytest.approx(4 * 0.8 / 0.6, rel=1e-12)
+    junction = tr.model.get_node(tr.emitters["lk"].junction)
+    assert junction.emitter_coefficient == pytest.approx(c1 + c2, rel=1e-12)
+    report = compare_with_wntr(s)
+    assert report.link("lk.volume_flow").rel_diff < 1e-5  # type: ignore[operator]
+    assert report.link("lk2.volume_flow").rel_diff < 1e-5  # type: ignore[operator]
+
+
+def test_unconnected_leak_is_left_out() -> None:
+    s = line_system()
+    s.add("lk", "leak")
+    tr = translate(s)
+    assert tr.emitters == {}
+    assert sorted(tr.model.junction_name_list) == ["J1", "J2", "J3"]
+    assert compare_with_wntr(s).max_flow_rel_diff < 5e-4
+
+
+def test_worn_pump_exports_the_scaled_head_curve() -> None:
+    """wear_head scales the head law, H = (1 - w)(a + b Q + c Q**2), and the export scales
+    the curve the same way (still exact as a three-point power curve for b = 0). Measured
+    against EPANET: 0.0086 % (w 0.2, 35.75 m3/h) and 0.011 % (w 0.3 at speed 0.9); the
+    multi-point curve of a b < 0 pump at w 0.2: 0.004 %."""
+    new = translate(lift_system())
+    worn_system = lift_system()
+    worn_system.set_values({"pump.wear_head": 0.2, "pump.wear_efficiency": 0.1})
+    worn = translate(worn_system)
+    for (q0, h0), (q1, h1) in zip(new.pumps["pump"].points, worn.pumps["pump"].points, strict=True):
+        assert q1 == q0 and h1 == pytest.approx(0.8 * h0, rel=1e-12)
+    assert worn.pumps["pump"].wear_head == 0.2
+    assert worn.pumps["pump"].form == "three_point"
+    assert any("wear_efficiency" in a and "not compared" in a for a in worn.approximations)
+    report = compare_with_wntr(worn_system)
+    assert report.link("pump").worldparts == pytest.approx(35.75, abs=0.01)
+    assert report.max_flow_rel_diff < 5e-4
+    assert report.max_pressure_abs_diff < 2e-3
+    curve = [[0, 40], [10, 36], [20, 30], [30, 22], [36, 16]]
+    for speed, wear in ((0.9, 0.3), (1.0, 0.2)):
+        s = lift_system(speed, curve if wear == 0.2 else None)
+        s.set("pump.wear_head", wear)
+        report = compare_with_wntr(s)
+        assert report.max_flow_rel_diff < 5e-4
+        assert report.max_pressure_abs_diff < 2e-3
+
+
+def top_fed_system(level: float, inlet_height: float = 2.5) -> wp.System:
+    """Case 6: 0.5 bar supply -> Kv 2.5 -> tank inlet (top-fed) ; outlet -> Kv 1 -> drain."""
+    s = wp.System("top_fed")
+    s.add("src", "supply", pressure="0.5 bar")
+    s.add("v", "valve", kv=2.5)
+    s.add("t", "tank", initial_level=level, inlet_height=inlet_height)
+    s.add("vo", "valve", kv=1.0)
+    s.add("out", "drain")
+    s.connect("src.port", "v.port_a")
+    s.connect("v.port_b", "t.inlet")
+    s.connect("t.outlet", "vo.port_a")
+    s.connect("vo.port_b", "out.port")
+    return s
+
+
+@pytest.mark.parametrize("level", [2.5, 2.8])
+def test_case6_submerged_top_inlet_is_exact(level: float) -> None:
+    """With the mouth under water the bottom-fed export is the same model: measured 6e-6."""
+    report = compare_with_wntr(top_fed_system(level))
+    assert report.max_flow_rel_diff < 1e-5
+    assert report.max_pressure_abs_diff < 1e-5
+    assert any("submerged" in a for a in report.approximations)
+
+
+def test_case6_dry_top_inlet_is_an_approximation() -> None:
+    """Mouth 1.5 m above the water: EPANET's bottom inlet feels the 1 m level instead of the
+    2.5 m mouth, so it takes more water: 1.586608 m3/h (0.5 bar less rho g 1 m through
+    Kv_eff 2.4998047) against worldparts' 1.264158 m3/h, 25.5 % more. The export lists it."""
+    s = top_fed_system(1.0)
+    tr = translate(s)
+    assert any(
+        "top inlet at 2.5 m" in a and "1.5 m above the water" in a for a in tr.approximations
+    )
+    report = compare_with_wntr(s)
+    inlet = report.link("t.inlet.m_flow")
+    kv_eff = 1 / math.sqrt(1 / 2.5**2 + 1 / 200**2)
+    assert inlet.worldparts == pytest.approx(
+        kv_eff * math.sqrt((0.5 - RHO * G * 2.5 / 1e5) * 1000 / RHO), rel=1e-6
+    )
+    assert inlet.wntr_value == pytest.approx(
+        kv_eff * math.sqrt((0.5 - RHO * G * 1.0 / 1e5) * 1000 / RHO), rel=1e-5
+    )
+    assert 0.2 < inlet.rel_diff < 0.3  # type: ignore[operator]

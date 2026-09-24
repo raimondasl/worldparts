@@ -1,0 +1,269 @@
+manifest_version: "0.1"
+id: worldparts.hydraulic.leak
+version: "0.1.0"
+name: Leak
+summary: Orifice discharging to atmosphere from one port, for burst or background leakage and leak diagnosis; flow grows with the square root of the gauge pressure.
+description: |
+  A leak modelled as a sharp-edged orifice between its `port` and the atmosphere: a burst
+  pipe, a failed joint or background leakage, and the unknown in a leak-diagnosis task. The
+  discharge follows the orifice equation
+
+  `Q = Cd * A * opening * sqrt(2 * dp / rho)`, with `A = pi * diameter**2 / 4`
+
+  and `dp` the gauge pressure at the port, so the leak flow grows with the square root of
+  the pressure (the fixed-area case of the FAVAD pressure-leakage relationship, leakage
+  exponent 0.5, as in an EPANET emitter). `diameter` is the equivalent orifice diameter
+  (the diameter of a round hole with the same area) and `discharge_coefficient` is about
+  0.6 for a sharp-edged hole. The `opening` input scales the orifice area, so a leak can
+  appear, grow or be repaired during a simulation (an event from 0 to 1 is a burst).
+
+  The law is the quadratic resistance of the other catalogue elements with the mass-flow
+  coefficient `k = Cd * A * opening * sqrt(2 * rho)`, regularised at zero flow (exactly the
+  orifice equation above 0.2 % of the flow at 1 bar, about 0.4 Pa). A closed leak
+  (`opening` 0) keeps 1e-6 of its area so the network stays well posed, like a closed
+  valve's leakage.
+
+  When the port is below atmospheric pressure (a leak on the suction side of a pump or on
+  a main under vacuum) the same orifice draws water back into the network: `volume_flow`
+  is then negative and the `backflow` warning flags the ingress of air or contaminated
+  groundwater. The model draws water at 20 degC, since it has no air phase.
+
+  Not modelled: pressure-dependent leak area (cracks that open with pressure, FAVAD
+  exponents above 0.5), soil resistance around a buried leak, air ingress as a gas, jet
+  momentum and the elevation of the hole above the port (the hole is at the port's datum).
+tags: [leak, orifice, burst, emitter, diagnosis, water-loss]
+classification:
+  other: {role: orifice discharge to atmosphere (leakage)}
+fidelity:
+  level: lumped_quasi_steady
+  assumptions:
+    - Incompressible water with constant properties (998.2 kg/m3, 1.002e-3 Pa s, 4182 J/(kg K)).
+    - Fixed-area sharp-edged orifice with a constant discharge coefficient; the flow follows the square root of the gauge pressure at the port (leakage exponent 0.5).
+    - The hole discharges to atmospheric pressure (101325 Pa) at the port's datum.
+    - The law is regularised at zero flow (exact above about 0.4 Pa); a closed leak keeps 1e-6 of its area.
+    - Backflow through the orifice is water at 20 degC (no air phase).
+ports:
+  - {name: port, type: fluid, medium: water, description: The point of the network where the water escapes (a pipe end or a junction).}
+parameters:
+  - name: diameter
+    description: Equivalent orifice diameter (the diameter of a round hole with the leak's area).
+    type: number
+    unit: mm
+    default: 5
+    minimum: 0.1
+    maximum: 1000
+  - name: discharge_coefficient
+    description: Orifice discharge coefficient Cd (about 0.6 for a sharp-edged hole, up to 1 for a rounded one).
+    type: number
+    unit: "1"
+    default: 0.6
+    minimum: 0.1
+    maximum: 1
+inputs:
+  - {name: opening, description: "Fraction of the orifice area that is open: 0 is no leak, 1 the full diameter. Scales the area, so the flow scales with it at a given pressure.", unit: "1", default: 1.0, minimum: 0, maximum: 1}
+observables:
+  - {name: volume_flow, unit: L/min, description: Volume flow escaping from the network through the leak (negative on backflow into the network).}
+  - {name: pressure, unit: bar, description: Gauge pressure at the leak's port.}
+modes:
+  - {name: closed, condition: "opening <= 0.000001", description: The leak is shut (opening 0).}
+  - {name: backflow, condition: "volume_flow < -0.01", description: Water (or air) is drawn into the network through the leak.}
+  - {name: leaking, condition: "volume_flow > 0.01", description: Water escapes through the leak.}
+  - {name: idle, condition: "true", description: No significant flow (the port is near atmospheric pressure).}
+envelope:
+  - code: backflow
+    severity: warning
+    condition: "volume_flow < -0.01"
+    message: The leak's port is below atmospheric pressure, so air or contaminated groundwater is drawn into the network through the leak.
+scenarios:
+  - id: on-mains
+    description: >-
+      A 5 mm hole (Cd 0.6) directly on a 3 bar main. Hand calculation: A = pi * 0.005**2 / 4 =
+      1.9634954e-5 m2 and Q = 0.6 * A * sqrt(2 * 3e5 / 998.2) = 2.888338e-4 m3/s =
+      17.330027 L/min; at 0.5, 1 and 6 bar the same formula gives 7.074954, 10.005496 and
+      24.508359 L/min.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 3}}
+        - {name: dut, type: leak}
+      connections:
+        - [src.port, dut.port]
+    expect:
+      - {variable: dut.volume_flow, value: 17.330027, rel_tol: 1.0e-6}
+      - {variable: dut.pressure, value: 3.0, abs_tol: 1.0e-9}
+      - {variable: src.volume_flow, value: 17.330027, rel_tol: 1.0e-6}
+      - {mode: dut, is: leaking}
+      - {warning: dut.backflow, present: false}
+  - id: closed
+    description: >-
+      The on-mains leak with opening 0: 1e-6 of the area stays open, 1.7e-5 L/min at 3 bar,
+      which counts as no flow.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 3}}
+        - {name: dut, type: leak, inputs: {opening: 0}}
+      connections:
+        - [src.port, dut.port]
+    expect:
+      - {variable: dut.volume_flow, min: 0, max: 1.0e-4}
+      - {mode: dut, is: closed}
+      - {warning: dut.backflow, present: false}
+  - id: leak-on-a-line
+    description: >-
+      A 3 bar supply feeds a drain through two Kv 2 valves in series; the 5 mm leak sits at
+      the junction between them. Without the leak the junction is at 1.5 bar (equal Kv). With
+      it, mass balance at the junction with every element quadratic, k1 sqrt(3 - p) =
+      (k2 + kL) sqrt(p), gives p = 3 / (1 + ((k2 + kL) / k1)**2), with the valve coefficients
+      k1 = k2 = (2 / 3600) sqrt(998.2 * 1000 / 1e5) = 1.7552391e-3 kg/(s Pa^0.5) and the
+      leak's kL = 0.6 A sqrt(2 * 998.2) = 5.2638672e-4 kg/(s Pa^0.5): p = 1.115355 bar
+      (down from 1.5). Flows: supply 45.80203, leak 10.56684 and drain 35.23519 L/min.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 3}}
+        - {name: v1, type: valve, parameters: {kv: 2}}
+        - {name: dut, type: leak}
+        - {name: v2, type: valve, parameters: {kv: 2}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, v1.port_a]
+        - [v1.port_b, dut.port]
+        - [v1.port_b, v2.port_a]
+        - [v2.port_b, sink.port]
+    expect:
+      - {variable: dut.pressure, value: 1.115355, rel_tol: 1.0e-5}
+      - {variable: dut.volume_flow, value: 10.56684, rel_tol: 1.0e-5}
+      - {variable: sink.volume_flow, value: 35.23519, rel_tol: 1.0e-5}
+      - {variable: src.volume_flow, value: 45.80203, rel_tol: 1.0e-5}
+      - {mode: dut, is: leaking}
+  - id: burst-during-simulation
+    description: >-
+      The leak-on-a-line network with the leak shut until a burst at 30 s (opening 0 to 1).
+      The junction pressure is 1.5 bar before the burst and 1.115355 bar at the end of the
+      60 s run, as in leak-on-a-line.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 3}}
+        - {name: v1, type: valve, parameters: {kv: 2}}
+        - {name: dut, type: leak, inputs: {opening: 0}}
+        - {name: v2, type: valve, parameters: {kv: 2}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, v1.port_a]
+        - [v1.port_b, dut.port]
+        - [v1.port_b, v2.port_a]
+        - [v2.port_b, sink.port]
+    simulate: {duration: 60 s, step: 10 s, events: [{at: 30 s, set: {dut.opening: 1}}]}
+    expect:
+      - {variable: dut.pressure, value: 1.115355, rel_tol: 1.0e-5}
+      - {variable: dut.volume_flow, value: 10.56684, rel_tol: 1.0e-5}
+      - {mode: dut, is: leaking}
+  - id: backflow
+    description: >-
+      The leak on a main held at -0.3 bar gauge (a vacuum on the suction side of a pump):
+      water is drawn in through the orifice, Q = -0.6 A sqrt(2 * 0.3e5 / 998.2) =
+      -5.480236 L/min, and the backflow warning is raised.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: -0.3}}
+        - {name: dut, type: leak}
+      connections:
+        - [src.port, dut.port]
+    expect:
+      - {variable: dut.volume_flow, value: -5.480236, rel_tol: 1.0e-6}
+      - {variable: dut.pressure, value: -0.3, abs_tol: 1.0e-9}
+      - {mode: dut, is: backflow}
+      - {warning: dut.backflow, present: true}
+contracts:
+  - id: mass-conservation
+    description: What the supply delivers leaves through the leak, at every pressure including backflow.
+    scenario: on-mains
+    sweep: {variable: src.pressure, values: [-0.8, -0.3, 0, 0.5, 1, 3, 6]}
+    check: {type: equal, left: dut.volume_flow, right: src.volume_flow, abs_tol: 1.0e-9, rel_tol: 1.0e-9}
+  - id: junction-mass-balance
+    description: At the junction of leak-on-a-line the upstream flow splits into the leak and the downstream flow, for every leak size.
+    scenario: leak-on-a-line
+    sweep: {variable: dut.diameter, values: [0.5, 2, 5, 8, 12]}
+    check: {type: equal, left: v1.volume_flow, right: v2.volume_flow + dut.volume_flow, abs_tol: 1.0e-9, rel_tol: 1.0e-9}
+  - id: orifice-equation
+    description: >-
+      The leak flow is Cd A opening sqrt(2 dp / rho) with A = pi d**2 / 4, in L/min, at every
+      gauge pressure from 0.1 to 10 bar (hand values at 0.5, 1, 3 and 6 bar in on-mains).
+    scenario: on-mains
+    sweep: {variable: src.pressure, values: [0.1, 0.5, 1, 3, 6, 10]}
+    check:
+      type: equal
+      left: dut.volume_flow
+      right: "dut.discharge_coefficient * 0.7853981633974483 * (dut.diameter / 1000) ** 2 * dut.opening * sqrt(2 * dut.pressure * 1e5 / 998.2) * 60000"
+      rel_tol: 1.0e-6
+  - id: orifice-equation-by-size
+    description: The orifice equation holds for every diameter and discharge coefficient at 3 bar (flow proportional to Cd d**2).
+    scenario: on-mains
+    sweep: {variable: dut.diameter, values: [0.1, 1, 5, 20, 100]}
+    check:
+      type: equal
+      left: dut.volume_flow
+      right: "17.330027 * dut.discharge_coefficient / 0.6 * (dut.diameter / 5) ** 2"
+      rel_tol: 1.0e-6
+  - id: opening-scales-area
+    description: The opening scales the orifice area, so at 3 bar the flow is opening times the full leak's 17.330027 L/min.
+    scenario: on-mains
+    sweep: {variable: dut.opening, values: [0.05, 0.25, 0.5, 0.75, 1]}
+    check: {type: equal, left: dut.volume_flow, right: "17.330027 * dut.opening", rel_tol: 1.0e-6}
+  - id: flow-increases-with-pressure
+    description: A higher pressure at the port never reduces the leak flow, through backflow, zero and forward flow.
+    scenario: on-mains
+    sweep: {variable: src.pressure, values: [-0.8, -0.3, -0.01, 0, 0.01, 0.5, 3, 10]}
+    check: {type: monotonic, variable: dut.volume_flow, direction: increasing, strict: true}
+  - id: line-pressure-closed-form
+    description: >-
+      On leak-on-a-line the junction pressure is 3 / (1 + ((k2 + kL) / k1)**2) bar with
+      k1 = k2 = 1.7552391e-3 kg/(s Pa^0.5) and kL = Cd (pi d**2 / 4) sqrt(2 rho), for every
+      leak diameter.
+    scenario: leak-on-a-line
+    sweep: {variable: dut.diameter, values: [0.5, 2, 5, 8, 12]}
+    check:
+      type: equal
+      left: dut.pressure
+      right: "3 / (1 + ((0.001755239071332126 + 0.6 * 0.7853981633974483 * (dut.diameter / 1000) ** 2 * sqrt(2 * 998.2)) / 0.001755239071332126) ** 2)"
+      rel_tol: 1.0e-6
+  - id: downstream-pressure-falls-with-leak-size
+    description: A larger leak lowers the pressure at the leak and the flow delivered downstream.
+    scenario: leak-on-a-line
+    sweep: {variable: dut.diameter, values: [0.5, 2, 5, 8, 12]}
+    check: {type: monotonic, variable: sink.volume_flow, direction: decreasing, strict: true}
+  - id: backflow-warning
+    description: The backflow warning is raised exactly when the leak's port is below atmospheric pressure.
+    scenario: backflow
+    sweep: {variable: src.pressure, values: [-0.8, -0.3, -0.01, 0, 0.01, 0.5]}
+    check: {type: warning_iff, code: dut.backflow, condition: "src.pressure < 0"}
+implementations:
+  reference: {python: "worldparts.components.leak:Leak"}
+  modelica:
+    class: Modelica.Fluid.Fittings.SimpleGenericOrifice
+    library: Modelica Standard Library 4.0.0
+    notes: >-
+      A SimpleGenericOrifice with diameter = diameter and zeta = 1 / Cd**2 (so that
+      dp = zeta rho v**2 / 2 with v = Q / A reproduces Q = Cd A sqrt(2 dp / rho)) between the
+      port and a Modelica.Fluid.Sources.Boundary_pT at 101325 Pa. Binding not yet
+      cross-validated.
+  wntr:
+    element: Emitter
+    notes: >-
+      An EPANET emitter at the port's junction with exponent 0.5 and coefficient
+      Cd A opening sqrt(2 g) (m3/s per m**0.5 in WNTR's SI; times 3600 in a CMH .inp), so
+      Q = C sqrt(p) with p the pressure head reproduces the orifice equation;
+      cross-validated in docs/wntr-adapter.md.
+provenance:
+  authors: [worldparts contributors]
+  sources:
+    - title: "White, F. M. Fluid Mechanics. McGraw-Hill."
+      notes: Orifice discharge Q = Cd A sqrt(2 dp / rho) and discharge coefficients of sharp-edged orifices (about 0.6).
+    - title: "Lambert, A. O. (2001). What do we know about pressure:leakage relationships in distribution systems? IWA Specialised Conference on System Approach to Leakage Control and Water Distribution Systems Management, Brno."
+      notes: FAVAD concept; a fixed-area hole has leakage exponent 0.5.
+    - title: EPANET 2.2 User Manual (emitters)
+      url: https://epanet22.readthedocs.io
+      notes: Emitters as pressure-dependent outflows Q = C p**0.5 at junctions, the WNTR/EPANET counterpart.
+  data:
+    acquisition: generic
+    notes: The default leak (5 mm equivalent diameter, Cd 0.6) is a generic illustrative value, about 17 L/min at 3 bar.
+  license: Apache-2.0
+  data_license: CC0-1.0

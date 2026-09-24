@@ -23,6 +23,7 @@ from worldparts.contracts import (
     run_contract,
     run_scenario,
 )
+from worldparts.controls import Control, ControlConflictError, InvalidControlError
 from worldparts.errors import (
     ContractError,
     ExpressionError,
@@ -42,6 +43,7 @@ from worldparts.errors import (
 from worldparts.manifest import Manifest, Table, load_manifest, validate_manifest_data
 from worldparts.results import (
     ComponentWarning,
+    ControlReport,
     Issue,
     ModeChange,
     SimulationResult,
@@ -60,8 +62,12 @@ __all__ = [
     "ComponentReport",
     "ComponentWarning",
     "ContractError",
+    "Control",
+    "ControlConflictError",
+    "ControlReport",
     "ExpressionError",
     "IncompatiblePortsError",
+    "InvalidControlError",
     "InvalidValueError",
     "Issue",
     "Manifest",

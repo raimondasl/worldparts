@@ -773,3 +773,44 @@ def test_temperature_difference_results_convert_as_differences() -> None:
     info = {v.path: v for v in s.variables()}["h.temperature_rise"]
     assert info.quantity == "temperature_difference" and info.pressure_reference == "difference"
     assert {v.path: v for v in s.variables()}["h.setpoint"].quantity is None
+
+
+# -- controls and ramps (design 13.1, 13.2; the physics is in test_controls.py) ------------
+
+
+def test_systems_without_controls_are_unchanged() -> None:
+    s = basic()
+    r = s.solve()
+    assert r.controls == {} and "controls" not in r.to_dict()
+    assert not any(p.startswith("control.") for p in r.values)
+    sim = s.simulate(2)
+    assert sim.controls == {} and "controls" not in sim.to_dict()
+    assert "controls" not in s.to_dict()
+    assert all(v.kind != "control" for v in s.variables())
+    assert "controls=" not in repr(s)
+
+
+def test_control_api_round_trip_and_repr() -> None:
+    s = basic(pressure=3, opening=0.5)
+    # A valve holding its own flow at 20 L/min (reverse: open when the flow is low).
+    ctrl = s.add_control("flow", "pi", measure="v.volume_flow", setpoint="1.2 m3/h",
+                         actuate="v.opening", gain=0.01, integral_time="1 s")  # fmt: skip
+    assert ctrl.path == "control.flow" and s.controls == {"flow": ctrl}
+    assert "controls=['flow']" in repr(s)
+    r = s.solve()
+    assert r["v.volume_flow"] == pytest.approx(20, abs=1e-6)
+    # Kv relation: effective Kv = 1.2 m3/h / sqrt(3 bar / sg) on the linear characteristic.
+    phi = 1.2 / math.sqrt(3 / (RHO / 1000)) / 2.5
+    assert r["v.opening"] == pytest.approx((phi - 1e-4) / (1 - 1e-4), rel=1e-6)
+    again = wp.System.from_dict(s.to_dict())
+    assert again.to_dict() == s.to_dict()
+    s.remove_control("flow")
+    assert s.controls == {} and s.get("v.opening") == pytest.approx(r["v.opening"])
+
+
+def test_simulate_ramp_event_in_the_core() -> None:
+    sim = basic().simulate(
+        4, 1, events=[{"at": 1, "ramp": {"v.opening": [1, 0], "mains.pressure": [3, 2]}, "over": 2}]
+    )
+    assert sim["v.opening"] == pytest.approx([1, 1, 0.5, 0, 0])
+    assert sim["mains.pressure"] == pytest.approx([3, 3, 2.5, 2, 2])

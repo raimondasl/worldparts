@@ -373,3 +373,145 @@ def test_specific_energy_is_none_without_forward_flow() -> None:
     s.connect("dut.outlet", "sink.port")
     stopped = s.solve()
     assert stopped["dut.volume_flow"] > 0 and stopped["dut.specific_energy"] == 0.0
+
+
+# ----------------------------------------------------------------------------------------
+# wear (design 13.3)
+# ----------------------------------------------------------------------------------------
+def _worn_circuit(wear_head: float, wear_efficiency: float = 0.0, **kw: float) -> wp.System:
+    s = _circuit(**kw)
+    s.set_values({"dut.wear_head": wear_head, "dut.wear_efficiency": wear_efficiency})
+    return s
+
+
+def test_zero_wear_reproduces_the_new_pump_exactly() -> None:
+    """Explicit zero wear gives bit-for-bit the results of a pump without wear inputs set,
+    and the head at the operating point is the fitted curve a + c Q**2 (b = 0) up to the
+    1 Pa per kg/s law term (under 1e-3 m)."""
+    new = _circuit().solve()
+    zero = _worn_circuit(0.0, 0.0).solve()
+    for name in ("volume_flow", "head", "shaft_power", "efficiency", "npsh_required"):
+        assert zero[f"dut.{name}"] == new[f"dut.{name}"]
+    q = zero["dut.volume_flow"]  # m3/h
+    assert zero["dut.head"] == pytest.approx(A_HAND + C_HAND_H * q * q, abs=1e-3)
+    # The law itself: head coefficients unchanged at zero wear.
+    s = _worn_circuit(0.0)
+    s.solve()
+    law = _pump(s).law
+    assert (law.a, law.b, law.c) == pytest.approx(_pump(s).fit.head, rel=0, abs=0)
+
+
+def test_worn_operating_point_closed_form() -> None:
+    """Hand calculation: with wear_head w the pump gives (1 - w)(a + b Q + c Q**2) and the
+    Kv valve needs Q**2 1e5 / (1000 g Kv_SI**2), so
+        ((1 - w) c - 1e5 / (1000 g Kv_SI**2)) Q**2 + (1 - w) b Q + (1 - w) a = 0.
+    With b = 0, w = 0.2, Kv = 15 m3/h (numbers in m3/h):
+        Q**2 = 0.8 * 33.970527 / (0.8 * 0.0138548350 + 100 / (9.80665 * 225))
+             = 27.176422 / (0.0110838680 + 0.0453202...) = 481.8122  =>  Q = 21.95022 m3/h,
+        H = 0.8 * (33.970527 - 0.0138548350 * 481.8122) = 21.83608 m.
+    """
+    w = 0.2
+    for kv_h in (5.0, 15.0, 30.0):
+        s = _worn_circuit(w, kv=kv_h)
+        a, b, c = (x * (1 - w) for x in _pump(s).fit.head)
+        kv_si = kv_h / H_PER_S
+        cc = c - 1e5 / (1000.0 * G * kv_si**2)
+        q = (-b - math.sqrt(b * b - 4.0 * cc * a)) / (2.0 * cc)
+        h = a + b * q + c * q * q
+        r = s.solve()
+        assert r["dut.volume_flow"] == pytest.approx(q * H_PER_S, rel=5e-5)
+        assert r["dut.head"] == pytest.approx(h, rel=5e-5)
+        if kv_h == 15.0:
+            assert q * H_PER_S == pytest.approx(21.95022, rel=1e-6)
+            assert h == pytest.approx(21.83608, rel=1e-6)
+    # Shut-off: the head is (1 - w) a s**2 at every speed.
+    s = _worn_circuit(w, opening=0.0)
+    for speed in (0.5, 1.0, 1.2):
+        s.set("dut.speed", speed)
+        assert s.solve()["dut.head"] == pytest.approx((1 - w) * A_HAND * speed**2, abs=1e-4)
+
+
+def test_worn_efficiency_is_scaled_at_the_same_flow() -> None:
+    """wear_efficiency does not move the operating point (the head law is unchanged), so the
+    flow is identical and the efficiency is exactly (1 - wear_efficiency) times the new
+    pump's; head wear moves the point, and the efficiency there is the new pump's efficiency
+    curve rho g Q H0(Q) / P0(Q) at the new flow, times (1 - wear_efficiency)."""
+    new = _circuit().solve()
+    for we in (0.1, 0.25, 0.5):
+        r = _worn_circuit(0.0, we).solve()
+        assert r["dut.volume_flow"] == new["dut.volume_flow"]
+        assert r["dut.efficiency"] == pytest.approx((1 - we) * new["dut.efficiency"], rel=1e-12)
+    s = _worn_circuit(0.3, 0.1)
+    fit = _pump(s).fit
+    r = s.solve()
+    q = r["dut.volume_flow"] / H_PER_S
+    eta_new = RHO * G * q * fit.head_at(q) / fit.power_at(q)
+    # rel 1e-4: the reported head includes the law's 1 Pa per kg/s term (3e-5 of the head).
+    assert r["dut.efficiency"] / 100 == pytest.approx(0.9 * eta_new, rel=1e-4)
+    # Head and efficiency never increase with wear (default circuit, below the BEP).
+    heads, effs = [], []
+    for w in np.linspace(0.0, 0.5, 6):
+        r = _worn_circuit(float(w), float(w)).solve()
+        heads.append(r["dut.head"])
+        effs.append(r["dut.efficiency"])
+    assert all(np.diff(heads) < 0) and all(np.diff(effs) < 0)
+
+
+def test_worn_shaft_power_formula() -> None:
+    """P = (p0 s**3 + p1 s**2 Q + p2 s Q**2) (1 - wear_head) / (1 - wear_efficiency).
+
+    Hand numbers at the worn-pump scenario point (w = 0.2, we = 0.1, s = 1, Kv 15):
+    P0(21.95022 m3/h) = 1.48557082 + 0.0586065595 * 21.95022 - 3.35342667e-4 * 21.95022**2
+    = 1.48557 + 1.28643 - 0.16157 = 2.610426 kW, so P = 2.610426 * 0.8 / 0.9 = 2.320378 kW.
+    """
+    r = _worn_circuit(0.2, 0.1).solve()
+    q = r["dut.volume_flow"]  # m3/h
+    p_hand = 1.48557082 + 0.0586065595 * q - 3.35342667e-4 * q * q  # kW
+    assert r["dut.shaft_power"] == pytest.approx(p_hand * 0.8 / 0.9, rel=1e-6)
+    assert r["dut.shaft_power"] == pytest.approx(2.320378, rel=1e-5)
+    assert r["dut.specific_energy"] == pytest.approx(2.320378 / 21.95022, rel=1e-4)
+    # At 80 % speed, with the affinity-law power.
+    s = _worn_circuit(0.3, 0.2, speed=0.8)
+    fit = _pump(s).fit
+    r = s.solve()
+    q_si = r["dut.volume_flow"] / H_PER_S
+    p0, p1, p2 = fit.power
+    p_si = (p0 * 0.8**3 + p1 * 0.8**2 * q_si + p2 * 0.8 * q_si**2) * 0.7 / 0.8
+    assert r["dut.shaft_power"] * 1e3 == pytest.approx(p_si, rel=1e-12)
+    # The motor warning sees the worn shaft power: 20 % more power at the same point.
+    s = _worn_circuit(0.0, 0.3, speed=1.1)
+    r = s.solve()
+    assert r["dut.shaft_power"] > 4.0 and r.has_warning("dut.motor_overload")
+
+
+def test_npsh_and_curve_observables_describe_the_new_pump() -> None:
+    new = _circuit().solve()
+    s = _worn_circuit(0.4, 0.3)
+    r = s.solve()
+    fit = _pump(s).fit
+    q = r["dut.volume_flow"] / H_PER_S
+    assert r["dut.npsh_required"] == pytest.approx(fit.npsh_required_at(q), rel=1e-12)
+    assert r["dut.bep_flow"] == new["dut.bep_flow"]
+    assert r["dut.curve_fit_rms"] == new["dut.curve_fit_rms"]
+
+
+def test_wear_changes_during_a_simulation_and_can_be_calibrated() -> None:
+    """Wear is an input: an event can change it mid-run, and a measured flow identifies it
+    (goal seek on wear_head recovers the value used to make the 'measurement')."""
+    from scipy.optimize import brentq
+
+    s = _circuit()
+    sim = s.simulate(
+        duration="20 s", step="5 s", events=[{"at": "10 s", "set": {"dut.wear_head": 0.2}}]
+    )
+    flows = sim["dut.volume_flow"]
+    assert flows[0] == pytest.approx(23.95962, rel=1e-4)
+    assert flows[-1] == pytest.approx(21.95022, rel=1e-4)
+    measured = 21.95022
+
+    def residual(w: float) -> float:
+        s.set("dut.wear_head", w)
+        return float(s.solve()["dut.volume_flow"]) - measured
+
+    w = brentq(residual, 0.0, 0.5, xtol=1e-10)
+    assert w == pytest.approx(0.2, abs=1e-4)

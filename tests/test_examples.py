@@ -26,7 +26,12 @@ import worldparts as wp
 from worldparts import cli
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
-DOCUMENTS = ["purification_skid.yaml", "pump_lift.yaml", "domestic_hot_water.yaml"]
+DOCUMENTS = [
+    "purification_skid.yaml",
+    "pump_lift.yaml",
+    "domestic_hot_water.yaml",
+    "booster_station.yaml",
+]
 SCRIPTS = ["purification_skid.py", "pump_lift.py"]
 MAX_LINES = 60
 RHO, G, CP = 998.2, 9.80665, 4182.0
@@ -35,6 +40,7 @@ EXPECTED_ISSUES = {
     "purification_skid.yaml": set(),
     "pump_lift.yaml": {("unconnected_port", "ground.inlet"), ("unconnected_port", "roof.outlet")},
     "domestic_hot_water.yaml": set(),
+    "booster_station.yaml": set(),
 }
 
 
@@ -268,6 +274,58 @@ def test_hot_water_heater_saturates() -> None:
     assert alone.modes["heater"] == "heating"
     assert alone.warnings == []
     assert alone["heater.outlet_temperature"] == pytest.approx(55, abs=0.01)
+
+
+# ----------------------------------------------------------------------------------------
+# booster station (a PI pressure loop, design 13.1; a ramp in the document, 13.2)
+# ----------------------------------------------------------------------------------------
+def test_booster_holds_zone_pressure_by_hand() -> None:
+    """At full demand the zone valve (Kv 12) passes 12 sqrt(2.5 / sg) m3/h at the 2.5 bar
+    setpoint, and the pump head is the 1.5 bar lift over the mains plus the main's
+    Darcy-Weisbach and fitting losses."""
+    s = load_system("booster_station.yaml")
+    s.set("demand.opening", 1.0)
+    r = s.solve()
+    assert r["main.port_b.p"] == pytest.approx(2.5, abs=1e-8)
+    q_h = 12 * math.sqrt(2.5 / (RHO / 1000))
+    assert r["pump.volume_flow"] == pytest.approx(q_h, rel=1e-8)
+    v = q_h / 3600 / (math.pi * 0.065**2 / 4)
+    friction = (r["main.friction_factor"] * 120 / 0.065 + 2) * v * v / (2 * G)
+    assert r["pump.head"] == pytest.approx(1.5e5 / (RHO * G) + friction, abs=1e-3)
+    assert r["pump.speed"] == pytest.approx(0.868, abs=1e-3)
+    assert r.controls["zone_pressure"].saturated is False
+    assert r.warnings == []
+
+
+def test_booster_simulation_rides_through_the_demand_ramp() -> None:
+    s = load_system("booster_station.yaml")
+    steady_low = load_system("booster_station.yaml").solve()["pump.speed"]
+    full = load_system("booster_station.yaml")
+    full.set("demand.opening", 1.0)
+    steady_high = full.solve()["pump.speed"]
+    sim = s.simulate()  # the document's 10 min run: the ramp from 2 to 5 min
+    t = sim.time
+    zone = sim["main.port_b.p"]
+    speed = sim["control.zone_pressure.output"]
+    assert sim["demand.opening"][t.index(120.0)] == 0.5
+    assert sim["demand.opening"][t.index(300.0)] == 1.0
+    # Settled before the ramp; during it the pressure droops by less than 2 %; afterwards
+    # the loop is back at the setpoint at the full-demand speed.
+    assert zone[t.index(119.0)] == pytest.approx(2.5, abs=1e-4)
+    assert speed[t.index(119.0)] == pytest.approx(steady_low, rel=1e-4)
+    assert 2.45 < min(zone[t.index(120.0) :]) < 2.5
+    assert zone[-1] == pytest.approx(2.5, abs=1e-6)
+    assert speed[-1] == pytest.approx(steady_high, rel=1e-6)
+    assert all(0.3 < u < 1.2 for u in speed)
+    assert [w.path for w in sim.warnings] == ["pump.outside_preferred_region"]
+    assert sim.warnings[0].active_at_end is False  # low demand only
+    assert sim.controls["zone_pressure"].saturated is False
+
+
+def test_cli_simulates_booster_default_run(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["simulate", str(EXAMPLES / "booster_station.yaml")]) == 0
+    out = capsys.readouterr().out
+    assert "Controls at the end" in out and "zone_pressure" in out
 
 
 # ----------------------------------------------------------------------------------------

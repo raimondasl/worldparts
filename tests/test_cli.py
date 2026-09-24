@@ -394,3 +394,77 @@ def test_export_errors(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> No
     assert "tap (mixing_faucet)" in err and "Supported components" in err
     with pytest.raises(SystemExit):
         cli.main(["export", str(path), "--target", "modelica"])
+
+
+# ----------------------------------------------------------------------------------------
+# controls (design 13.1) and ramps in documents (13.2)
+# ----------------------------------------------------------------------------------------
+CONTROLLED: dict[str, Any] = {
+    **{k: v for k, v in LINE.items() if k != "simulation"},
+    "name": "controlled line",
+    # The valve opens when the pressure at its inlet is above 2 bar ('direct' action), so
+    # the pipe's friction loss makes up the rest of the 3 bar supply.
+    "controls": [
+        {
+            "name": "hold",
+            "type": "pi",
+            "measure": "p.port_b.p",
+            "setpoint": "2 bar",
+            "actuate": "v.opening",
+            "gain": 0.2,
+            "integral_time": "2 s",
+            "direction": "direct",
+        },
+    ],
+    "simulation": {
+        "duration": "60 s",
+        "step": "1 s",
+        "events": [{"at": "10 s", "ramp": {"mains.pressure": [3, 3.3]}, "over": "10 s"}],
+    },
+}
+
+
+@pytest.fixture
+def controlled_file(tmp_path: Path) -> Path:
+    path = tmp_path / "controlled.yaml"
+    path.write_text(yaml.safe_dump(CONTROLLED, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def test_solve_and_simulate_print_controls(
+    capsys: pytest.CaptureFixture[str], controlled_file: Path
+) -> None:
+    code, out, _ = run_cli(capsys, "validate", str(controlled_file))
+    assert code == 0, out
+    code, out, _ = run_cli(capsys, "solve", str(controlled_file))
+    assert code == 0
+    assert "Controls" in out and "p.port_b.p = 2 bar" in out
+    assert "setpoint 2, error" in out and "SATURATED" not in out
+    assert "control.hold.output" in out  # the default selection lists control results
+    code, out, _ = run_cli(capsys, "solve", str(controlled_file), "--json")
+    data = json.loads(out)
+    hold = data["controls"]["hold"]
+    assert hold["measured"] == pytest.approx(2, abs=1e-8) and hold["saturated"] is False
+    assert data["values"]["control.hold.output"]["value"] == pytest.approx(hold["output"])
+    # The simulation block ramps the supply from 3 to 3.3 bar; the loop opens the valve.
+    code, out, _ = run_cli(capsys, "simulate", str(controlled_file), "--json")
+    assert code == 0
+    sim = json.loads(out)
+    assert sim["summary"]["mains.pressure"]["final"] == pytest.approx(3.3)
+    assert sim["summary"]["control.hold.measure"]["final"] == pytest.approx(2, abs=1e-3)
+    assert sim["controls"]["hold"]["output"] > hold["output"]
+    code, out, _ = run_cli(capsys, "simulate", str(controlled_file))
+    assert code == 0 and "Controls at the end" in out
+
+
+def test_validate_reports_invalid_controls(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    doc = {**CONTROLLED, "controls": [{**CONTROLLED["controls"][0], "actuate": "v.kv"}]}
+    path = tmp_path / "bad.yaml"
+    path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+    code, out, _ = run_cli(capsys, "validate", str(path))
+    assert code == 1
+    assert "[invalid_control] control.hold" in out and "not a numeric input" in out
+    code, _, err = run_cli(capsys, "solve", str(path))
+    assert code == 2 and "invalid_control" in err

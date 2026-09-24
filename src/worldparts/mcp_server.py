@@ -13,8 +13,9 @@ Systems live in an in-process :class:`SystemStore` keyed by a short ``system_id`
 
 Run it with ``worldparts mcp`` (stdio). Tools: ``list_components``, ``describe_component``,
 ``create_system``, ``add_component``, ``remove_component``, ``set_values``, ``connect``,
-``disconnect``, ``check_system``, ``solve``, ``solve_for``, ``simulate``,
-``list_variables``, ``get_system``, ``load_system`` and ``run_contracts``.
+``disconnect``, ``add_control``, ``remove_control``, ``check_system``, ``solve``,
+``solve_for``, ``simulate``, ``list_variables``, ``get_system``, ``load_system`` and
+``run_contracts``.
 
 The tool list is kept small for the agent's context: the generated JSON schemas are
 compacted after registration (:func:`compact_schema`: no ``title`` keys, no ``null`` branch
@@ -59,7 +60,7 @@ from worldparts.cli import select_paths_with_units as _selection
 from worldparts.cli import unit_targets as _convert_request
 from worldparts.errors import UnknownComponentError, WorldpartsError, format_choices
 from worldparts.manifest import Manifest, VariableSpec, load_yaml
-from worldparts.units import parse_duration, parse_value
+from worldparts.units import parse_value
 
 __all__ = [
     "AUTOSAVE_ENV",
@@ -100,8 +101,11 @@ they flag operation outside a model's validity envelope.
 Flow units differ by part (pipes, valves, drains, supplies: L/min; pumps, tanks, filters, \
 UV reactors: m3/h); pass units={'*.volume_flow': 'm3/h'} to solve or simulate to report \
 every matching path in one unit. solve_for finds the value of one input or parameter that \
-gives a target result (e.g. the pump speed for 15 m3/h). describe_component is brief by \
-default; detail='full' adds scenario systems, contract rules and provenance.
+gives a target result (e.g. the pump speed for 15 m3/h). add_control adds a PI loop (e.g. \
+pump speed holding a pressure; solve then finds the steady output, simulate runs it as a \
+sampled controller) or a hysteresis switch (e.g. a tank level switch starting a pump). \
+describe_component is brief by default; detail='full' adds scenario systems, contract \
+rules and provenance.
 Systems live only as long as this server process: keep a system with get_system and \
 restore it in a new session with load_system. (Operators only: when the environment \
 variable WORLDPARTS_AUTOSAVE_DIR is set, the server also writes each changed system \
@@ -335,7 +339,20 @@ class SystemSummary(BaseModel):
     components: dict[str, str] = Field(description="Instance name to component id.")
     connections: list[list[str]] = Field(description="Connected port pairs.")
     unconnected_ports: list[str] = Field(description="Ports not yet connected (capped).")
-    issues: list[IssueOut] | None = _opt("Pre-flight issues (load_system only).")
+
+
+class LoadedSystem(SystemSummary):
+    """Result of load_system: the composition, its controls and pre-flight issues."""
+
+    controls: dict[str, str] | None = _opt("Control name to 'type: measure -> actuate'.")
+    issues: list[IssueOut] = Field(description="Pre-flight issues.")
+
+
+class ControlList(BaseModel):
+    """Result of add_control and remove_control."""
+
+    system_id: str
+    controls: dict[str, dict[str, Any]] = Field(description="Control definitions by name.")
 
 
 class ComponentInstance(BaseModel):
@@ -380,6 +397,7 @@ class SolveOutput(BaseModel):
     modes: dict[str, str | None] = Field(description="Instance name to mode.")
     warnings: list[WarningOut]
     issues: list[IssueOut] = Field(description="Non-fatal pre-flight issues.")
+    controls: dict[str, dict[str, Any]] | None = _opt("Control loops by name.")
 
 
 class SolveForOutput(SolveOutput):
@@ -426,13 +444,14 @@ class SimulateOutput(BaseModel):
     mode_changes: list[ModeChangeOut] = Field(description="Initial modes and every change.")
     final_modes: dict[str, str | None]
     issues: list[IssueOut] = Field(description="Non-fatal pre-flight issues.")
+    controls: dict[str, dict[str, Any]] | None = _opt("Control loops at the end.")
 
 
 class VariableOut(BaseModel):
     """A variable path of a system."""
 
     path: str
-    kind: Literal["parameter", "input", "state", "observable", "port"]
+    kind: Literal["parameter", "input", "state", "observable", "port", "control"]
     unit: str | None = _opt("Display unit.")
     reference: PressureReference | None = _opt(_REF_DOC)
     quantity: str | None = _opt("'temperature_difference' for a temperature difference.")
@@ -484,29 +503,27 @@ class Event(BaseModel):
         None, description="Paths to values, e.g. {'valve.opening': 0}."
     )
     ramp: dict[str, list[float | str]] | None = Field(
-        None,
-        description="Instead of set: paths to [start, end] values, changed linearly from "
-        "`at` over `over` (applied at every step), e.g. {'filter.clogging': [0, 0.8]}.",
+        None, description="Instead of set: paths to [start, end], linear over `over`."
     )
     over: float | str | None = Field(None, description="Ramp duration, e.g. '30 min'.")
 
 
 # Argument types shared by several tools (module level so the SDK can resolve them).
-SystemId = Annotated[str, Field(description="Id returned by create_system or load_system.")]
+#: The id returned by create_system or load_system (self-explanatory, so undocumented in
+#: the schema to keep tools/list small).
+SystemId = str
 Variables = Annotated[
     list[str] | None,
     Field(
-        description="Paths to report ('valve.volume_flow', 'valve.port_a.p'), instance "
-        "names (all their variables) or '*'. Default: observables, states and port "
-        "pressures."
+        description="Paths ('v.volume_flow', 'v.port_a.p'), instance names, 'control' or '*'. "
+        "Default: observables, states, port pressures and control results."
     ),
 ]
 Units = Annotated[
     dict[str, str] | None,
     Field(
-        description="Optional unit per path, e.g. {'valve.volume_flow': 'L/s', "
-        "'mains.port.p': 'bar absolute'}. A key '*.<name>' applies to every reported path "
-        "ending in '.<name>', e.g. {'*.volume_flow': 'm3/h'}; explicit paths win."
+        description="Unit per path, e.g. {'v.volume_flow': 'L/s', 'mains.port.p': "
+        "'bar absolute'}; a key '*.<name>' applies to every path ending in '.<name>'."
     ),
 ]
 
@@ -642,9 +659,27 @@ def _instance_values(system: wp.System, name: str, group: Mapping[str, VariableS
     return {n: _value(s, system.get(f"{name}.{n}")) for n, s in group.items()}
 
 
-def _summary(
-    store_id: str, system: wp.System, issues: list[wp.Issue] | None = None
-) -> SystemSummary:
+def _controls_out(reports: Mapping[str, wp.ControlReport]) -> dict[str, dict] | None:
+    """Control reports for solve and simulate outputs (numbers rounded), None without any.
+
+    Each is ``{type, measure, actuate, output, output_unit, measured, measure_unit}`` plus
+    ``setpoint``, ``error`` and ``saturated`` (PI) or ``state`` and ``switches``
+    (hysteresis). The output schema keeps them as plain objects to keep tools/list small.
+    """
+    if not reports:
+        return None
+    out: dict[str, dict] = {}
+    for name, c in reports.items():
+        d = c.to_dict()
+        del d["name"]
+        for key in ("output", "measured", "setpoint", "error"):
+            if key in d:
+                d[key] = _round(d[key])
+        out[name] = d
+    return out
+
+
+def _summary(store_id: str, system: wp.System) -> SystemSummary:
     connected = {p for c in system.connections for p in c}
     unconnected = []
     for inst in system.components:
@@ -660,7 +695,6 @@ def _summary(
         components=system.components,
         connections=[list(c) for c in system.connections],
         unconnected_ports=unconnected,
-        issues=[_issue(i) for i in issues] if issues is not None else None,
     )
 
 
@@ -980,15 +1014,13 @@ def create_server(
     ) -> ComponentDescription:
         """Describe a component type: everything needed to use it.
 
-        Ports; parameters and inputs with units, defaults and hard limits (a table
-        parameter lists its columns in row order); states and observables with units;
-        modes (the first whose condition holds is reported); warning codes; scenario and
-        contract ids; implementation bindings. Plain numbers you pass later are in these
-        units; pressures are gauge unless the variable says otherwise, and a variable with
-        quantity 'temperature_difference' converts by scale only. A state's `steady` is
-        'settle' (solve sets its equilibrium, e.g. a valve position) or 'hold' (solve keeps
-        it, e.g. a tank level). A warning's `source` is 'envelope' (raised when its
-        `condition`, over display-unit values, holds) or 'component' (raised by the model's
+        Ports; parameters and inputs with units, defaults and hard limits (table columns in
+        row order); states and observables; modes (the first whose condition holds is
+        reported); warning codes; scenario and contract ids; bindings. Plain numbers you
+        pass are in these units; pressures are gauge unless stated, and quantity
+        'temperature_difference' converts by scale only. A state's `steady` is 'settle'
+        (solve sets its equilibrium) or 'hold' (solve keeps it, e.g. a tank level). A
+        warning's `source` is 'envelope' (its `condition` holds) or 'component' (raised by
         code; `message` says when).
         """
         return describe_manifest(cat.get(component), detail)
@@ -1000,9 +1032,8 @@ def create_server(
     ) -> ContractReport:
         """Run a component's scenarios and contracts and report pass or fail.
 
-        Every manifest ships canonical scenarios with expected results and behavioural
-        contracts (monotonicity, bounds, conservation, warning conditions); this runs them
-        against the reference implementation.
+        Scenarios have expected results; contracts check monotonicity, bounds, conservation
+        and warning conditions against the reference implementation.
         """
         report = wp.run_component(cat.get(component), cat)
 
@@ -1148,6 +1179,57 @@ def create_server(
         system.disconnect(a, b)
         return _summary(system_id, system)
 
+    def control_list(system_id: str, system: wp.System) -> ControlList:
+        return ControlList(
+            system_id=system_id,
+            controls={n: c.to_dict() for n, c in system.controls.items()},
+        )
+
+    @server.tool(annotations=editing)
+    @tool_call
+    def add_control(
+        system_id: SystemId,
+        name: Annotated[str, Field(description="Control name (identifier).")],
+        type: Annotated[Literal["pi", "hysteresis"], Field(description="Control law.")],
+        measure: Annotated[str, Field(description="Numeric result path, e.g. 'pump.outlet.p'.")],
+        actuate: Annotated[str, Field(description="Numeric input it writes, e.g. 'pump.speed'.")],
+        settings: Annotated[
+            dict[str, Any],
+            Field(
+                description="pi: setpoint (e.g. '4 bar'), gain (output per measured unit, "
+                "> 0), integral_time ('10 s'), output_min?, output_max? (default: input "
+                "limits), direction? ('reverse' default: raise the output when the measure "
+                "is low; 'direct'). hysteresis: on_below, off_above, on_value, off_value, "
+                "initial? ('on'|'off'), max_switches_per_hour? (6)."
+            ),
+        ],
+    ) -> ControlList:
+        """Add a control that reads one result and writes one component input.
+
+        pi: solve finds the output holding the setpoint (control_saturated if unreachable);
+        simulate runs it after each step's solve. hysteresis: on below on_below, off above
+        off_above (short_cycling if too frequent). Returns every control.
+        """
+        system = store.get(system_id)
+        repeated = sorted(set(settings) & {"name", "type", "measure", "actuate"})
+        if repeated:
+            raise wp.InvalidValueError(
+                f"settings: {', '.join(repeated)} must be passed as their own arguments."
+            )
+        system.add_control(name, type, measure=measure, actuate=actuate, **settings)
+        return control_list(system_id, system)
+
+    @server.tool(annotations=removing)
+    @tool_call
+    def remove_control(
+        system_id: SystemId,
+        name: Annotated[str, Field(description="Control name.")],
+    ) -> ControlList:
+        """Remove a control; its input keeps its last value."""
+        system = store.get(system_id)
+        system.remove_control(name)
+        return control_list(system_id, system)
+
     @server.tool(annotations=read_only)
     @tool_call
     def check_system(system_id: SystemId) -> CheckResult:
@@ -1155,8 +1237,9 @@ def create_server(
 
         Codes: unknown_component, unknown_port, incompatible_ports, self_connection,
         unconnected_port (warning), no_pressure_reference, boundary_short_circuit,
-        parameter_out_of_range, invalid_value. solve and simulate refuse to run while any
-        error remains.
+        parameter_out_of_range, invalid_value; for controls unknown_variable,
+        invalid_control, control_conflict. solve and simulate refuse to run while any error
+        remains.
         """
         issues = store.get(system_id).check()
         errors = sum(i.severity == "error" for i in issues)
@@ -1178,12 +1261,12 @@ def create_server(
     ) -> VariableList:
         """Every variable path with kind, unit, limits and description.
 
-        Kinds: parameter, input, state (settable), observable and port (results only; port
-        variables are '<instance>.<port>.p' in bar gauge, '.m_flow' in kg/s into the
-        component, '.T' in degC).
+        Kinds: parameter, input, state (settable), observable, port ('<instance>.<port>.p'
+        in bar gauge, '.m_flow' in kg/s into the component, '.T' in degC) and control
+        ('control.<name>.output' and '.measure'; component='control' lists them).
         """
         system = store.get(system_id)
-        if component is not None and component not in system.components:
+        if component is not None and component not in [*system.components, "control"]:
             raise UnknownComponentError(
                 f"No instance named '{component}'. " + format_choices(component, system.components)
             )
@@ -1242,7 +1325,9 @@ def create_server(
         Returns the selected values with units (6 significant digits; pressures carry their
         reference, port pressures are bar gauge), the mode of every instance, component
         warnings and non-fatal pre-flight issues. Fails with the list of errors when
-        check_system reports any.
+        check_system reports any. Controls: PI actuators are set to hold their setpoints,
+        hysteresis switches hold their state; `controls` reports each loop (output,
+        measured, setpoint, error, saturated or state).
         """
         system = store.get(system_id)
         paths = _selection(system, variables, units)
@@ -1256,6 +1341,7 @@ def create_server(
             modes=dict(result.modes),
             warnings=[_warning(w) for w in result.warnings],
             issues=[_issue(i) for i in result.issues],
+            controls=_controls_out(result.controls),
         )
 
     @server.tool(annotations=editing)
@@ -1281,18 +1367,22 @@ def create_server(
         variables: Variables = None,
         units: Units = None,
     ) -> SolveForOutput:
-        """Goal seek: find the value of one input or parameter that gives a target result.
+        """Goal seek: the value of one input or parameter that gives a target result.
 
-        Solves the steady state repeatedly (Brent's method on `vary` between `lower` and
-        `upper`) until `target` equals `value`, e.g. the pump speed that delivers 15 m3/h
-        or the valve opening that gives 2 bar downstream. The target must cross the value
-        inside the bounds; otherwise the error reports the target at both bounds and
-        nothing is changed. On success `vary` stays at the value found and the result is
-        the steady operating point there, as from solve.
+        Brent's method on `vary` between `lower` and `upper` until `target` equals `value`,
+        e.g. the pump speed for 15 m3/h. If the target does not cross the value inside the
+        bounds, the error reports it at both bounds and nothing changes. On success `vary`
+        stays at the value found; the result is the operating point there, as from solve.
         """
         system = store.get(system_id)
         paths = _selection(system, variables, units)
-        original = system.get(vary)  # validates the path (settable)
+        system.get(vary)  # validates the path (settable)
+        for ctrl in system.controls.values():
+            if ctrl.actuate == vary:
+                raise wp.InvalidValueError(
+                    f"vary: '{vary}' is written by control '{ctrl.name}', so solve sets it; "
+                    "vary another variable or remove_control first."
+                )
         inst, _, local = vary.partition(".")
         spec = system.manifest(inst).variable(local)
         if not spec.is_numeric:
@@ -1325,7 +1415,9 @@ def create_server(
                 )
             return float(got) - goal[0]
 
-        try:
+        # Every trial solve also goal-seeks the PI actuators, so a failure restores all
+        # values, not only `vary` (design 9: a failed solve_for leaves the system unchanged).
+        with system.restore_on_error():
             f_lo = reached(lo)
             f_hi = reached(hi)
             if f_lo * f_hi > 0.0:
@@ -1347,9 +1439,6 @@ def create_server(
             system.set_values({vary: root})
             result = system.solve()
             count += 1
-        except BaseException:
-            system.set_values({vary: original})
-            raise
         values = solve_values(system, result, paths, units)
         achieved = result[target]
         return SolveForOutput(
@@ -1361,6 +1450,7 @@ def create_server(
             modes=dict(result.modes),
             warnings=[_warning(w) for w in result.warnings],
             issues=[_issue(i) for i in result.issues],
+            controls=_controls_out(result.controls),
             vary=vary,
             found=_value(spec, system.get(vary)),
             target=target,
@@ -1377,58 +1467,6 @@ def create_server(
             evaluations=count,
         )
 
-    def expand_events(
-        system: wp.System, events: list[Event] | None, duration: float | str, step: float | str
-    ) -> list[dict[str, Any]]:
-        """Plain set events, with every ramp turned into one set event per step."""
-        total = parse_duration(duration, "duration")
-        dt = parse_duration(step, "step")
-        out: list[dict[str, Any]] = []
-        for k, ev in enumerate(events or []):
-            where = f"events[{k}]"
-            if (ev.set is None) == (ev.ramp is None):
-                raise wp.InvalidValueError(
-                    f"{where} needs exactly one of 'set' (values at `at`) or 'ramp' (with "
-                    "'over'), e.g. {'at': '0 s', 'ramp': {'filter.clogging': [0, 0.8]}, "
-                    "'over': '30 min'}."
-                )
-            if ev.set is not None:
-                if ev.over is not None:
-                    raise wp.InvalidValueError(f"{where}: 'over' is only used with 'ramp'.")
-                out.append({"at": ev.at, "set": ev.set})
-                continue
-            if ev.over is None or not ev.ramp:
-                raise wp.InvalidValueError(
-                    f"{where}: a ramp needs a non-empty 'ramp' mapping and a duration 'over'."
-                )
-            t0 = parse_duration(ev.at, f"{where}.at")
-            span = parse_duration(ev.over, f"{where}.over")
-            if span <= 0 or dt <= 0:
-                raise wp.InvalidValueError(f"{where}.over must be positive.")
-            if t0 + span > total + 1e-9 * dt:
-                raise wp.InvalidValueError(
-                    f"{where}: the ramp ends at {t0 + span:g} s, after the end of the "
-                    f"simulation ({total:g} s). Shorten 'over' or lengthen the duration."
-                )
-            ends: dict[str, tuple[float, float]] = {}
-            for path, pair in ev.ramp.items():
-                system.get(path)  # validates the path (settable)
-                inst, _, local = path.partition(".")
-                spec = system.manifest(inst).variable(local)
-                if not spec.is_numeric or len(pair) != 2:
-                    raise wp.InvalidValueError(
-                        f"{where}.ramp.{path} must be [start, end] of a numeric variable."
-                    )
-                a = float(spec.parse(pair[0], f"{where}.ramp.{path}[0]"))
-                b = float(spec.parse(pair[1], f"{where}.ramp.{path}[1]"))
-                ends[path] = (a, b)
-            n = max(math.ceil(span / dt - 1e-9), 1)
-            for i in range(n + 1):
-                t = t0 + span if i == n else t0 + i * dt
-                frac = min((t - t0) / span, 1.0)
-                out.append({"at": t, "set": {p: a + (b - a) * frac for p, (a, b) in ends.items()}})
-        return out
-
     @server.tool(annotations=editing)
     @tool_call
     def simulate(
@@ -1440,10 +1478,8 @@ def create_server(
         events: Annotated[
             list[Event] | None,
             Field(
-                description="Timed set-point changes, e.g. [{'at': '60 s', 'set': "
-                "{'valve.opening': 0}}], or linear ramps, e.g. [{'at': '0 s', 'ramp': "
-                "{'filter.clogging': [0, 0.8]}, 'over': '30 min'}]; events after the "
-                "duration are rejected."
+                description="e.g. [{'at': '60 s', 'set': {'valve.opening': 0}}, {'at': "
+                "'2 min', 'ramp': {'filter.clogging': [0, 0.8]}, 'over': '30 min'}]."
             ),
         ] = None,
         variables: Variables = None,
@@ -1454,30 +1490,30 @@ def create_server(
         restore: Annotated[
             bool,
             Field(
-                description="Put parameters, inputs and states (tank levels, positions) back "
-                "to their values before the run, so the next solve or simulate starts from "
-                "the same point."
+                description="Put parameters, inputs and states (tank levels) back afterwards, "
+                "so the next run starts from the same point."
             ),
         ] = False,
     ) -> SimulateOutput:
-        """Simulate over time with a fixed step and timed events.
+        """Simulate over time with a fixed step and timed events (set or linear ramp).
 
         Samples at every multiple of step, at each event time and at the end. Returns
-        downsampled series (the first and last samples are always kept) with per-variable
-        min, max and final values over the full run; each warning once with its first
-        time, last time and whether it is still active at the end; and every mode change.
-        Unless restore is true, the system keeps its final state and the values set by
-        events.
+        downsampled series with min, max and final over the full run; each warning once
+        (first time, last time, active at end); every mode change. Controls act after each
+        sample's solve (taking effect over the next step); their series are always included
+        and `controls` reports each loop at the end. Unless restore is true, the system keeps
+        its final state.
         """
         system = store.get(system_id)
         paths = _selection(system, variables, units)
         sim = system.simulate(
             duration,
             step,
-            expand_events(system, events, duration, step),
+            [e.model_dump(exclude_none=True) for e in events or []],
             variables=paths,
             restore=restore,
         )
+        paths += [p for p in sim.series if p not in paths]  # control series
         targets = _convert_request(sim.units, sim.references, units, paths)
         n = len(sim.time)
         idx = list(range(n))
@@ -1514,6 +1550,7 @@ def create_server(
             ],
             final_modes=dict(sim.final.modes),
             issues=[_issue(i) for i in sim.final.issues],
+            controls=_controls_out(sim.controls),
         )
 
     # -- documents ------------------------------------------------------------------------
@@ -1521,7 +1558,8 @@ def create_server(
     @tool_call
     def get_system(system_id: SystemId) -> SystemDocument:
         """The system document (design 6.3): components with explicit values, connections,
-        changed states and the optional simulation block. Pass it to load_system later."""
+        changed states, controls and the optional simulation block. Pass it to
+        load_system later."""
         return SystemDocument(system_id=system_id, document=store.get(system_id).to_dict())
 
     @server.tool(annotations=editing)
@@ -1530,16 +1568,16 @@ def create_server(
         document: Annotated[
             dict[str, Any] | str,
             Field(
-                description="A system document (object, or YAML/JSON text). Minimal "
-                "example: {'worldparts_system': '0.1', 'name': 'line', 'components': "
-                "[{'name': 'mains', 'type': 'supply', 'parameters': {'pressure': '3 bar'}}, "
-                "{'name': 'v', 'type': 'valve', 'inputs': {'opening': 0.5}}, {'name': 'out', "
-                "'type': 'drain'}], 'connections': [['mains.port', 'v.port_a'], ['v.port_b', "
-                "'out.port']]}. Component items are {name, type, parameters?, inputs?, "
-                "states?}; an optional 'simulation' is {duration, step?, events?}."
+                description="A system document (object, or YAML/JSON text), e.g. "
+                "{'worldparts_system': '0.1', 'name': 'line', 'components': [{'name': "
+                "'mains', 'type': 'supply', 'parameters': {'pressure': '3 bar'}}, {'name': "
+                "'out', 'type': 'drain'}], 'connections': [['mains.port', 'out.port']]}. "
+                "Components are {name, type, parameters?, inputs?, states?}; optional "
+                "'controls' ({name, type, measure, actuate, ...settings of add_control}) "
+                "and 'simulation' {duration, step?, events?}."
             ),
         ],
-    ) -> SystemSummary:
+    ) -> LoadedSystem:
         """Create a system from a system document and return its new system_id.
 
         get_system returns such a document. A document of the wrong shape fails with every
@@ -1557,7 +1595,12 @@ def create_server(
                 raise wp.InvalidValueError("document must be a mapping (a system document).")
         system = wp.System.from_dict(doc, cat)
         system_id = store.add(system)
-        return _summary(system_id, system, system.check())
+        summary = _summary(system_id, system)
+        return LoadedSystem(
+            **summary.model_dump(),
+            controls={n: c.describe() for n, c in system.controls.items()} or None,
+            issues=[_issue(i) for i in system.check()],
+        )
 
     # -- resources --------------------------------------------------------------------------
     for m in cat:

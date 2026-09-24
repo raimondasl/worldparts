@@ -19,10 +19,15 @@ Mapping (see ``docs/wntr-adapter.md`` for the measured divergence)::
     centrifugal_pump  HEAD pump, speed setting = relative speed; EPANET's three-point power
                       curve when it reproduces the fitted quadratic exactly (linear term 0),
                       else a multi-point curve sampled from the quadratic, continued past the
-                      run-out flow with negative heads
+                      run-out flow with negative heads; the curve is scaled by
+                      ``1 - wear_head`` (``wear_efficiency`` only changes the shaft power,
+                      which is not compared)
     tank              tank with the overflow option (elevation of its port nodes, level, height,
                       diameter; a level up to 1 mm is exported as 0, empty) and one TCV per
-                      connected port for ``port_kv``
+                      connected port for ``port_kv``; a top inlet (``inlet_height > 0``) is
+                      exported bottom-fed and listed as an approximation
+    leak              EPANET emitter at the port's junction, exponent 0.5, coefficient
+                      ``Cd * A * opening * sqrt(2 g)`` (m3/s per m**0.5 in WNTR's SI)
     media_filter      TCV matching the pressure drop at a reference flow (the linear media
                       term cannot be represented; see :data:`KNOWN_DIVERGENCE_SOURCES`)
     uv_reactor        TCV through the rated point (exact: the UV law is quadratic)
@@ -78,6 +83,7 @@ __all__ = [
     "KNOWN_DIVERGENCE_SOURCES",
     "SUPPORTED_COMPONENTS",
     "ComparisonReport",
+    "EmitterMap",
     "LinkComparison",
     "LinkMap",
     "NodeComparison",
@@ -128,6 +134,8 @@ PUMP_CURVE_EXTENT: float = 3.0
 MAX_ID: int = 31
 #: Relative speed at or below which a pump is off (worldparts ``OFF_SPEED``).
 PUMP_OFF_SPEED: float = 0.01
+#: EPANET emitter exponent (``Q = C * p**EMITTER_EXPONENT``): 0.5 is a fixed-area orifice.
+EMITTER_EXPONENT: float = 0.5
 #: Flows below this (m3/h) or gauge pressures below this (bar) get no relative difference.
 FLOW_FLOOR: float = 1e-3
 PRESSURE_FLOOR: float = 1e-4
@@ -145,6 +153,7 @@ SUPPORTED_COMPONENTS: dict[str, str] = {
     _H + "tank": "tank (overflow allowed) plus one TCV per connected port for port_kv",
     _H + "media_filter": "TCV matching the pressure drop at a reference flow (approximate)",
     _H + "uv_reactor": "TCV through the rated point (exact quadratic)",
+    _H + "leak": "emitter at the port junction, coefficient Cd A opening sqrt(2 g), exponent 0.5",
 }
 
 #: Why EPANET results differ from the reference runtime (measured sizes in
@@ -169,7 +178,8 @@ KNOWN_DIVERGENCE_SOURCES: tuple[str, ...] = (
     "segment linearly, which the export notes when the operating point is there). EPANET "
     "closes a pump against reverse flow and a stopped "
     "pump (speed <= 0.01) is exported closed, while worldparts lets water through a "
-    "stopped pump as a resistance.",
+    "stopped pump as a resistance. A worn pump's curve is scaled by 1 - wear_head; "
+    "wear_efficiency changes only the shaft power, which is not compared.",
     "Leakage: a closed worldparts check valve passes its leakage fraction in reverse, "
     "EPANET's check valve nothing; EPANET linearises very small valve flows, so relative "
     "differences below 1e-3 m3/h are not reported.",
@@ -177,7 +187,16 @@ KNOWN_DIVERGENCE_SOURCES: tuple[str, ...] = (
     "solve does. A full tank keeps receiving water in both (worldparts spills the excess "
     "and warns tank_overflow; the tank is exported with EPANET's overflow option). An "
     "empty tank blocks outflow in both, through different mechanisms: worldparts counts a "
-    "level up to 1 mm as empty, so such a level is exported as 0.",
+    "level up to 1 mm as empty, so such a level is exported as 0. EPANET tanks are "
+    "bottom-fed: a top inlet whose mouth is above the water (inlet_height above the level) "
+    "is exported at the bottom, so EPANET's inflow feels the level instead of the mouth "
+    "height and its inlet is not blocked against backflow; with the mouth submerged the "
+    "two agree.",
+    "Leak: an EPANET emitter Q = C p**0.5 with C = Cd A opening sqrt(2 g) is the orifice "
+    "equation exactly (worldparts regularises it only below about 0.4 Pa); EPANET 2.2 "
+    "lets an emitter take water in at negative pressure, as worldparts' backflow does. "
+    "EPANET reports the emitter flow as the junction's demand; several leaks at one "
+    "junction share it in proportion to their coefficients.",
     "Convergence: EPANET stops at ACCURACY = 1e-6 (relative flow change) and reports in "
     "single precision (about 1e-7 relative); worldparts converges to 1e-9 scaled residual. "
     "Viscosity is set to the worldparts value (1.0038e-6 m2/s).",
@@ -289,8 +308,9 @@ class PumpCurveMap:
         curve: WNTR curve name.
         form: ``three_point`` or ``multi_point``.
         points: ``(flow m3/s, head m)`` points of the exported curve (rated speed).
-        coefficients: ``(a, b, c)`` of the rated-speed fit ``H = a + b*Q + c*Q**2`` (SI).
-        runout_flow: Flow (m3/s) at which the fitted head reaches 0 (rated speed).
+        coefficients: ``(a, b, c)`` of the exported rated-speed curve
+            ``H = a + b*Q + c*Q**2`` (SI): the fit times ``1 - wear_head``.
+        runout_flow: Flow (m3/s) at which the exported head reaches 0 (rated speed).
         multi_point_deviation: Largest head difference (m) of the multi-point curve from the
             quadratic, over 0 to :data:`PUMP_CURVE_EXTENT` times the run-out flow (the
             curve continues past the run-out flow with negative heads).
@@ -298,6 +318,8 @@ class PumpCurveMap:
             curve through 0, half and all of the largest catalogue flow; None when EPANET
             could not fit it.
         fit_rms: RMS residual (m) of the worldparts quadratic fit to the catalogue points.
+        wear_head: The pump's ``wear_head`` input (0 for a new pump); the exported curve
+            is the new pump's times ``1 - wear_head``.
     """
 
     component: str
@@ -309,6 +331,7 @@ class PumpCurveMap:
     multi_point_deviation: float
     three_point_deviation: float | None
     fit_rms: float
+    wear_head: float = 0.0
 
     @property
     def max_deviation(self) -> float:
@@ -316,6 +339,25 @@ class PumpCurveMap:
         if self.form == "three_point" and self.three_point_deviation is not None:
             return self.three_point_deviation
         return self.multi_point_deviation
+
+
+@dataclass(frozen=True)
+class EmitterMap:
+    """A worldparts leak carried to EPANET as an emitter.
+
+    Attributes:
+        component: worldparts instance.
+        junction: WNTR junction that carries the emitter (the leak port's node).
+        coefficient: This leak's emitter coefficient ``Cd * A * opening * sqrt(2 g)`` in
+            WNTR's SI units, m3/s per m**0.5 of pressure head (WNTR writes it to a CMH
+            ``.inp`` multiplied by 3600, in m3/h per m**0.5).
+        flow_path: worldparts result path of the same flow (``leak.volume_flow``).
+    """
+
+    component: str
+    junction: str
+    coefficient: float
+    flow_path: str
 
 
 @dataclass
@@ -330,6 +372,7 @@ class WntrTranslation:
         boundaries: Supply or drain instance to its reservoir name (its joint link has the
             instance's name, possibly shortened).
         pumps: Pump instance to :class:`PumpCurveMap`.
+        emitters: Leak instance to :class:`EmitterMap`.
         approximations: What this particular export approximates, with magnitudes.
     """
 
@@ -339,6 +382,7 @@ class WntrTranslation:
     links: dict[str, LinkMap] = field(default_factory=dict)
     boundaries: dict[str, str] = field(default_factory=dict)
     pumps: dict[str, PumpCurveMap] = field(default_factory=dict)
+    emitters: dict[str, EmitterMap] = field(default_factory=dict)
     approximations: list[str] = field(default_factory=list)
 
     def node_of_port(self, port: str) -> NodeMap | None:
@@ -543,8 +587,8 @@ def translate(
     edges: dict[int, list[tuple[int, float, str]]] = {i: [] for i in range(len(groups))}
     for name, kind in kinds.items():
         comp = system.component(name)
-        if kind in ("supply", "drain"):
-            continue
+        if kind in ("supply", "drain", "leak"):
+            continue  # one port: no elevation difference to carry
         if kind == "tank":
             ports = [f"{name}.inlet", f"{name}.outlet"]
             if all(p in connected for p in ports):
@@ -596,6 +640,7 @@ def translate(
     opts.hydraulic.inpfile_units = INP_UNITS
     opts.hydraulic.viscosity = (MU / RHO) / EPANET_VISCOSITY
     opts.hydraulic.accuracy = ACCURACY
+    opts.hydraulic.emitter_exponent = EMITTER_EXPONENT
     opts.time.duration = 0
     wn.title = [
         f"worldparts system '{system.name}' (worldparts {wp.__version__})",
@@ -614,11 +659,11 @@ def translate(
     wn_node: dict[int, str] = {}
     for i, members in enumerate(groups):
         needs_node = any(
-            p in connected or kinds[p.split(".")[0]] not in ("tank", "supply", "drain")
+            p in connected or kinds[p.split(".")[0]] not in ("tank", "supply", "drain", "leak")
             for p in members
         )
         if not needs_node:
-            continue  # only an unconnected tank or boundary port: nothing flows there
+            continue  # only an unconnected tank, boundary or leak port: nothing flows there
         name = node_names.reserve(f"J{len(wn_node) + 1}")
         wn_node[i] = name
         wn.add_junction(name, base_demand=0.0, elevation=elevation[i])
@@ -678,6 +723,21 @@ def translate(
             wn.add_valve(name, a, b, diameter=d, valve_type="TCV", initial_setting=0.0)
             tr.links[name] = LinkMap(name, "joint", inst, a, b, f"{inst}.volume_flow", 0.0, d)
             continue
+        if kind == "leak":
+            port = f"{inst}.port"
+            if port not in connected:
+                continue  # an unconnected leak discharges nothing
+            junction = wn_node[node_index[port]]
+            # Q = Cd A f sqrt(2 dp / rho) = Cd A f sqrt(2 g) sqrt(h) with h = dp / (rho g),
+            # EPANET's pressure head: an emitter Q = C h**0.5, C in m3/s per m**0.5 (WNTR SI).
+            area = math.pi * float(p["diameter"]) ** 2 / 4.0
+            coefficient = (
+                float(p["discharge_coefficient"]) * area * comp.area_fraction() * math.sqrt(2 * G)
+            )
+            node = wn.get_node(junction)
+            node.emitter_coefficient = (node.emitter_coefficient or 0.0) + coefficient
+            tr.emitters[inst] = EmitterMap(inst, junction, coefficient, f"{inst}.volume_flow")
+            continue
         if kind == "tank":
             level = min(float(comp.states["level"]), float(p["height"]))
             if level <= EMPTY_LEVEL:
@@ -715,6 +775,21 @@ def translate(
                              initial_setting=k)  # fmt: skip
                 tr.links[name] = LinkMap(
                     name, "tcv", inst, a, tank_nodes[inst], f"{path}.m_flow", k, d
+                )
+            inlet_height = float(p.get("inlet_height", 0.0))
+            if inlet_height > 0.0 and f"{inst}.inlet" in connected:
+                if level < inlet_height:
+                    detail = (
+                        f"the mouth is {inlet_height - level:.4g} m above the water, so "
+                        "EPANET's inflow meets the head of the level instead of the mouth "
+                        f"({inlet_height:.4g} m) and its inlet is not blocked against "
+                        "backflow; flows through the inlet differ"
+                    )
+                else:
+                    detail = "the mouth is submerged at this level, so the export is exact here"
+                tr.approximations.append(
+                    f"{inst} (tank): top inlet at {inlet_height:.4g} m exported at the bottom "
+                    f"(EPANET tanks are bottom-fed); {detail}."
                 )
             continue
         pa, pb = (f"{inst}.{q}" for q in system.manifest(inst).ports)
@@ -772,7 +847,8 @@ def translate(
             )
         elif kind == "centrifugal_pump":
             fit = comp.fit
-            ca, cb, cc = fit.head
+            wear = float(comp.inputs.get("wear_head", 0.0))
+            ca, cb, cc = (x * (1.0 - wear) for x in fit.head)
             multi, multi_dev, three, three_dev = _pump_curves(ca, cb, cc, fit.max_flow)
             use_three = three is not None and three_dev is not None and three_dev <= multi_dev
             pts = three if use_three and three is not None else multi
@@ -794,8 +870,21 @@ def translate(
                 multi_dev,
                 three_dev,
                 fit.head_rms,
+                wear,
             )
             tr.pumps[inst] = pump_map
+            wear_eff = float(comp.inputs.get("wear_efficiency", 0.0))
+            if wear > 0.0:
+                tr.approximations.append(
+                    f"{inst} (centrifugal_pump): worn pump, the exported head curve is the new "
+                    f"pump's times 1 - wear_head = {1.0 - wear:.4g} (exact, as in worldparts)."
+                )
+            if wear_eff > 0.0:
+                tr.approximations.append(
+                    f"{inst} (centrifugal_pump): wear_efficiency {wear_eff:.4g} changes only "
+                    "the shaft power, which is not exported (EPANET gets no efficiency curve) "
+                    "and not compared."
+                )
             other = (
                 f"a multi-point curve would deviate up to {multi_dev:.3g} m"
                 if use_three
@@ -891,8 +980,10 @@ class LinkComparison:
     Attributes:
         path: worldparts result path (``p.volume_flow``, ``mains.volume_flow`` or a tank
             port's ``tank.inlet.m_flow``).
-        wntr: WNTR link carrying the flow (a supply's or drain's joint for its flow).
-        kind: WNTR link kind (``pipe``, ``tcv``, ``cv_pipe``, ``pump`` or ``joint``).
+        wntr: WNTR link carrying the flow (a supply's or drain's joint for its flow), or
+            for a leak the junction whose emitter carries it.
+        kind: WNTR link kind (``pipe``, ``tcv``, ``cv_pipe``, ``pump`` or ``joint``), or
+            ``emitter`` for a leak (its flow is the emitter's share of the junction demand).
         worldparts: worldparts flow in m3/h, in the worldparts sign convention.
         wntr_value: WNTR flow in m3/h, in the same convention.
         abs_diff: ``wntr_value - worldparts`` in m3/h.
@@ -1144,6 +1235,16 @@ def compare_with_wntr(
         q = float(flows[link.name]) * 3600.0
         diff, rel = _diffs(wp_q, q, FLOW_FLOOR)
         links.append(LinkComparison(link.flow_path, link.name, link.kind, wp_q, q, diff, rel))
+    demands = res.node["demand"].iloc[0]
+    totals: dict[str, float] = {}
+    for em in tr.emitters.values():
+        totals[em.junction] = totals.get(em.junction, 0.0) + em.coefficient
+    for em in tr.emitters.values():
+        wp_q = float(solution.get(em.flow_path, unit="m3/h") or 0.0)
+        share = em.coefficient / totals[em.junction] if totals[em.junction] > 0 else 0.0
+        q = float(demands[em.junction]) * share * 3600.0
+        diff, rel = _diffs(wp_q, q, FLOW_FLOOR)
+        links.append(LinkComparison(em.flow_path, em.junction, "emitter", wp_q, q, diff, rel))
     nodes: list[NodeComparison] = []
     for node in tr.nodes.values():
         if not node.ports:

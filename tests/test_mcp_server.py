@@ -3,7 +3,8 @@
 The in-process tests connect ``mcp.Client`` to the server object (the SDK's in-memory
 transport; ``mode="legacy"`` runs the JSON-RPC stream loop over memory streams). Every
 successful call's ``structuredContent`` is validated against the tool's ``outputSchema``.
-Only the v0.1 core components (supply, drain, pipe, valve, check_valve) are used.
+Only the v0.1 core components (supply, drain, pipe, valve, check_valve) are used, except
+in the control tests, which need a pump.
 """
 
 from __future__ import annotations
@@ -36,6 +37,8 @@ TOOLS = {
     "set_values",
     "connect",
     "disconnect",
+    "add_control",
+    "remove_control",
     "check_system",
     "solve",
     "simulate",
@@ -822,3 +825,133 @@ def test_autosave_failure_does_not_break_tool_calls(tmp_path: Path) -> None:
 
     run_with_server(server, body)
     assert server.store.autosave() == []  # type: ignore[attr-defined]
+
+
+# ----------------------------------------------------------------------------------------
+# controls (design 13.1); these use a centrifugal pump with an exactly quadratic curve
+# ----------------------------------------------------------------------------------------
+BOOSTER = {
+    "worldparts_system": "0.1",
+    "name": "booster",
+    "components": [
+        {"name": "mains", "type": "supply", "parameters": {"pressure": 0.5}},
+        {
+            "name": "pump",
+            "type": "centrifugal_pump",
+            "parameters": {"head_curve": [[0, 30], [10, 27.5], [20, 20], [30, 7.5]]},
+            "inputs": {"speed": 0.5},
+        },
+        {"name": "v", "type": "valve", "parameters": {"kv": 10}},
+        {"name": "out", "type": "drain"},
+    ],
+    "connections": [
+        ["mains.port", "pump.inlet"],
+        ["pump.outlet", "v.port_a"],
+        ["v.port_b", "out.port"],
+    ],
+}
+DUTY = {"name": "duty", "type": "pi", "measure": "pump.outlet.p", "setpoint": "3 bar",
+        "actuate": "pump.speed", "gain": 0.1, "integral_time": "1 s", "output_min": 0.3,
+        "output_max": 1.2}  # fmt: skip
+
+
+def test_pi_control_matches_solve_for() -> None:
+    """The steady PI output is the speed solve_for finds for the same target."""
+
+    async def body(s: Session) -> None:
+        loaded = await s.call("load_system", document={**BOOSTER, "controls": [DUTY]})
+        assert loaded["controls"] == {"duty": "pi: pump.outlet.p -> pump.speed"}
+        assert loaded["issues"] == []
+        sid = loaded["system_id"]
+        r = await s.call("solve", system_id=sid)
+        duty = r["controls"]["duty"]
+        assert duty["type"] == "pi" and duty["saturated"] is False
+        assert duty["measured"] == pytest.approx(3.0) and duty["setpoint"] == 3.0
+        assert duty["output_unit"] == "1" and duty["measure_unit"] == "bar"
+        assert r["values"]["control.duty.output"]["value"] == duty["output"]
+        assert r["values"]["control.duty.measure"]["reference"] == "gauge"
+        plain = (await s.call("load_system", document=BOOSTER))["system_id"]
+        found = await s.call("solve_for", system_id=plain, target="pump.outlet.p",
+                             value="3 bar", vary="pump.speed", lower=0.3, upper=1.2)  # fmt: skip
+        assert "controls" not in found
+        assert found["found"]["value"] == pytest.approx(duty["output"], rel=2e-6)
+        assert duty["output"] == pytest.approx(1.04965, abs=1e-5)  # hand value, test_controls
+        # The controlled input cannot be varied by solve_for.
+        err = await s.fail("solve_for", system_id=sid, target="pump.volume_flow", value=15,
+                           vary="pump.speed", lower=0.3, upper=1.2)  # fmt: skip
+        assert "written by control 'duty'" in err
+        doc = (await s.call("get_system", system_id=sid))["document"]
+        assert doc["controls"] == [DUTY]
+
+    run(body)
+
+
+def test_add_and_remove_control_tools() -> None:
+    async def body(s: Session) -> None:
+        sid = (await s.call("load_system", document=BOOSTER))["system_id"]
+        own = ("name", "type", "measure", "actuate")
+        settings = {k: v for k, v in DUTY.items() if k not in own}
+        out = await s.call(
+            "add_control", system_id=sid, name="duty", type="pi", measure="pump.outlet.p",
+            actuate="pump.speed", settings=settings,
+        )  # fmt: skip
+        assert out["controls"] == {"duty": DUTY}
+        for kwargs, text in [
+            ({"name": "x", "measure": "pump.outlet.q"}, "[unknown_variable]"),
+            ({"name": "x", "settings": {**settings, "output_min": 2}}, "[invalid_control]"),
+            ({"name": "x"}, "[control_conflict]"),
+            ({"name": "duty", "actuate": "v.opening"}, "already exists"),
+            ({"name": "x", "settings": {**settings, "measure": "a.b"}}, "own arguments"),
+        ]:
+            args = {"system_id": sid, "name": "x", "type": "pi", "measure": "pump.outlet.p",
+                    "actuate": "pump.speed", "settings": settings, **kwargs}  # fmt: skip
+            err = await s.fail("add_control", **args)
+            assert text in err, err
+        hyst = await s.call("add_control", system_id=sid, name="guard", type="hysteresis",
+                            measure="pump.outlet.p", actuate="v.opening",
+                            settings={"on_below": 1, "off_above": 4, "on_value": 1,
+                                      "off_value": 0.5, "initial": "on"})  # fmt: skip
+        assert list(hyst["controls"]) == ["duty", "guard"]
+        variables = await s.call("list_variables", system_id=sid, component="control")
+        assert {v["path"] for v in variables["variables"]} == {
+            "control.duty.output", "control.duty.measure",
+            "control.guard.output", "control.guard.measure",
+        }  # fmt: skip
+        assert all(v["kind"] == "control" for v in variables["variables"])
+        check = await s.call("check_system", system_id=sid)
+        assert check["ok"]
+        out = await s.call("remove_control", system_id=sid, name="guard")
+        assert list(out["controls"]) == ["duty"]
+        err = await s.fail("remove_control", system_id=sid, name="guard")
+        assert "No control named 'guard'" in err
+
+    run(body)
+
+
+def test_simulate_reports_controls_and_series() -> None:
+    async def body(s: Session) -> None:
+        sid = (await s.call("load_system", document={**BOOSTER, "controls": [DUTY]}))["system_id"]
+        sim = await s.call("simulate", system_id=sid, duration="60 s", step="1 s",
+                           variables=["pump.volume_flow"], restore=True)  # fmt: skip
+        assert set(sim["variables"]) == {
+            "pump.volume_flow", "control.duty.output", "control.duty.measure"
+        }  # fmt: skip
+        out = sim["variables"]["control.duty.output"]
+        assert out["values"][0] == 0.5 and out["final"] == pytest.approx(1.04965, abs=1e-4)
+        assert sim["variables"]["control.duty.measure"]["final"] == pytest.approx(3, abs=1e-4)
+        assert sim["controls"]["duty"]["saturated"] is False
+        # 'control' selects every control result, like an instance name.
+        solved = await s.call("solve", system_id=sid, variables=["control"])
+        assert set(solved["values"]) == {"control.duty.output", "control.duty.measure"}
+        err = await s.fail("simulate", system_id=sid, duration="10 s",
+                           events=[{"at": 1, "set": {"pump.speed": 1}}])  # fmt: skip
+        assert "written by control 'duty'" in err
+        # Ramps are expanded by the core, as documents use them.
+        ramp = await s.call("simulate", system_id=sid, duration="10 s", step="1 s",
+                            events=[{"at": 0, "ramp": {"v.opening": [1, 0.5]}, "over": 5}],
+                            variables=["v.opening"])  # fmt: skip
+        assert ramp["variables"]["v.opening"]["values"][:7] == pytest.approx(
+            [1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.5]
+        )
+
+    run(body)

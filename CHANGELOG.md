@@ -7,6 +7,64 @@ interfaces. Each such change is listed here and in [docs/design.md](docs/design.
 
 ## [Unreleased]
 
+Milestone v0.3, part 1 (design section 13): control loops, ramp events in documents, pump
+wear, a leak component and top-fed tanks.
+
+### Added
+
+- **Control loops** (design 13.1, `worldparts.controls`). A system may carry `controls`: a
+  `pi` loop or a `hysteresis` switch that reads one reported numeric variable and writes
+  one numeric component input. `System.add_control`, `remove_control` and `controls`;
+  controls round-trip in system documents (`controls` list, validated by the schema).
+  `solve()` goal-seeks every PI actuator within its output limits (Brent's method, loop by
+  loop for interacting loops) and leaves it at the value found; a hysteresis control holds
+  its state. `simulate()` runs the loops as sampled-data controllers: the command computed
+  from the solution at `t` is applied at `t` exactly like an event (the system is solved
+  again with it, and that solution is recorded and integrated), PI in incremental form with
+  clamping as anti-windup. `SolveResult.controls` and `SimulationResult.controls` report
+  each loop; `control.<name>.output` and `control.<name>.measure` are results. `check()`
+  codes `invalid_control` and `control_conflict`; warnings `control_saturated`,
+  `short_cycling`, `control_direction`, `control_unresponsive` and
+  `control_not_converged`. `System.restore_on_error()` puts every value back when a block
+  raises.
+- **MCP tools `add_control` and `remove_control`** (18 tools). `solve`, `solve_for` and
+  `simulate` return a `controls` block, `list_variables(component="control")` lists the
+  control results, and `variables=["control"]` (or `"control.<name>"`) selects them, as
+  does the CLI `--var control`. The CLI prints a `Controls` table.
+- **Ramp events in system documents and `System.simulate`** (design 13.2):
+  `{at, ramp: {path: [start, end]}, over}` becomes one set event per step in the core, so
+  documents, the Python API, the CLI and MCP share it.
+- **Pump wear** (design 13.3): `centrifugal_pump` inputs `wear_head` and `wear_efficiency`
+  (0 to 0.5). Head wear scales the running pump's head law (the linear term included); the
+  stopped pump's resistance is not worn. Shaft power is `P_new (1 - wear_head) / (1 -
+  wear_efficiency)`. The WNTR adapter scales a worn pump's head curve.
+- **`leak` component** (design 13.4): an orifice to atmosphere, `Q = Cd A opening
+  sqrt(2 dp / rho)`, with backflow at negative gauge pressure (`backflow` warning). The
+  WNTR adapter exports it as an EPANET emitter.
+- **Top-fed tanks** (design 13.5): `tank.inlet_height`. The inlet discharges freely at that
+  height; backflow through a dry mouth is blocked and a simulation step draws through the
+  inlet at most the water above the mouth. The WNTR adapter exports the inlet bottom-fed
+  and lists it as an approximation.
+- **Example** `examples/booster_station.yaml`: a PI booster pump with a demand ramp.
+
+### Fixed (review of the part 1 work)
+
+- A control command now acts over the step that follows the sample at which it is
+  computed, exactly like an event at that time; it used to reach storage one step later.
+- A steady solve whose PI measure is undefined (None) at every output holds the output,
+  as a simulation does, instead of raising; one undefined only at some outputs raises
+  with both points named. A failed steady solve, or a failed MCP `solve_for`, leaves every
+  value as it was (actuators and switch states included).
+- A PI loop whose measure does not respond to its actuator in a steady solve (a tank level,
+  which `solve()` holds) holds its output and warns `control_unresponsive` instead of
+  reporting a draining tank as settled or saturated.
+- Setpoints, thresholds, output limits and `integral_time` must be finite, and `state` on a
+  PI control is reported as an unknown field (`invalid_control`).
+- `worldparts simulate --json --var ...` keeps the control series.
+- `drawing_air` on a dry top inlet fires only when the port is more than 100 Pa below
+  atmospheric (design 8.9), not whenever it is below the mouth's head: a supply too weak to
+  reach the mouth, or a stopped fill pump, is no longer reported as not physical.
+
 ## [0.1.0] - 2026-09-23
 
 The first public release: a hydraulic starter kit for pumping, water treatment and

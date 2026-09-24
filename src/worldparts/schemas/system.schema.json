@@ -12,6 +12,7 @@
     "description": {"type": "string"},
     "components": {"type": "array", "items": {"$ref": "#/$defs/component"}},
     "connections": {"type": "array", "items": {"$ref": "#/$defs/connection"}},
+    "controls": {"type": "array", "items": {"$ref": "#/$defs/control"}, "description": "Control loops (docs/design.md section 13.1): each reads one reported numeric variable and writes one numeric component input."},
     "simulation": {"$ref": "#/$defs/simulation"}
   },
   "$defs": {
@@ -49,13 +50,59 @@
       "items": {"$ref": "#/$defs/port_path"}
     },
     "quantity": {"oneOf": [{"type": "number"}, {"type": "string", "minLength": 1}]},
+    "variable_path": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"},
     "event": {
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "Set values at time 'at'.",
+          "additionalProperties": false,
+          "required": ["at", "set"],
+          "properties": {
+            "at": {"$ref": "#/$defs/quantity"},
+            "set": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/value"}}
+          }
+        },
+        {
+          "type": "object",
+          "description": "Ramp values linearly from [start, end] between 'at' and 'at' + 'over' (one set event per step; docs/design.md section 13.2).",
+          "additionalProperties": false,
+          "required": ["at", "ramp", "over"],
+          "properties": {
+            "at": {"$ref": "#/$defs/quantity"},
+            "ramp": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/quantity"}}
+            },
+            "over": {"$ref": "#/$defs/quantity"}
+          }
+        }
+      ]
+    },
+    "switch_state": {"oneOf": [{"enum": ["on", "off"]}, {"type": "boolean"}], "description": "'on' or 'off' (YAML reads a bare on/off as a boolean, which is accepted)."},
+    "control": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["at", "set"],
+      "required": ["name", "type", "measure", "actuate"],
       "properties": {
-        "at": {"$ref": "#/$defs/quantity"},
-        "set": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/value"}}
+        "name": {"$ref": "#/$defs/instance_name"},
+        "type": {"enum": ["pi", "hysteresis"]},
+        "measure": {"$ref": "#/$defs/variable_path", "description": "Any reported numeric path, e.g. pump.outlet.p."},
+        "actuate": {"$ref": "#/$defs/variable_path", "description": "A numeric input of a component, e.g. pump.speed."},
+        "setpoint": {"$ref": "#/$defs/quantity", "description": "pi: in the measured variable's unit, or a string with units."},
+        "gain": {"type": "number", "description": "pi: actuator units per measured unit (positive)."},
+        "integral_time": {"$ref": "#/$defs/quantity", "description": "pi: seconds or a string such as '10 s'."},
+        "output_min": {"$ref": "#/$defs/quantity", "description": "pi: lower output limit (default: the input's hard limit)."},
+        "output_max": {"$ref": "#/$defs/quantity", "description": "pi: upper output limit (default: the input's hard limit)."},
+        "direction": {"enum": ["reverse", "direct"], "description": "pi: reverse (default) raises the output when the measure is below the setpoint."},
+        "on_below": {"$ref": "#/$defs/quantity", "description": "hysteresis: switch on when the measure falls below this."},
+        "off_above": {"$ref": "#/$defs/quantity", "description": "hysteresis: switch off when the measure rises above this."},
+        "on_value": {"$ref": "#/$defs/quantity", "description": "hysteresis: actuator value when on."},
+        "off_value": {"$ref": "#/$defs/quantity", "description": "hysteresis: actuator value when off."},
+        "initial": {"$ref": "#/$defs/switch_state", "description": "hysteresis: the state at creation (default off)."},
+        "state": {"$ref": "#/$defs/switch_state", "description": "hysteresis: the current state, written when it differs from initial."},
+        "max_switches_per_hour": {"type": "number", "description": "hysteresis: short_cycling limit (default 6)."}
       }
     },
     "simulation": {

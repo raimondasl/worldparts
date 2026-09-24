@@ -1,0 +1,47 @@
+worldparts_system: "0.1"
+name: booster station
+description: >-
+  A variable-speed booster pump takes water from a 1 bar mains and holds the pressure at
+  the entrance of a supply zone, 120 m of 65 mm steel main away, at 2.5 bar. A PI loop
+  reads the zone pressure and sets the pump speed. The zone's demand is lumped into one
+  valve; the simulation ramps it from 50 % to fully open over three minutes (a morning
+  peak), and the loop speeds the pump up to keep the zone pressure at its setpoint.
+components:
+  - name: mains
+    type: supply
+    parameters: {pressure: 1.0}
+  - name: pump
+    type: centrifugal_pump
+    inputs: {speed: 0.75}
+  # Steel main: 0.045 mm roughness, minor_loss 2 for the fittings.
+  - name: main
+    type: pipe
+    parameters: {length: 120, diameter: 65, roughness: 0.045, minor_loss: 2}
+  # The zone's draw-off, lumped: Kv 12 m3/h fully open.
+  - name: demand
+    type: valve
+    parameters: {kv: 12}
+    inputs: {opening: 0.5}
+  - name: zone
+    type: drain
+connections:
+  - [mains.port, pump.inlet]
+  - [pump.outlet, main.port_a]
+  - [main.port_b, demand.port_a]
+  - [demand.port_b, zone.port]
+controls:
+  # Reverse action: raise the speed when the zone pressure is below the setpoint.
+  - name: zone_pressure
+    type: pi
+    measure: main.port_b.p
+    setpoint: 2.5 bar
+    actuate: pump.speed
+    gain: 0.05
+    integral_time: 2 s
+    output_min: 0.3
+    output_max: 1.2
+simulation:
+  duration: 10 min
+  step: 1 s
+  events:
+    - {at: 2 min, ramp: {demand.opening: [0.5, 1.0]}, over: 3 min}

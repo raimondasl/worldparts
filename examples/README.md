@@ -78,6 +78,24 @@ open, the hot draw exceeds what 18 kW can heat to 55 degC: the heater is `satura
 outlet reaches only about 39 degC and it raises `setpoint_not_met`. There is no script; solve
 the document with the CLI.
 
+## Booster station (a control loop)
+
+`booster_station.yaml`
+
+A variable-speed booster pump takes water from a 1 bar mains and holds the pressure at the
+entrance of a supply zone, 120 m of 65 mm main away, at 2.5 bar. The document's `controls`
+block holds a PI loop (`zone_pressure`) that reads `main.port_b.p` and writes `pump.speed`.
+`solve` finds the steady speed that meets the setpoint (0.728 at half demand, 0.868 with the
+zone valve fully open, where its Kv of 12 passes about 19.0 m3/h at 2.5 bar). The
+document's `simulation` block ramps the zone demand from 50 % to fully open between 2 and 5 min; the loop speeds the
+pump up, the zone pressure dips by less than 2 % and is back at 2.5 bar by the end. There is
+no script; run it with the CLI, which prints a `Controls` section:
+
+```
+uv run worldparts solve examples/booster_station.yaml
+uv run worldparts simulate examples/booster_station.yaml --var main.port_b.p,pump.speed
+```
+
 ## Running the system documents with the CLI
 
 Every document works with the `worldparts` command:

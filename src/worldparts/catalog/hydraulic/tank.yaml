@@ -2,7 +2,7 @@ manifest_version: "0.1"
 id: worldparts.hydraulic.tank
 version: "0.1.0"
 name: Open storage tank
-summary: Open atmospheric cylindrical tank with two bottom ports, level-dependent static head, overflow at the rim and perfectly mixed temperature.
+summary: Open atmospheric cylindrical tank with a bottom outlet and a bottom or top inlet, level-dependent static head, overflow at the rim and perfectly mixed temperature.
 description: |
   A vertical cylindrical tank of inner `diameter` and `height`, open to the atmosphere, with
   two ports at the bottom (`inlet` and `outlet`; the names are conventional and water may flow
@@ -12,6 +12,18 @@ description: |
   fitting), and when the level falls to 1 mm or below the outflow through both ports is
   blocked (a leakage fraction of 1e-6 of the port Kv remains), so an empty tank does not
   deliver water or report negative levels.
+
+  Top-fed tank: with `inlet_height > 0` the `inlet` port is a pipe that discharges freely
+  at that height above the bottom (a rooftop or break tank filled from above, the pipe
+  mouth above the water). The inlet's gate then ends at the pipe mouth, whose pressure is
+  `P_ATM + rho * g * max(level, inlet_height)`: while the level is below the mouth the
+  inflow meets a constant back-pressure and does not depend on the level, and once the
+  mouth is submerged the tank behaves exactly as with a bottom inlet. Water cannot flow
+  back out through the inlet while the level is below the mouth (the gate is blocked, as
+  for an empty tank); with the mouth submerged the inlet can siphon water out, and a
+  simulation step draws through it at most the water above the mouth. The `inlet` port
+  itself stays at the tank-bottom datum (the pipe runs up inside the tank). With
+  `inlet_height = 0` (the default) both ports are at the bottom, as before.
 
   The `level` and `temperature` are storage states. A steady `solve()` is a snapshot at the
   current level (the states are held); `simulate()` integrates them with explicit Euler at
@@ -34,6 +46,15 @@ description: |
   (a lift to a rooftop tank) can pull the outlet of an empty tank well below atmospheric
   without cavitating; the `drawing_air` warning flags every such port (empty tank, or a
   simulation step drawing the tank empty, and the port more than 100 Pa below atmospheric).
+  The same holds for a top inlet whose mouth is above the water (or, in a simulation, being
+  uncovered within one step): it is flagged when its port is more than 100 Pa below
+  atmospheric, where a pump or siphon on it pulls on an inlet pipe open to the air. A dry
+  top inlet at or above atmospheric pressure is not flagged: a supply too weak to lift water
+  to the mouth, a stopped fill pump or a pipe down to a drain passes nothing, which is
+  exact. While the mouth is above the water its closed gate still passes a leakage of about
+  1e-5 kg/s per bar across it in a simulation (the gate closes with a finite stiffness, as
+  for an empty tank): a dry inlet piped to a drain 1 m below the water lets about 1.2 L out
+  of a 0.3 m tank in 7 days.
 
   Not modelled: stratification (the contents are perfectly mixed), heat loss through the wall
   and the free surface, evaporation, the velocity head and vortexing at the outlet nozzle,
@@ -41,9 +62,10 @@ description: |
   loss of water entering through a port (the velocity head of the incoming pipe, v**2/(2 g),
   about 0.23 m at 2.1 m/s; add 1 to the feeding pipe's `minor_loss` when it matters; the
   port Kv covers only the nozzle), the pressure drop of the overflow weir (spill is
-  instantaneous), non-cylindrical shapes and ports above the bottom. Port elevations are the
-  tank bottom; connect pipes with `height_difference` to model a tank placed above or below
-  the rest of the network.
+  instantaneous), non-cylindrical shapes, an outlet above the bottom, the friction of the
+  inlet pipe inside the tank, the jet and splash of a free-falling inlet stream and the air
+  gap it provides against back-siphonage. Port elevations are the tank bottom; connect pipes
+  with `height_difference` to model a tank placed above or below the rest of the network.
 tags: [tank, storage, reservoir, level, overflow, mixing, purification]
 classification:
   ifc: {entity: IfcTank, predefined_type: STORAGE}
@@ -52,12 +74,14 @@ fidelity:
   assumptions:
     - Incompressible water with constant properties (998.2 kg/m3, 1.002e-3 Pa s, 4182 J/(kg K)).
     - Hydrostatic pressure at the bottom ports, P_ATM + rho g level; free surface at atmospheric pressure.
+    - A top inlet discharges freely at inlet_height (pressure P_ATM + rho g max(level, inlet_height) at its mouth); backflow through it is blocked while the mouth is above the water.
     - Port connections are quadratic Kv resistances, regularised near zero flow; outflow blocked (leakage 1e-6 of the Kv) at a level of 1 mm or below.
-    - In a simulation, outflow over a step is capped at the water above the empty level, shared equally by the connected ports.
+    - In a simulation, outflow over a step is capped at the water above the empty level (above the mouth for a top inlet), shared equally by the connected ports that can draw; a dry port takes no share.
+    - Closed gates (empty tank, dry top inlet) pass a small leakage, about 1e-5 kg/s per bar across them in a simulation.
     - Perfectly mixed contents; adiabatic walls and free surface.
     - Explicit Euler integration of level and temperature at the simulation step; instantaneous spill above the rim.
 ports:
-  - {name: inlet, type: fluid, medium: water, description: Bottom port (conventionally the inlet; flow may go either way).}
+  - {name: inlet, type: fluid, medium: water, description: "Inlet: a bottom port when inlet_height is 0 (flow may go either way), else a pipe discharging freely at inlet_height (no backflow while its mouth is above the water). Its pressure is referred to the tank bottom."}
   - {name: outlet, type: fluid, medium: water, description: Bottom port (conventionally the outlet; flow may go either way).}
 parameters:
   - name: diameter
@@ -88,6 +112,13 @@ parameters:
     default: 15
     minimum: 0.5
     maximum: 99
+  - name: inlet_height
+    description: Height above the bottom at which the inlet pipe discharges (must not exceed height). 0 is a bottom inlet; above 0 the inlet is top-fed and its inflow does not depend on the level while the level is below this height.
+    type: number
+    unit: m
+    default: 0
+    minimum: 0
+    maximum: 100
   - name: port_kv
     description: Kv of each port connection (nozzle and fitting), m3/h of water at 1 bar.
     type: number
@@ -133,7 +164,7 @@ envelope:
     condition: "overflow_rate > 0"
     message: The tank is full and spills over the rim.
 warnings:
-  - {code: drawing_air, severity: warning, description: "The tank is empty (or, in a simulation, being drawn empty within one step) and a connected port is more than 100 Pa (about 1 cm of water) below atmospheric pressure: a pump or siphon on it would draw air. The model keeps the line full of water, so results downstream are not physical."}
+  - {code: drawing_air, severity: warning, description: "A port is dry and under suction: the tank is empty (or, in a simulation, being drawn empty within one step), or a top inlet's mouth is above the water (or being uncovered within one step), and a connected port is more than 100 Pa (about 1 cm of water) below atmospheric pressure. A pump or siphon on it would draw air. The model keeps the line full of water, so results downstream are not physical."}
 scenarios:
   - id: drain-through-valve
     description: >-
@@ -308,6 +339,144 @@ scenarios:
       - {variable: dut.level, min: 1.4, max: 1.6}
       - {mode: dut, is: filling}
       - {warning: dut.tank_overflow, present: false}
+  - id: top-fed-inlet
+    description: >-
+      A 0.5 bar supply fills the default tank (1 m of water) through a Kv 2.5 valve and a top
+      inlet discharging at 2.5 m; outlet capped. The mouth is above the water, so the
+      back-pressure is rho g 2.5 = 0.244725 bar whatever the level, and the valve and port
+      (Kv_eff 2.4998047) pass Q = 2.4998047 * sqrt((0.5 - 0.244725) * 1000 / 998.2) =
+      1.264158 m3/h. The inlet port (at the bottom datum) reads the mouth pressure plus the
+      port drop (Q / 200)**2 * 0.9982: 0.2447648 bar.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0.5}}
+        - {name: v, type: valve}
+        - {name: dut, type: tank, parameters: {initial_level: 1.0, inlet_height: 2.5}}
+      connections:
+        - [src.port, v.port_a]
+        - [v.port_b, dut.inlet]
+    expect:
+      - {variable: dut.net_inflow, value: 1.264158, rel_tol: 1.0e-5}
+      - {variable: dut.inlet.p, value: 0.2447648, abs_tol: 1.0e-6}
+      - {mode: dut, is: filling}
+      - {warning: dut.drawing_air, present: false}
+  - id: top-inlet-siphon
+    description: >-
+      The top inlet (mouth at 2 m) is connected through a Kv 2.5 valve to a drain at the tank
+      bottom's level; outlet capped. With 1 m of water the mouth is dry: nothing flows back
+      out through it (gate leakage only, under 1e-3 m3/h). The inlet pipe simply drains to
+      the drain and fills with air; nothing pulls on it (the port is at atmospheric
+      pressure), so drawing_air is not raised. Once the mouth is submerged the inlet siphons
+      like a bottom port: at 2.5 m, Q = 2.4998047 * sqrt(998.2 g 2.5 / 1e5 * 1000 / 998.2) =
+      1.237760 m3/h (see the contract top-inlet-siphons-when-submerged).
+    system:
+      components:
+        - {name: dut, type: tank, parameters: {initial_level: 1.0, inlet_height: 2.0}}
+        - {name: v, type: valve}
+        - {name: sink, type: drain}
+      connections:
+        - [dut.inlet, v.port_a]
+        - [v.port_b, sink.port]
+    expect:
+      - {variable: dut.net_inflow, min: -1.0e-3, max: 1.0e-9}
+      - {variable: v.volume_flow, min: -1.0e-9, max: 0.017}
+      - {mode: dut, is: steady}
+      - {warning: dut.drawing_air, present: false}
+      - {warning: dut.tank_empty, present: false}
+  - id: pump-on-dry-top-inlet
+    description: >-
+      A default pump draws from the top inlet (mouth at 2 m) of a tank holding 1 m and
+      discharges through a Kv 15 valve to a drain; outlet capped. The mouth is above the
+      water, so the inlet cannot deliver (gate leakage only, 200e-6 * sqrt(3.3) = 3.8e-4
+      m3/h at the pump's full shut-off suction): the pump pulls the port to about -3.3 bar
+      gauge, runs dry and cavitates, and drawing_air is raised. With the mouth submerged
+      (see the contract dry-top-inlet-under-suction-draws-air) the pump draws about
+      24.6 m3/h and the port stays above atmospheric pressure.
+    system:
+      components:
+        - {name: dut, type: tank, parameters: {initial_level: 1.0, inlet_height: 2.0}}
+        - {name: pump, type: centrifugal_pump}
+        - {name: v, type: valve, parameters: {kv: 15}}
+        - {name: sink, type: drain}
+      connections:
+        - [dut.inlet, pump.inlet]
+        - [pump.outlet, v.port_a]
+        - [v.port_b, sink.port]
+    expect:
+      - {variable: pump.volume_flow, min: -1.0e-3, max: 1.0e-3}
+      - {variable: dut.inlet.p, max: -3.0}
+      - {warning: dut.drawing_air, present: true}
+      - {warning: pump.cavitation, present: true}
+  - id: top-inlet-siphon-stops-at-the-mouth
+    description: >-
+      The siphon of top-inlet-siphon in a simulation: a 0.5 m tank starting at 2.5 m, mouth
+      at 2 m, drained through the inlet, a Kv 2.5 valve and a drain for 30 min at a 5 s
+      step. The siphon takes the 0.098 m3 above the mouth at about 1.1 m3/h (the head is the
+      whole level, not the water above the mouth, so the flow is still 1.107 m3/h when the
+      mouth is reached) and stops there: each step may draw only the water above the mouth,
+      so the level ends at the mouth (a few um below it: the closed gate's stiffness and
+      leakage), not 8 mm below as one uncapped 5 s step at 1.1 m3/h would leave it.
+    system:
+      components:
+        - {name: dut, type: tank, parameters: {diameter: 0.5, initial_level: 2.5, inlet_height: 2.0}}
+        - {name: v, type: valve}
+        - {name: sink, type: drain}
+      connections:
+        - [dut.inlet, v.port_a]
+        - [v.port_b, sink.port]
+    simulate: {duration: 30 min, step: 5 s}
+    expect:
+      - {variable: dut.level, min: 1.9999, max: 2.0}
+      - {variable: v.volume_flow, min: -1.0e-9, max: 0.017}
+      - {mode: dut, is: steady}
+  - id: dry-top-inlet-takes-no-share
+    description: >-
+      A 0.5 m tank holding 10 mm is drained by a default pump on its outlet while its top
+      inlet (mouth at 2 m, dry) is fed from a 0 bar supply that delivers nothing; one 10 s
+      step. The pump would take about 30 m3/h, far above the water there is, so the outlet
+      is held at the cap: the water above the empty level divided by the step. The dry inlet
+      cannot draw and takes no share of the cap, so the outlet takes it all and the step
+      ends at the empty level (1 mm); were the cap shared with the inlet, the level would end
+      at (10 + 1) / 2 = 5.5 mm.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0}}
+        - {name: vin, type: valve}
+        - {name: dut, type: tank, parameters: {diameter: 0.5, initial_level: 0.010, inlet_height: 2.0}}
+        - {name: pump, type: centrifugal_pump}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, vin.port_a]
+        - [vin.port_b, dut.inlet]
+        - [dut.outlet, pump.inlet]
+        - [pump.outlet, sink.port]
+    simulate: {duration: 10 s, step: 10 s}
+    expect:
+      - {variable: dut.level, min: 0.00099, max: 0.001}
+      - {mode: dut, is: empty}
+      - {warning: dut.tank_empty, present: true}
+      - {warning: dut.drawing_air, present: true}
+  - id: top-fed-filling
+    description: >-
+      A 0.5 bar supply fills a 0.5 m diameter tank (A = 0.1963495 m2) from 0.5 m through a
+      Kv 2.5 valve and a top inlet at 2 m, for 300 s at a 5 s step; outlet capped. Below the
+      mouth the inflow is constant, 2.4998047 * sqrt((0.5 - 998.2 g 2 / 1e5) * 1000 / 998.2) =
+      1.380039 m3/h = 23.00064 L/min, so explicit Euler is exact: V = 0.0981748 + 3.833440e-4
+      * 300 = 0.2131780 m3, a level of 1.085707 m.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0.5}}
+        - {name: v, type: valve}
+        - {name: dut, type: tank, parameters: {diameter: 0.5, initial_level: 0.5, inlet_height: 2.0}}
+      connections:
+        - [src.port, v.port_a]
+        - [v.port_b, dut.inlet]
+    simulate: {duration: 300 s, step: 5 s}
+    expect:
+      - {variable: dut.level, value: 1.085707, rel_tol: 1.0e-6}
+      - {variable: dut.volume, value: 0.2131780, rel_tol: 1.0e-6}
+      - {variable: v.volume_flow, value: 23.00064, rel_tol: 1.0e-6}
+      - {mode: dut, is: filling}
 contracts:
   - id: mass-conservation
     description: The port mass flows add up to the net inflow at every level, including an empty tank.
@@ -377,6 +546,72 @@ contracts:
     scenario: fill-to-overflow
     sweep: {variable: src.pressure, values: [0.05, 0.09, 0.11, 0.2, 0.5, 1.0]}
     check: {type: warning_iff, code: dut.tank_overflow, condition: "src.pressure > 0.0979"}
+  - id: top-inlet-flow-independent-of-level
+    description: >-
+      While the level is below the top inlet's mouth (2.5 m) the inflow is the same
+      1.264158 m3/h at every level, from an empty tank to just below the mouth.
+    scenario: top-fed-inlet
+    sweep: {variable: dut.initial_level, values: [0, 0.5, 1, 2, 2.49]}
+    check: {type: equal, left: dut.net_inflow, right: 1.264158, rel_tol: 1.0e-5}
+  - id: submerged-top-inlet-matches-bottom-fed
+    description: >-
+      With the mouth submerged the inflow is that of a bottom inlet, the series Kv 2.4998047
+      times sqrt((0.5 bar - rho g level) / specific gravity), at every level from the mouth
+      (2.5 m) to the rim.
+    scenario: top-fed-inlet
+    sweep: {variable: dut.initial_level, values: [2.5, 2.6, 2.8, 3]}
+    check:
+      type: equal
+      left: dut.net_inflow
+      right: "2.4998047103852 * sqrt((0.5 - dut.level * 998.2 * 9.80665 / 1e5) * 1000 / 998.2)"
+      rel_tol: 1.0e-5
+  - id: no-backflow-through-a-dry-top-inlet
+    description: >-
+      While the mouth (2 m) is above the water nothing flows back out through the inlet
+      (leakage below 1e-3 m3/h), whatever the level; a bottom port at the same levels would
+      drain 0.8 to 1.2 m3/h.
+    scenario: top-inlet-siphon
+    sweep: {variable: dut.initial_level, values: [0, 0.5, 1, 1.5, 1.99]}
+    check: {type: bounds, variable: dut.net_inflow, min: -1.0e-3, max: 1.0e-9}
+  - id: top-inlet-siphons-when-submerged
+    description: >-
+      With the mouth submerged the inlet drains the tank like a bottom port, through the
+      series Kv 2.4998047 under the head of the level.
+    scenario: top-inlet-siphon
+    sweep: {variable: dut.initial_level, values: [2.01, 2.5, 3]}
+    check:
+      type: equal
+      left: -dut.net_inflow
+      right: "2.4998047103852 * sqrt(dut.level * 998.2 * 9.80665 / 1e5 * 1000 / 998.2)"
+      rel_tol: 1.0e-5
+  - id: dry-top-inlet-under-suction-draws-air
+    description: >-
+      drawing_air is raised exactly when the top inlet's mouth is above the water while the
+      pump pulls its port below atmospheric pressure; with the mouth submerged the pump
+      draws about 24.6 m3/h and the port stays above atmospheric.
+    scenario: pump-on-dry-top-inlet
+    sweep: {variable: dut.initial_level, values: [0.5, 1, 1.99, 2.01, 2.5, 3]}
+    check: {type: warning_iff, code: dut.drawing_air, condition: "dut.level < dut.inlet_height and dut.inlet.p < -0.001"}
+  - id: dry-top-inlet-without-suction-is-not-drawing-air
+    description: >-
+      A dry top inlet whose port is not under suction (piped down to a drain at the bottom's
+      level, so the port is at atmospheric pressure) is never flagged: nothing flows and
+      the result is exact, at any level below or above the mouth.
+    scenario: top-inlet-siphon
+    sweep: {variable: dut.initial_level, values: [0.5, 1, 1.99, 2.01, 2.5, 3]}
+    check: {type: warning_iff, code: dut.drawing_air, condition: "false"}
+  - id: top-fed-volume-balance
+    description: >-
+      Over 300 s of filling below the mouth the tank gains exactly the inflow times the time,
+      V = 0.0981748 m3 + Q * 300 s, at every supply pressure (the inflow, read from the valve
+      in L/min, is constant while the mouth is dry).
+    scenario: top-fed-filling
+    sweep: {variable: src.pressure, values: [0.3, 0.4, 0.5]}
+    check:
+      type: equal
+      left: dut.volume
+      right: "0.19634954084936207 * 0.5 + v.volume_flow / 60000 * 300"
+      rel_tol: 1.0e-9
   - id: low-level-info
     description: The low_level info is raised exactly when the level is below 10 % of the height (0.3 m of the default 3 m).
     scenario: drain-through-valve
@@ -395,10 +630,12 @@ implementations:
   wntr:
     element: Tank
     notes: >-
-      Cylindrical tank with elevation at the datum, diameter, init_level = level,
-      min_level 0 and max_level = height; the port Kv becomes a short pipe or minor loss.
-      EPANET closes a full tank to inflow instead of spilling, and ignores temperature.
-      Binding not yet cross-validated in v0.1.
+      Cylindrical tank (worldparts.adapters.wntr_adapter) with elevation at the datum,
+      diameter, init_level = level (0 up to 1 mm), min_level 0, max_level = height and the
+      overflow option; each connected port is a TCV for port_kv. Cross-validated in
+      docs/wntr-adapter.md. EPANET ignores temperature, and its tank inlets are at the
+      bottom: a top inlet (inlet_height above the level) is exported bottom-fed and listed
+      as an approximation.
 provenance:
   authors: [worldparts contributors]
   sources:

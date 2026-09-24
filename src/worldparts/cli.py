@@ -60,16 +60,19 @@ EXIT_ERROR = 2
 # helpers shared with the MCP server
 # ----------------------------------------------------------------------------------------
 def default_paths(system: wp.System) -> list[str]:
-    """The default result selection: observables, states and port pressures.
+    """The default result selection: observables, states, port pressures and controls.
 
     Parameters and inputs are what the caller set, and port mass flows and temperatures
-    are usually visible through observables, so they are left out unless asked for.
+    are usually visible through observables, so they are left out unless asked for. Every
+    control contributes ``control.<name>.output`` and ``control.<name>.measure``.
     """
     out: list[str] = []
     for v in system.variables():
         if not v.reported:
             continue
-        if v.kind in ("observable", "state") or (v.kind == "port" and v.path.endswith(".p")):
+        if v.kind in ("observable", "state", "control") or (
+            v.kind == "port" and v.path.endswith(".p")
+        ):
             out.append(v.path)
     return out
 
@@ -78,8 +81,9 @@ def select_paths(system: wp.System, requested: Iterable[str] | None) -> list[str
     """Resolve a variable selection against a system.
 
     Each requested item is a variable path (``valve.volume_flow``, ``valve.port_a.p``), an
-    instance name (every reported variable of that instance) or ``*`` (everything).
-    Without a selection the :func:`default_paths` are returned.
+    instance name (every reported variable of that instance), ``control`` (every control's
+    output and measure), ``control.<name>`` (one control's) or ``*`` (everything). Without
+    a selection the :func:`default_paths` are returned.
 
     Raises:
         UnknownVariableError: For an item that matches nothing, listing valid choices.
@@ -99,6 +103,16 @@ def select_paths(system: wp.System, requested: Iterable[str] | None) -> list[str
             out.append(item)
         elif "." not in item and item in system.components:
             out.extend(p for p in reported if p.startswith(item + "."))
+        elif item == "control" or (
+            item.startswith("control.") and item.partition(".")[2] in system.controls
+        ):
+            matched = [p for p in reported if p.startswith(item + ".")]
+            if not matched:
+                raise UnknownVariableError(
+                    f"'{item}' selects no control results: the system has no valid controls "
+                    "(check() lists the problems). Add one with add_control."
+                )
+            out.extend(matched)
         elif item in unreported:
             raise UnknownVariableError(
                 f"'{item}' is a string or table parameter and is not part of results; read "
@@ -107,8 +121,18 @@ def select_paths(system: wp.System, requested: Iterable[str] | None) -> list[str
         else:
             raise UnknownVariableError(
                 f"Unknown variable '{item}'. Use a path such as 'valve.volume_flow', an "
-                "instance name for all of its variables, or '*' for everything. "
-                + format_choices(item, reported + list(system.components))
+                "instance name for all of its variables, 'control' for the control results, "
+                "or '*' for everything. "
+                + format_choices(
+                    item,
+                    reported
+                    + list(system.components)
+                    + (
+                        ["control"] + [f"control.{n}" for n in system.controls]
+                        if system.controls
+                        else []
+                    ),
+                )
             )
     return list(dict.fromkeys(out))
 
@@ -517,6 +541,35 @@ def _converted_simulation(
     return dataclasses.replace(sim, series=series, units=units, references=refs, final=final)
 
 
+def _suffix(unit: str) -> str:
+    return "" if unit in ("1", "") else f" {unit}"
+
+
+def _print_controls(controls: Mapping[str, wp.ControlReport], simulated: bool = False) -> None:
+    """The controls section: one row per control loop."""
+    if not controls:
+        return
+    _section("Controls" + (" at the end" if simulated else ""))
+    rows = []
+    for c in controls.values():
+        if c.type == "pi":
+            status = f"setpoint {_fmt(c.setpoint)}, error {_fmt(c.error)}" + (
+                ", SATURATED" if c.saturated else ""
+            )
+        else:
+            status = f"{c.state}" + (f", {c.switches} switches" if c.switches is not None else "")
+        rows.append(
+            (
+                c.name,
+                c.type,
+                f"{c.measure} = {_fmt(c.measured)}{_suffix(c.measure_unit)}",
+                f"{c.actuate} = {_fmt(c.output)}{_suffix(c.output_unit)}",
+                status,
+            )
+        )
+    print(_table(["control", "type", "measured", "output", "status"], rows, "  "))
+
+
 def _print_warnings_and_issues(
     warnings: Sequence[wp.ComponentWarning], issues: Sequence[wp.Issue]
 ) -> None:
@@ -565,6 +618,7 @@ def _cmd_solve(args: argparse.Namespace) -> int:
     print(_table(["variable", "value", "unit"], rows, "  "))
     _section("Modes")
     print(_table(["instance", "mode"], list(result.modes.items()), "  "))
+    _print_controls(result.controls)
     _print_warnings_and_issues(result.warnings, result.issues)
     return EXIT_OK
 
@@ -589,7 +643,9 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
     selected = record if record is not None else list(sim.series)
     sim = _converted_simulation(sim, unit_targets(sim.units, sim.references, units, selected))
     if args.json:
-        _print_json(sim.to_dict(max_points=args.max_points, variables=record))
+        # the recorded series: the selection plus the control series (design 13.1)
+        variables = list(sim.series) if record is not None else None
+        _print_json(sim.to_dict(max_points=args.max_points, variables=variables))
         return EXIT_OK
     t_end = sim.time[-1] if sim.time else 0.0
     print(f"System '{system.name}': simulated {t_end:g} s in {len(sim.time)} samples.")
@@ -607,6 +663,7 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
             "  ",
         )
     )
+    _print_controls(sim.controls, simulated=True)
     _print_warnings_and_issues(sim.warnings, sim.final.issues)
     return EXIT_OK
 
@@ -715,9 +772,9 @@ def build_parser() -> argparse.ArgumentParser:
     json_flag(p)
 
     var_help = (
-        "Variable to report: a path (valve.volume_flow), an instance name or '*'. Repeatable "
-        "or comma-separated. Default: observables, states and port pressures (with --json: "
-        "everything)."
+        "Variable to report: a path (valve.volume_flow), an instance name, 'control' (the "
+        "control results) or '*'. Repeatable or comma-separated. Default: observables, states, "
+        "port pressures and control results (with --json: everything)."
     )
     units_help = (
         "Report a variable in another unit: PATH=UNIT, or *.NAME=UNIT for every selected "

@@ -121,8 +121,13 @@ multiple of `step`; events after `duration` are rejected). Going from sample `t0
    `first_order` returns the target when `tau = 0` and leaves the state alone otherwise, so a
    valve with a 10 s actuator still reads its old position at the event time and then follows
    `1 - exp(-(t - t_event) / tau)` exactly, independent of the step size;
-4. `update_laws()`, solve, record observables, modes and warnings;
-5. `integrate(t_next - t, view)`.
+4. `update_laws()` and solve;
+5. system controls (design 13.1) read that solution and, when a command changes, write it
+   to component inputs exactly like an event due at `t` (`set_values`, then
+   `update_fast_states(0)`), and the system is solved again (`update_laws()`, solve);
+6. record observables, modes and warnings of the (last) solution;
+7. `integrate(t_next - t, view)` with that same solution, so your component sees a
+   control's command exactly like an event's, from `t` over the next step.
 
 Before step 4 the system sets `self.time_step` on every component to `t_next - t`, the step
 over which this solution will be integrated (at the last sample, the step that led to it);
@@ -380,6 +385,18 @@ or siphon); the pump's own `cavitation` warning covers its suction side.
 and inputs, and under `states` every state that differs from its `init_states()` value, so a
 tank level reached in a simulation survives `to_dict`/`from_dict`. Scenario systems may also
 set `states`.
+
+**Controls and ramps (system level, not in your component).** A system document may carry
+`controls` (design 13.1): a PI loop or a hysteresis switch that reads any reported numeric
+path and writes one numeric **input** of a component. Your component needs no code for
+this, but it helps to know how its inputs are driven: `solve()` goal-seeks a PI-controlled
+input between the loop's output limits (so your laws must stay well defined over the input's
+whole hard range), and `simulate()` applies a control's command at the sample where it
+is computed, like an event, and solves again before recording and integrating.
+Parameters and states cannot be actuated; if a quantity must be controllable during a run
+(a pump speed, a valve opening, a lamp output), make it an input. Simulation `events` may
+also ramp inputs, parameters or states linearly, `{at, ramp: {path: [start, end]}, over}`
+(design 13.2): the system turns a ramp into one set event per step.
 
 ## 6. Scenarios and contracts (how you are tested)
 

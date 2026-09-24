@@ -2,7 +2,7 @@ manifest_version: "0.1"
 id: worldparts.hydraulic.centrifugal_pump
 version: "0.1.0"
 name: Centrifugal pump
-summary: Variable-speed centrifugal pump from head, shaft-power and NPSH curves, with affinity-law scaling, efficiency, best-efficiency point and cavitation check.
+summary: Variable-speed centrifugal pump from head, shaft-power and NPSH curves, with affinity-law scaling, wear, efficiency, best-efficiency point and cavitation check.
 description: |
   A centrifugal pump between `inlet` and `outlet` described by three curves at rated speed:
   head, shaft power and NPSH required, each a table of flow against value. The head curve
@@ -11,25 +11,25 @@ description: |
   the RMS residual of the fit is reported as `curve_fit_rms`. Shaft power and NPSH required
   are plain least-squares quadratics. The relative `speed` scales all three by the affinity
   laws: `H = a*s**2 + b*s*Q + c*Q*|Q|`, `P = p0*s**3 + p1*s**2*Q + p2*s*Q**2` and
-  `NPSHr = n0*s**2 + n1*s*Q + n2*Q**2`. At speed 0 the pump acts as a quadratic resistance
-  (`-c*Q*|Q|`, plus a tiny linear term of 1 Pa per kg/s that keeps the law strictly
-  increasing).
+  `NPSHr = n0*s**2 + n1*s*Q + n2*Q**2`. At speed 0 the pump is a quadratic resistance of
+  at least `0.5*a/Q_max**2` (plus 1 Pa per kg/s that keeps the law strictly increasing).
 
   The best-efficiency flow is the maximum of `rho*g*Q*H0/P0` over the head-curve flow range,
   scaled by the speed. `npsh_available` is `(p_inlet_abs - p_vapour(T_inlet)) / (rho*g)`
   with the IAPWS-IF97 vapour pressure (20 degC is assumed where no water reaches the pump).
-  Code-emitted warnings flag cavitation (NPSH available below NPSH required plus
-  `npsh_margin` with forward flow, or an inlet below the vapour pressure at any flow, as when
-  the pump draws from an empty tank), operation below `min_flow_fraction` of the
-  best-efficiency flow, operation beyond the curve, and reverse flow. Two more code-emitted
+  Code-emitted warnings (see their descriptions) flag cavitation, operation below
+  `min_flow_fraction` of the best-efficiency flow, operation beyond the curve, and reverse
+  flow. Two more code-emitted
   warnings cover continuous-duty sizing: `outside_preferred_region` (info) when the running
   pump is outside its preferred operating region, `preferred_min_fraction` to
   `preferred_max_fraction` of the best-efficiency flow (70 to 120 % by default, the typical
   POR of ANSI/HI 9.6.3) but neither below the minimum flow nor beyond the curve (those have
   their own warnings); and `motor_overload` when the shaft power exceeds `motor_power`, the
-  driver rating (4 kW by default: the next standard motor size above the 3.15 kW maximum
-  of the default power curve, so the default pump is non-overloading at rated speed but
-  overloads when driven fast, e.g. at speed 1.15 through a Kv 15 valve).
+  driver rating (4 kW by default, above the 3.15 kW maximum of the default power curve,
+  so the default pump overloads only when driven fast, e.g. at speed 1.15 through Kv 15).
+
+  Wear is two inputs (`wear_head`, `wear_efficiency`: see their descriptions); NPSH
+  required, `bep_flow` and `curve_fit_rms` stay the new pump's.
 
   Starved suction: at no flow the pump cannot tell an empty suction tank from a closed
   discharge valve (both give a shut-off head across the pump); it reports `low_flow`, and
@@ -55,6 +55,7 @@ fidelity:
     - The head fit is constrained (a > 0, b <= 0, c < 0) so the pump law is monotone; its RMS residual is reported.
     - The same quadratic head law is used for reverse flow and at zero speed (no four-quadrant data).
     - Speed is a prescribed input (no motor model, no inertia); cavitation is diagnosed, not modelled.
+    - Wear scales head and efficiency uniformly at every flow.
 ports:
   - {name: inlet, type: fluid, medium: water, description: Suction side; forward flow enters here.}
   - {name: outlet, type: fluid, medium: water, description: Discharge side; forward flow leaves here.}
@@ -127,17 +128,19 @@ parameters:
     maximum: 100000
 inputs:
   - {name: speed, description: "Relative speed (fraction of rated_speed); 0 is stopped.", unit: "1", default: 1.0, minimum: 0, maximum: 1.2}
+  - {name: wear_head, description: "Fraction of head lost to wear at every flow and running speed: H = (1 - wear_head) * H_new. A stopped pump's resistance is not worn.", unit: "1", default: 0.0, minimum: 0, maximum: 0.5}
+  - {name: wear_efficiency, description: "Fraction of efficiency lost to wear: shaft power P_new * (1 - wear_head) / (1 - wear_efficiency).", unit: "1", default: 0.0, minimum: 0, maximum: 0.5}
 observables:
   - {name: volume_flow, unit: m3/h, description: Volume flow from inlet to outlet.}
   - {name: head, unit: m, description: "Pump head: outlet minus inlet pressure over rho g."}
-  - {name: shaft_power, unit: kW, description: Shaft power from the fitted power curve at the current flow and speed (not below 0).}
+  - {name: shaft_power, unit: kW, description: "Shaft power from the fitted power curve at the current flow and speed (not below 0), scaled for wear."}
   - {name: hydraulic_power, unit: kW, description: Hydraulic power rho g Q H (negative with reverse flow or negative head).}
   - {name: efficiency, unit: "%", description: "Hydraulic over shaft power; 0 when flow, head or power is not positive."}
   - {name: specific_energy, unit: kWh/m3, description: "Shaft energy per pumped volume, shaft_power / volume_flow (equal to rho g H / efficiency); the running cost per m3 before motor and drive losses. None unless the flow is above 0.01 m3/h (a leakage flow would give a meaningless huge value)."}
   - {name: npsh_available, unit: m, description: "Net positive suction head available: (p_inlet_abs - p_vapour(T_inlet)) / (rho g)."}
   - {name: npsh_required, unit: m, description: NPSH required from the fitted curve at the current flow and speed (not below 0).}
   - {name: speed_rpm, unit: rpm, description: Rotational speed.}
-  - {name: bep_flow, unit: m3/h, description: Best-efficiency flow at the current speed.}
+  - {name: bep_flow, unit: m3/h, description: Best-efficiency flow (new pump) at the current speed.}
   - {name: curve_fit_rms, unit: m, description: RMS residual of the head-curve fit over the tabulated points.}
 modes:
   - {name: "off", condition: "speed <= 0.01", description: The pump is stopped; it acts as a resistance.}
@@ -189,6 +192,65 @@ scenarios:
       - {warning: dut.beyond_curve, present: false}
       - {warning: dut.outside_preferred_region, present: false}
       - {warning: dut.motor_overload, present: false}
+  - id: worn-pump
+    description: >-
+      The operating-point circuit with a worn pump, wear_head 0.2 and wear_efficiency 0.1.
+      The head is 0.8 (a + c Q**2) and the Kv 15 valve needs Q**2 * 100 / (g * 225), so
+      Q**2 = 0.8 a / (0.8 |c| + 100 / (g * 225)) with a = 33.970527 m and
+      |c| = 0.0138548350 m/(m3/h)**2: Q = 21.95022 m3/h (down from 23.95962) and
+      H = 0.8 * (a - |c| Q**2) = 21.83608 m. The new pump's power fit at that flow is
+      P0 = 1.48557082 + 0.0586065595 Q - 3.35342667e-4 Q**2 = 2.610426 kW, so the shaft power
+      is 2.610426 * 0.8 / 0.9 = 2.320378 kW; the hydraulic power rho g Q H = 1.303315 kW gives
+      an efficiency of 56.168 %, 0.9 times the new pump's 62.409 % at the same flow. Specific
+      energy 2.320378 / 21.95022 = 0.1057109 kWh/m3. NPSH required (1.43546256 -
+      0.03744493 Q + 0.00346916 Q**2 = 2.28502 m), bep_flow and curve_fit_rms are the new
+      pump's.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0}}
+        - {name: dut, type: centrifugal_pump, inputs: {wear_head: 0.2, wear_efficiency: 0.1}}
+        - {name: v, type: valve, parameters: {kv: 15}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, v.port_a]
+        - [v.port_b, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 21.95022, rel_tol: 1.0e-4}
+      - {variable: dut.head, value: 21.83608, rel_tol: 1.0e-4}
+      - {variable: dut.shaft_power, value: 2.320378, rel_tol: 1.0e-4}
+      - {variable: dut.hydraulic_power, value: 1.303315, rel_tol: 1.0e-4}
+      - {variable: dut.efficiency, value: 56.168, abs_tol: 0.005}
+      - {variable: dut.specific_energy, value: 0.1057109, rel_tol: 1.0e-4}
+      - {variable: dut.npsh_required, value: 2.28502, rel_tol: 1.0e-4}
+      - {variable: dut.bep_flow, value: 24.111, abs_tol: 0.01}
+      - {variable: dut.curve_fit_rms, value: 0.0518003, abs_tol: 1.0e-6}
+      - {mode: dut, is: running}
+      - {warning: dut.low_flow, present: false}
+      - {warning: dut.outside_preferred_region, present: false}
+  - id: worn-falling-curve
+    description: >-
+      A worn pump whose head curve falls from shut-off (40, 36, 30, 22 and 16 m at 0, 10,
+      20, 30 and 36 m3/h), so the bounded fit has a clearly non-zero linear term:
+      a = 39.978740 m, b = -0.2898885 m/(m3/h), c = -0.01040964 m/(m3/h)**2. At speed 0.8
+      and wear_head 0.3 the head is 0.7 (a 0.8**2 + b 0.8 Q + c Q**2), and the Kv 15 valve
+      needs Q**2 * 100 / (g * 225); the quadratic in Q gives Q = 16.97291 m3/h and
+      H = 13.05597 m (new pump at the same speed: 19.44700 m3/h, 17.13965 m). Wearing only
+      a and c, not the linear term b, would give about 1.2 m more head.
+    system:
+      components:
+        - {name: src, type: supply, parameters: {pressure: 0}}
+        - {name: dut, type: centrifugal_pump, parameters: {head_curve: [[0, 40], [10, 36], [20, 30], [30, 22], [36, 16]]}, inputs: {speed: 0.8, wear_head: 0.3}}
+        - {name: v, type: valve, parameters: {kv: 15}}
+        - {name: sink, type: drain}
+      connections:
+        - [src.port, dut.inlet]
+        - [dut.outlet, v.port_a]
+        - [v.port_b, sink.port]
+    expect:
+      - {variable: dut.volume_flow, value: 16.97291, rel_tol: 1.0e-4}
+      - {variable: dut.head, value: 13.05597, rel_tol: 1.0e-4}
+      - {mode: dut, is: running}
   - id: part-load
     description: >-
       The operating-point circuit with a Kv 8 valve: a + c Q**2 = Q**2 * 100 / (g * 64) gives
@@ -405,6 +467,69 @@ contracts:
     scenario: operating-point
     sweep: {variable: dut.speed, from: 0.3, to: 1.2, steps: 10}
     check: {type: equal, left: dut.specific_energy, right: "0.1125757 * dut.speed ** 2", rel_tol: 1.0e-4}
+  - id: wear-scales-head
+    description: >-
+      At every wear_head the head is (1 - wear_head) times the new pump's curve,
+      a + c Q |Q| with a = 33.970527 m and c = -0.0138548350 m/(m3/h)**2 (b = 0); at zero
+      wear that is the published (fitted) curve exactly, to within the 1 Pa per kg/s law term.
+    scenario: operating-point
+    sweep: {variable: dut.wear_head, values: [0, 0.1, 0.2, 0.3, 0.4, 0.5]}
+    check:
+      type: equal
+      left: dut.head
+      right: "(1 - dut.wear_head) * (33.970527 - 0.0138548350 * dut.volume_flow * abs(dut.volume_flow))"
+      abs_tol: 0.001
+  - id: stopped-pump-is-not-worn
+    description: >-
+      Head wear acts on the running pump only: a stopped pump passes the same 27.15275 m3/h
+      under 1 bar at every wear_head, so its resistance keeps the design 8.8 minimum (worn
+      with it, wear_head 0.5 would let 38.4 m3/h through).
+    scenario: stopped-pump-resistance
+    sweep: {variable: dut.wear_head, values: [0, 0.5]}
+    check: {type: equal, left: dut.volume_flow, right: 27.15275, rel_tol: 1.0e-5}
+  - id: head-falls-with-wear
+    description: On the fixed system curve of the Kv 15 valve, more head wear always lowers the head.
+    scenario: operating-point
+    sweep: {variable: dut.wear_head, from: 0, to: 0.5, steps: 11}
+    check: {type: monotonic, variable: dut.head, direction: decreasing, strict: true}
+  - id: flow-falls-with-wear
+    description: >-
+      The operating point on the fixed Kv 15 system curve moves to lower flow as the head
+      wears, from 23.960 m3/h new to sqrt(0.5 a / (0.5 |c| + 100 / (g * 225))) = 18.44 m3/h at
+      wear_head 0.5.
+    scenario: operating-point
+    sweep: {variable: dut.wear_head, from: 0, to: 0.5, steps: 11}
+    check: {type: monotonic, variable: dut.volume_flow, direction: decreasing, strict: true}
+  - id: efficiency-falls-with-wear
+    description: >-
+      More efficiency wear always lowers the efficiency (the flow does not change, only the
+      shaft power rises). Head and efficiency never increase with wear at the same flow and
+      speed; head wear on a fixed system curve moves the operating point to lower flow, which
+      raises the efficiency when the point was to the right of the best-efficiency flow (on a
+      Kv 22 valve: 58.18 % new at 31.19 m3/h, 62.82 % at wear_head 0.5 and 24.63 m3/h).
+    scenario: operating-point
+    sweep: {variable: dut.wear_efficiency, from: 0, to: 0.5, steps: 11}
+    check: {type: monotonic, variable: dut.efficiency, direction: decreasing, strict: true}
+  - id: efficiency-scales-with-wear
+    description: >-
+      wear_efficiency does not move the operating point, so the efficiency is the new pump's
+      62.840 % at the Kv 15 operating point times (1 - wear_efficiency).
+    scenario: operating-point
+    sweep: {variable: dut.wear_efficiency, values: [0, 0.1, 0.2, 0.3, 0.4, 0.5]}
+    check: {type: equal, left: dut.efficiency, right: "62.840 * (1 - dut.wear_efficiency)", abs_tol: 0.01}
+  - id: worn-shaft-power
+    description: >-
+      The shaft power is the new pump's fitted power at the same flow,
+      P0 = 1.48557082 + 0.0586065595 Q - 3.35342667e-4 Q**2 kW (Q in m3/h), times
+      (1 - wear_head) / (1 - wear_efficiency) with wear_head 0.2. With wear-scales-head this
+      makes the efficiency (1 - wear_efficiency) times the new pump's at the same flow.
+    scenario: worn-pump
+    sweep: {variable: dut.wear_efficiency, values: [0, 0.1, 0.25, 0.5]}
+    check:
+      type: equal
+      left: dut.shaft_power
+      right: "0.8 / (1 - dut.wear_efficiency) * (1.48557082 + 0.0586065595 * dut.volume_flow - 3.35342667e-4 * dut.volume_flow ** 2)"
+      rel_tol: 1.0e-6
   - id: cavitation-warning
     description: The cavitation warning is raised exactly when NPSH available is below NPSH required plus the margin with forward flow, or below zero, as the tank level varies from empty (the pump runs dry and pulls its inlet below the vapour pressure) to full.
     scenario: suction-lift-cavitation
@@ -457,11 +582,12 @@ implementations:
   wntr:
     element: HeadPump
     notes: >-
-      Head pump with a pump curve and a speed setting; EPANET fits a single-point or
-      three-point curve as H = A - B Q**C and interpolates a multi-point curve piecewise
-      linearly, so the operating point differs slightly from the quadratic fit. EPANET has no
-      NPSH check and treats a pump as a check valve (no reverse flow). Binding not yet
-      cross-validated in v0.1.
+      Head pump with a pump curve and a speed setting (worldparts.adapters.wntr_adapter):
+      the fitted quadratic, times 1 - wear_head, is exported as EPANET's three-point power
+      curve when that is exact (fitted linear term 0) and otherwise as a multi-point curve;
+      cross-validated in docs/wntr-adapter.md (flows within 0.05 %). EPANET has no NPSH
+      check and treats a pump as a check valve (no reverse flow); shaft power and
+      wear_efficiency are not compared.
 provenance:
   authors: [worldparts contributors]
   sources:

@@ -94,10 +94,13 @@ claude mcp add worldparts -- uvx --from git+https://github.com/raimondasl/worldp
 }
 ```
 
-The server has 16 tools: `list_components`, `describe_component`, `run_contracts`,
+The server has 18 tools: `list_components`, `describe_component`, `run_contracts`,
 `create_system`, `add_component`, `remove_component`, `set_values`, `connect`,
-`disconnect`, `check_system`, `list_variables`, `solve`, `solve_for`, `simulate`,
-`get_system` and `load_system`. When the `wntr` package is installed, the
+`disconnect`, `add_control`, `remove_control`, `check_system`, `list_variables`, `solve`,
+`solve_for`, `simulate`, `get_system` and `load_system`. `add_control` and
+`remove_control` manage control loops (a PI loop or a hysteresis switch that reads one
+variable and writes one input); `solve`, `solve_for` and `simulate` report them under
+`controls`, and `variables=["control"]` selects their results. When the `wntr` package is installed, the
 [WNTR adapter](docs/wntr-adapter.md) adds `export_system` and `compare_with_wntr`. Systems
 live as long as the server process; `get_system` and `load_system` save and restore them.
 
@@ -203,6 +206,45 @@ tank, are in [examples/](examples/README.md). They are in the repository, not in
 installed package: clone it (`git clone https://github.com/raimondasl/worldparts`) to run
 them.
 
+### Controls
+
+A control reads one reported variable and writes one component input (design 13.1). A PI
+loop holds a booster pump's discharge at 3 bar:
+
+```python
+b = wp.System("booster")
+b.add("mains", "supply", pressure="0.5 bar")
+b.add("pump", "centrifugal_pump", speed=0.5)
+b.add("zone", "valve", kv="10 m3/h")
+b.add("out", "drain")
+for a, c in [("mains.port", "pump.inlet"), ("pump.outlet", "zone.port_a"),
+             ("zone.port_b", "out.port")]:
+    b.connect(a, c)
+b.add_control("duty", "pi", measure="pump.outlet.p", setpoint="3 bar",
+              actuate="pump.speed", gain=0.1, integral_time="2 s",
+              output_min=0.3, output_max=1.2)
+
+r = b.solve()  # goal-seeks the speed that holds 3 bar
+print(f"speed {r['pump.speed']:.3f}, {r['pump.outlet.p']:.2f} bar")
+sim = b.simulate("2 min", "1 s", events=[{"at": "60 s", "set": {"zone.opening": 0.5}}])
+print(f"speed {sim.final['pump.speed']:.3f}, {sim.final['pump.outlet.p']:.2f} bar")
+```
+
+Output:
+
+```text
+speed 0.935, 3.00 bar
+speed 0.885, 3.00 bar
+```
+
+`solve()` goal-seeks every PI actuator within its output limits and leaves it at the value
+found; `simulate()` runs the loop as a sampled-data controller whose command acts from the
+sample where it is computed, like an event. A `hysteresis` control switches an input
+between two values (a level switch on a fill pump). Results carry `r.controls` and the
+series `control.duty.output` and `control.duty.measure`. System documents list controls
+under `controls`, and simulation events may ramp a value: `{at, ramp: {path: [start,
+end]}, over}`. See [examples/booster_station.yaml](examples/booster_station.yaml).
+
 ## The catalogue
 
 Eleven components, all with the id prefix `worldparts.hydraulic.`. The full reference
@@ -211,8 +253,8 @@ provenance) is generated from the manifests: [docs/catalog.md](docs/catalog.md).
 
 | Component | What it models | Key warnings |
 |---|---|---|
-| `centrifugal_pump` | Variable-speed pump from head, power and NPSH curves; affinity laws, efficiency, best-efficiency point | `cavitation`, `low_flow`, `beyond_curve`, `outside_preferred_region`, `motor_overload`, `reverse_flow` |
-| `tank` | Open cylindrical tank with bottom ports, level-dependent head, overflow, mixed temperature | `tank_empty`, `low_level`, `tank_overflow`, `drawing_air` |
+| `centrifugal_pump` | Variable-speed pump from head, power and NPSH curves; affinity laws, efficiency, best-efficiency point, wear inputs (`wear_head`, `wear_efficiency`) | `cavitation`, `low_flow`, `beyond_curve`, `outside_preferred_region`, `motor_overload`, `reverse_flow` |
+| `tank` | Open cylindrical tank with bottom ports or a top inlet (`inlet_height`), level-dependent head, overflow, mixed temperature | `tank_empty`, `low_level`, `tank_overflow`, `drawing_air` |
 | `media_filter` | Sand or cartridge filter; linear media loss that grows with clogging plus housing loss | `change_required`, `over_rated_flow`, `reverse_flow` |
 | `uv_reactor` | UV disinfection with a rated pressure drop and a plug-flow average dose | `underdose`, `lamp_off`, `reverse_flow` |
 | `pipe` | Darcy-Weisbach pipe (Churchill friction factor), minor losses, static head | `high_velocity`, `high_relative_roughness`, `below_vapour_pressure` |
@@ -220,6 +262,7 @@ provenance) is generated from the manifests: [docs/catalog.md](docs/catalog.md).
 | `check_valve` | Non-return valve: Kv forward, small leakage in reverse | none |
 | `supply` | Fixed-pressure source: main, reservoir, pressurised line | none |
 | `drain` | Open discharge to atmosphere | `backflow` |
+| `leak` | Orifice to atmosphere for burst or background leakage, Q = Cd A sqrt(2 dp / rho); opening can change mid-run | `backflow` |
 | `mixing_faucet` | Single-lever mixer with energy-balance mixing (secondary) | `scald_risk`, `crossflow`, `back_siphonage`, `low_supply_pressure` |
 | `instantaneous_water_heater` | Flow-switched tankless heater with a power limit (secondary) | `setpoint_not_met`, `below_activation_flow` |
 

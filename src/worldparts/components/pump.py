@@ -16,6 +16,16 @@ the resistance ``-c``, which is almost nothing for a head curve that falls linea
 its bound ``C_MAX``); the law therefore uses at least :data:`STOP_RESISTANCE_FACTOR` times
 ``a / Q_max**2`` there (blended out linearly as the speed rises to ``OFF_SPEED``), so a stopped
 pump never passes more than about 1.4 times its largest curve flow under its shut-off head.
+
+Wear (design 13.3) is two inputs, so it can change during a simulation and be estimated by
+calibration. ``wear_head`` scales the running pump's head law, ``H = (1 - wear_head) *
+H_new(Q, s)`` at and above ``OFF_SPEED``; the stopped-pump resistance is not worn (erosion
+of the impeller does not halve the resistance of its passages, and a worn stopped pump keeps
+the design 8.8 minimum), and the blend between them below ``OFF_SPEED`` keeps the law
+continuous in the speed. ``wear_efficiency`` raises the shaft power to
+``P_new(Q, s) * (1 - wear_head) / (1 - wear_efficiency)``, so the efficiency at a given flow
+and speed is ``(1 - wear_efficiency)`` times that of the new pump. NPSH required and the
+curve-fit observables (``bep_flow``, ``curve_fit_rms``) describe the new pump.
 """
 
 from __future__ import annotations
@@ -86,13 +96,14 @@ class PumpCurveFit:
         q_max = self.max_flow if self.max_flow > 0.0 else 1.0
         return min(c, -STOP_RESISTANCE_FACTOR * a / (q_max * q_max))
 
-    def law_c(self, s: float) -> float:
+    def law_c(self, s: float, head_factor: float = 1.0) -> float:
         """Quadratic coefficient of the branch law at relative speed ``s``.
 
-        The fitted ``c`` at and above ``OFF_SPEED`` (exact affinity laws); :attr:`stop_c` at
-        ``s = 0``, blended linearly in between so the law is continuous in the speed.
+        The fitted ``c`` times ``head_factor`` (``1 - wear_head``) at and above
+        ``OFF_SPEED`` (exact affinity laws); the unworn :attr:`stop_c` at ``s = 0``, blended
+        linearly in between so the law is continuous in the speed.
         """
-        c = self.head[2]
+        c = self.head[2] * head_factor
         w = max(0.0, 1.0 - max(s, 0.0) / OFF_SPEED)
         return c + (self.stop_c - c) * w
 
@@ -290,13 +301,26 @@ class CentrifugalPump(Component):
         self.law = PumpLaw(1.0, 0.0, -1.0, 1.0, eps=LAW_EPS, rho=self.rho)
         self.branch = nb.branch(nb.port("inlet"), nb.port("outlet"), self.law, label="pump")
 
+    @property
+    def head_factor(self) -> float:
+        """``1 - wear_head``: the fraction of the new pump's head that the worn pump gives."""
+        return 1.0 - float(self.inputs.get("wear_head", 0.0))
+
+    @property
+    def power_factor(self) -> float:
+        """``(1 - wear_head) / (1 - wear_efficiency)``: shaft power relative to the new pump
+        at the same flow and speed (design 13.3)."""
+        return self.head_factor / (1.0 - float(self.inputs.get("wear_efficiency", 0.0)))
+
     def update_laws(self) -> None:
-        """Fitted head coefficients and the relative speed (stopped-pump resistance below
-        ``OFF_SPEED``, see :meth:`PumpCurveFit.law_c`)."""
+        """Fitted head coefficients scaled by ``1 - wear_head`` and the relative speed
+        (the unworn stopped-pump resistance below ``OFF_SPEED``, see
+        :meth:`PumpCurveFit.law_c`)."""
         fit = self.fit
         speed = float(self.inputs["speed"])
         a, b, _ = fit.head
-        self.law.a, self.law.b, self.law.c = a, b, fit.law_c(speed)
+        w = self.head_factor
+        self.law.a, self.law.b, self.law.c = w * a, w * b, fit.law_c(speed, w)
         self.law.speed = speed
 
     # -- results ---------------------------------------------------------------------------
@@ -319,7 +343,7 @@ class CentrifugalPump(Component):
         fit = self.fit
         q = sol.m(self.branch) / self.rho
         head = -sol.dp(self.branch) / (self.rho * G)
-        shaft = max(fit.power_at(q, s), 0.0)
+        shaft = max(fit.power_at(q, s), 0.0) * self.power_factor
         hydraulic = self.rho * G * q * head
         eff = hydraulic / shaft if q > 0.0 and shaft > 0.0 and hydraulic > 0.0 else 0.0
         return {
@@ -347,7 +371,9 @@ class CentrifugalPump(Component):
         kWh/m3 and swamp the minimum and maximum of a simulated series).
 
         ``head`` is the pressure rise ``(p_outlet - p_inlet) / (rho * g)``; it differs from the
-        fitted curve only by the law's tiny linear term (1 Pa per kg/s).
+        fitted curve (times ``1 - wear_head``) only by the law's tiny linear term (1 Pa per
+        kg/s). ``shaft_power`` is the fitted power times :attr:`power_factor`, so a worn pump's
+        efficiency is ``1 - wear_efficiency`` times the new pump's at the same flow.
         """
         return self._state(sol)
 

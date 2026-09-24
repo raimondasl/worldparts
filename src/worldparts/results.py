@@ -12,6 +12,7 @@ from worldparts.units import convert
 
 __all__ = [
     "ComponentWarning",
+    "ControlReport",
     "Issue",
     "ModeChange",
     "SimulationResult",
@@ -130,6 +131,54 @@ class ModeChange:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class ControlReport:
+    """The state of a control loop in a result (design section 13.1).
+
+    Attributes:
+        name: Control name.
+        type: ``pi`` or ``hysteresis``.
+        measure: Measured path.
+        actuate: Actuated input path.
+        output: The actuator value the control commands, in ``output_unit``. In a steady
+            solve it is the value the solve used; in a simulation it is the command issued
+            at that sample (after the solve), which takes effect over the next step.
+        output_unit: Declared unit of the actuated input.
+        measured: The measured value, in ``measure_unit`` (None when undefined).
+        measure_unit: Display unit of the measured path.
+        setpoint: PI: the setpoint in ``measure_unit``.
+        error: PI: ``setpoint - measured`` (reverse action) or ``measured - setpoint``
+            (direct), so a positive error raises the output.
+        state: Hysteresis: ``on`` or ``off``.
+        saturated: PI: the output sits at a limit and the error pushes it further out.
+        switches: Hysteresis in a simulation: the number of switches during the run.
+    """
+
+    name: str
+    type: str
+    measure: str
+    actuate: str
+    output: float | None
+    output_unit: str
+    measured: float | None
+    measure_unit: str
+    setpoint: float | None = None
+    error: float | None = None
+    state: str | None = None
+    saturated: bool = False
+    switches: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Plain-dict form without the fields that do not apply to the control type."""
+        d = asdict(self)
+        for key in ("setpoint", "error", "state", "switches"):
+            if d[key] is None:
+                del d[key]
+        if self.type != "pi":
+            del d["saturated"]
+        return d
+
+
 def _lookup(mapping: Mapping[str, Any], path: str, what: str = "variable") -> Any:
     try:
         return mapping[path]
@@ -153,6 +202,8 @@ class SolveResult:
         warnings: Component warnings.
         issues: Non-fatal issues from the structural check (warnings only).
         time: Simulation time in s when the result is part of a simulation.
+        controls: Control name to :class:`ControlReport` (empty without controls). The
+            values also carry ``control.<name>.output`` and ``control.<name>.measure``.
     """
 
     converged: bool
@@ -165,6 +216,7 @@ class SolveResult:
     issues: list[Issue] = field(default_factory=list)
     references: dict[str, str] = field(default_factory=dict, repr=False)
     time: float | None = None
+    controls: dict[str, ControlReport] = field(default_factory=dict)
 
     def __getitem__(self, path: str) -> float | None:
         return _lookup(self.values, path)
@@ -224,6 +276,8 @@ class SolveResult:
         }
         if self.issues:
             out["issues"] = [i.to_dict() for i in self.issues]
+        if self.controls:
+            out["controls"] = {n: c.to_dict() for n, c in self.controls.items()}
         if self.time is not None:
             out["time"] = self.time
         return out
@@ -248,6 +302,10 @@ class SimulationResult:
             raised at the end.
         mode_changes: Initial mode of each component at t=0 and every later change.
         final: The steady result at the final time.
+        controls: Control name to its :class:`ControlReport` at the end of the run (with
+            the number of switches of each hysteresis control). The series carry
+            ``control.<name>.output`` (the command issued at each sample) and
+            ``control.<name>.measure``.
     """
 
     time: list[float]
@@ -257,6 +315,7 @@ class SimulationResult:
     mode_changes: list[ModeChange]
     final: SolveResult
     references: dict[str, str] = field(default_factory=dict, repr=False)
+    controls: dict[str, ControlReport] = field(default_factory=dict)
 
     def __getitem__(self, path: str) -> list[float | None]:
         return _lookup(self.series, path)
@@ -299,7 +358,7 @@ class SimulationResult:
                 step = (n - 1) / (max_points - 1)
                 idx = sorted({round(i * step) for i in range(max_points)})
         paths = variables if variables is not None else list(self.series)
-        return {
+        out = {
             "time": [self.time[i] for i in idx],
             "series": {p: [_jsonable(self.series[p][i]) for i in idx] for p in paths},
             "units": {p: self.units[p] for p in paths},
@@ -307,5 +366,10 @@ class SimulationResult:
             "summary": {p: self.summary(p) for p in paths},
             "warnings": [w.to_dict() for w in self.warnings],
             "mode_changes": [c.to_dict() for c in self.mode_changes],
-            "final": self.final.to_dict(paths if variables is not None else None),
+            "final": self.final.to_dict(
+                [p for p in paths if p in self.final] if variables is not None else None
+            ),
         }
+        if self.controls:
+            out["controls"] = {n: c.to_dict() for n, c in self.controls.items()}
+        return out
