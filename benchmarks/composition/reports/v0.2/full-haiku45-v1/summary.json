@@ -1,0 +1,2025 @@
+{
+  "run_id": "full-haiku45-v1",
+  "models": [
+    "claude-haiku-4-5-20251001"
+  ],
+  "runs": 64,
+  "tasks": 32,
+  "conditions": {
+    "code": {
+      "runs": 32,
+      "passed": 19,
+      "pass_rate": 0.59375,
+      "ci95": [
+        0.4226,
+        0.7448
+      ]
+    },
+    "mcp": {
+      "runs": 32,
+      "passed": 27,
+      "pass_rate": 0.84375,
+      "ci95": [
+        0.6825,
+        0.9314
+      ]
+    }
+  },
+  "by_level": {
+    "code": {
+      "1": {
+        "runs": 11,
+        "passed": 7,
+        "pass_rate": 0.6363636363636364,
+        "ci95": [
+          0.3538,
+          0.8483
+        ]
+      },
+      "2": {
+        "runs": 13,
+        "passed": 7,
+        "pass_rate": 0.5384615384615384,
+        "ci95": [
+          0.2914,
+          0.7679
+        ]
+      },
+      "3": {
+        "runs": 8,
+        "passed": 5,
+        "pass_rate": 0.625,
+        "ci95": [
+          0.3057,
+          0.8632
+        ]
+      }
+    },
+    "mcp": {
+      "1": {
+        "runs": 11,
+        "passed": 11,
+        "pass_rate": 1.0,
+        "ci95": [
+          0.7412,
+          1.0
+        ]
+      },
+      "2": {
+        "runs": 13,
+        "passed": 12,
+        "pass_rate": 0.9230769230769231,
+        "ci95": [
+          0.6669,
+          0.9863
+        ]
+      },
+      "3": {
+        "runs": 8,
+        "passed": 4,
+        "pass_rate": 0.5,
+        "ci95": [
+          0.2152,
+          0.7848
+        ]
+      }
+    }
+  },
+  "by_category": {
+    "code": {
+      "diagnosis": {
+        "runs": 4,
+        "passed": 1,
+        "pass_rate": 0.25,
+        "ci95": [
+          0.0456,
+          0.6994
+        ]
+      },
+      "judgement": {
+        "runs": 8,
+        "passed": 7,
+        "pass_rate": 0.875,
+        "ci95": [
+          0.5291,
+          0.9776
+        ]
+      },
+      "operating_point": {
+        "runs": 5,
+        "passed": 3,
+        "pass_rate": 0.6,
+        "ci95": [
+          0.2307,
+          0.8824
+        ]
+      },
+      "sizing": {
+        "runs": 4,
+        "passed": 2,
+        "pass_rate": 0.5,
+        "ci95": [
+          0.15,
+          0.85
+        ]
+      },
+      "transient": {
+        "runs": 5,
+        "passed": 4,
+        "pass_rate": 0.8,
+        "ci95": [
+          0.3755,
+          0.9638
+        ]
+      },
+      "what_if": {
+        "runs": 6,
+        "passed": 2,
+        "pass_rate": 0.3333333333333333,
+        "ci95": [
+          0.0968,
+          0.7
+        ]
+      }
+    },
+    "mcp": {
+      "diagnosis": {
+        "runs": 4,
+        "passed": 3,
+        "pass_rate": 0.75,
+        "ci95": [
+          0.3006,
+          0.9544
+        ]
+      },
+      "judgement": {
+        "runs": 8,
+        "passed": 8,
+        "pass_rate": 1.0,
+        "ci95": [
+          0.6756,
+          1.0
+        ]
+      },
+      "operating_point": {
+        "runs": 5,
+        "passed": 5,
+        "pass_rate": 1.0,
+        "ci95": [
+          0.5655,
+          1.0
+        ]
+      },
+      "sizing": {
+        "runs": 4,
+        "passed": 3,
+        "pass_rate": 0.75,
+        "ci95": [
+          0.3006,
+          0.9544
+        ]
+      },
+      "transient": {
+        "runs": 5,
+        "passed": 2,
+        "pass_rate": 0.4,
+        "ci95": [
+          0.1176,
+          0.7693
+        ]
+      },
+      "what_if": {
+        "runs": 6,
+        "passed": 6,
+        "pass_rate": 1.0,
+        "ci95": [
+          0.6097,
+          1.0
+        ]
+      }
+    }
+  },
+  "by_domain": {
+    "code": {
+      "distribution": {
+        "runs": 4,
+        "passed": 2,
+        "pass_rate": 0.5,
+        "ci95": [
+          0.15,
+          0.85
+        ]
+      },
+      "pumping": {
+        "runs": 13,
+        "passed": 7,
+        "pass_rate": 0.5384615384615384,
+        "ci95": [
+          0.2914,
+          0.7679
+        ]
+      },
+      "storage": {
+        "runs": 4,
+        "passed": 3,
+        "pass_rate": 0.75,
+        "ci95": [
+          0.3006,
+          0.9544
+        ]
+      },
+      "treatment": {
+        "runs": 11,
+        "passed": 7,
+        "pass_rate": 0.6363636363636364,
+        "ci95": [
+          0.3538,
+          0.8483
+        ]
+      }
+    },
+    "mcp": {
+      "distribution": {
+        "runs": 4,
+        "passed": 3,
+        "pass_rate": 0.75,
+        "ci95": [
+          0.3006,
+          0.9544
+        ]
+      },
+      "pumping": {
+        "runs": 13,
+        "passed": 13,
+        "pass_rate": 1.0,
+        "ci95": [
+          0.7719,
+          1.0
+        ]
+      },
+      "storage": {
+        "runs": 4,
+        "passed": 2,
+        "pass_rate": 0.5,
+        "ci95": [
+          0.15,
+          0.85
+        ]
+      },
+      "treatment": {
+        "runs": 11,
+        "passed": 9,
+        "pass_rate": 0.8181818181818182,
+        "ci95": [
+          0.523,
+          0.9486
+        ]
+      }
+    }
+  },
+  "answers": {
+    "code": {
+      "overall": {
+        "n": 98,
+        "passed": 67,
+        "accuracy": 0.6836734693877551
+      },
+      "by_kind": {
+        "boolean": {
+          "n": 11,
+          "passed": 10,
+          "accuracy": 0.9090909090909091
+        },
+        "choice": {
+          "n": 12,
+          "passed": 11,
+          "accuracy": 0.9166666666666666
+        },
+        "number": {
+          "n": 75,
+          "passed": 46,
+          "accuracy": 0.6133333333333333
+        }
+      },
+      "by_answer": {
+        "judge-01/acceptable": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-01/primary_problem": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-02/acceptable": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-02/primary_problem": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-03/acceptable": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-03/primary_problem": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-04/acceptable": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-04/primary_problem": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-05/acceptable": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-05/primary_problem": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-06/acceptable": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-06/primary_problem": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-07/acceptable": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "judge-07/primary_problem": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "judge-08/acceptable": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-08/primary_problem": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-booster-01/head": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-booster-01/pump_power": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-booster-01/speed": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-diag-01/fault": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-diag-01/speed": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-drain-01/initial_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-drain-01/level_20min": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-drain-01/time_to_low": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-leak-01/chamber_pressure": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-leak-01/fault": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-leak-01/lost_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-lift-01/flow": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-lift-01/head": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-lift-01/pump_power": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-npsh-01/flow": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-npsh-01/margin_met_50c": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-npsh-01/npsha_20c": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-npsh-01/npsha_50c": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-npsh-01/npshr": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-parallel-01/flow_one_pump": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-parallel-01/flow_two_pumps": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-parallel-01/head_two_pumps": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-series-01/booster_inlet_pressure": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-series-01/booster_power": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-series-01/booster_speed": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-station-01/flow_large": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-station-01/flow_small": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-station-01/header_pressure": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-station-01/zone_pressure": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-throttle-01/power_speed_control": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-throttle-01/power_throttled": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-throttle-01/speed": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-throttle-01/valve_opening": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-tower-01/ground_empty_time": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-tower-01/max_tower_level": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-tower-01/tower_level_3h": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-transfer-01/empty_time": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-transfer-01/initial_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-transfer-01/overflow_time": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-check-backflow-01/check_outlet_pressure": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "treat-check-backflow-01/fill_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-check-backflow-01/flow_after_drop": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-clearwell-fill-01/fill_time": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-clearwell-fill-01/full_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-clearwell-fill-01/initial_dose": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-clearwell-fill-01/initial_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-diagnose-filter-01/clogging": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-diagnose-filter-01/corrected_flow": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "treat-diagnose-filter-01/fault": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-diagnose-train-01/corrected_flow": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "treat-diagnose-train-01/fault": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-diagnose-train-01/opening": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "treat-filter-clog-01/clean_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-filter-clog-01/clogged_filter_dp": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-filter-clog-01/clogged_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-parallel-uv-01/dose_a": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "treat-parallel-uv-01/dose_b": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "treat-parallel-uv-01/plant_flow": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "treat-parallel-uv-01/pump_power": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "treat-parallel-uv-01/pump_speed": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-skid-duty-01/dose": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "treat-skid-duty-01/flow": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "treat-skid-duty-01/head": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "treat-skid-duty-01/pump_power": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "treat-tower-drain-01/pressure_c": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-tower-drain-01/pressure_c_end": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-tower-drain-01/time_to_low": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-tower-drain-01/tower_outflow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-two-source-01/interconnect_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-two-source-01/junction_pressure": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-two-source-01/plant_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-two-source-01/village_pressure": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-dose-01/dose": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-dose-01/flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-dose-01/meets_dose": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-lamp-01/aged_dose": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-lamp-01/aged_meets_dose": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-lamp-01/flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-lamp-01/opening": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-throttle-01/dose_full_open": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-throttle-01/flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-throttle-01/opening": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        }
+      }
+    },
+    "mcp": {
+      "overall": {
+        "n": 98,
+        "passed": 92,
+        "accuracy": 0.9387755102040817
+      },
+      "by_kind": {
+        "boolean": {
+          "n": 11,
+          "passed": 11,
+          "accuracy": 1.0
+        },
+        "choice": {
+          "n": 12,
+          "passed": 12,
+          "accuracy": 1.0
+        },
+        "number": {
+          "n": 75,
+          "passed": 69,
+          "accuracy": 0.92
+        }
+      },
+      "by_answer": {
+        "judge-01/acceptable": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-01/primary_problem": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-02/acceptable": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-02/primary_problem": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-03/acceptable": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-03/primary_problem": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-04/acceptable": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-04/primary_problem": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-05/acceptable": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-05/primary_problem": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-06/acceptable": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-06/primary_problem": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-07/acceptable": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-07/primary_problem": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-08/acceptable": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "judge-08/primary_problem": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-booster-01/head": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-booster-01/pump_power": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-booster-01/speed": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-diag-01/fault": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-diag-01/speed": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-drain-01/initial_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-drain-01/level_20min": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-drain-01/time_to_low": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-leak-01/chamber_pressure": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-leak-01/fault": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-leak-01/lost_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-lift-01/flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-lift-01/head": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-lift-01/pump_power": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-npsh-01/flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-npsh-01/margin_met_50c": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-npsh-01/npsha_20c": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-npsh-01/npsha_50c": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-npsh-01/npshr": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-parallel-01/flow_one_pump": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-parallel-01/flow_two_pumps": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-parallel-01/head_two_pumps": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-series-01/booster_inlet_pressure": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-series-01/booster_power": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-series-01/booster_speed": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-station-01/flow_large": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-station-01/flow_small": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-station-01/header_pressure": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-station-01/zone_pressure": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-throttle-01/power_speed_control": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-throttle-01/power_throttled": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-throttle-01/speed": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-throttle-01/valve_opening": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-tower-01/ground_empty_time": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-tower-01/max_tower_level": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-tower-01/tower_level_3h": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-transfer-01/empty_time": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "pump-transfer-01/initial_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-transfer-01/overflow_time": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "treat-check-backflow-01/check_outlet_pressure": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-check-backflow-01/fill_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-check-backflow-01/flow_after_drop": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-clearwell-fill-01/fill_time": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-clearwell-fill-01/full_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-clearwell-fill-01/initial_dose": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-clearwell-fill-01/initial_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-diagnose-filter-01/clogging": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-diagnose-filter-01/corrected_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-diagnose-filter-01/fault": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-diagnose-train-01/corrected_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-diagnose-train-01/fault": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-diagnose-train-01/opening": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "treat-filter-clog-01/clean_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-filter-clog-01/clogged_filter_dp": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-filter-clog-01/clogged_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-parallel-uv-01/dose_a": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-parallel-uv-01/dose_b": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-parallel-uv-01/plant_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-parallel-uv-01/pump_power": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "treat-parallel-uv-01/pump_speed": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-skid-duty-01/dose": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-skid-duty-01/flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-skid-duty-01/head": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-skid-duty-01/pump_power": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-tower-drain-01/pressure_c": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-tower-drain-01/pressure_c_end": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-tower-drain-01/time_to_low": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-tower-drain-01/tower_outflow": {
+          "n": 1,
+          "passed": 0,
+          "accuracy": 0.0
+        },
+        "treat-two-source-01/interconnect_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-two-source-01/junction_pressure": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-two-source-01/plant_flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-two-source-01/village_pressure": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-dose-01/dose": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-dose-01/flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-dose-01/meets_dose": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-lamp-01/aged_dose": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-lamp-01/aged_meets_dose": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-lamp-01/flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-lamp-01/opening": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-throttle-01/dose_full_open": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-throttle-01/flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-uv-throttle-01/opening": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        }
+      }
+    }
+  },
+  "traceability": {
+    "code": {
+      "numeric_answers": 75,
+      "traceable": 75,
+      "correct": 46,
+      "correct_traceable": 46,
+      "in_prompt": 1,
+      "correct_untraceable_not_in_prompt": 0,
+      "traceable_rate": 1.0
+    },
+    "mcp": {
+      "numeric_answers": 75,
+      "traceable": 70,
+      "correct": 69,
+      "correct_traceable": 65,
+      "in_prompt": 2,
+      "correct_untraceable_not_in_prompt": 4,
+      "traceable_rate": 0.9333333333333333
+    }
+  },
+  "usage": {
+    "code": {
+      "median_tool_calls": 4.0,
+      "median_tool_errors": 1.0,
+      "median_turns": 5.0,
+      "median_total_tokens": 115110.0,
+      "median_output_tokens": 10865.5,
+      "median_cost_usd": 0.09803710000000002,
+      "total_cost_usd": 4.2698,
+      "median_duration_s": 98.7705,
+      "timeouts": 0,
+      "cli_errors": 0
+    },
+    "mcp": {
+      "median_tool_calls": 13.0,
+      "median_tool_errors": 1.0,
+      "median_turns": 14.0,
+      "median_total_tokens": 241883.0,
+      "median_output_tokens": 10988.0,
+      "median_cost_usd": 0.13026780000000002,
+      "total_cost_usd": 4.4992,
+      "median_duration_s": 110.7375,
+      "timeouts": 0,
+      "cli_errors": 0
+    }
+  },
+  "format": {
+    "code": {
+      "runs_with_format_issues": 0,
+      "unparseable": 0
+    },
+    "mcp": {
+      "runs_with_format_issues": 0,
+      "unparseable": 0
+    }
+  },
+  "per_task": [
+    {
+      "task": "judge-01",
+      "level": 1,
+      "category": "judgement",
+      "domain": "pumping",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 2,
+          "answers": 2
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 2,
+          "answers": 2
+        }
+      }
+    },
+    {
+      "task": "judge-03",
+      "level": 1,
+      "category": "judgement",
+      "domain": "pumping",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 2,
+          "answers": 2
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 2,
+          "answers": 2
+        }
+      }
+    },
+    {
+      "task": "judge-07",
+      "level": 1,
+      "category": "judgement",
+      "domain": "distribution",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 0,
+          "answers_passed": 0,
+          "answers": 2
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 2,
+          "answers": 2
+        }
+      }
+    },
+    {
+      "task": "pump-booster-01",
+      "level": 1,
+      "category": "sizing",
+      "domain": "pumping",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        }
+      }
+    },
+    {
+      "task": "pump-diag-01",
+      "level": 1,
+      "category": "diagnosis",
+      "domain": "pumping",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 0,
+          "answers_passed": 1,
+          "answers": 2
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 2,
+          "answers": 2
+        }
+      }
+    },
+    {
+      "task": "pump-drain-01",
+      "level": 1,
+      "category": "transient",
+      "domain": "storage",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        }
+      }
+    },
+    {
+      "task": "pump-lift-01",
+      "level": 1,
+      "category": "operating_point",
+      "domain": "pumping",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 0,
+          "answers_passed": 1,
+          "answers": 3
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        }
+      }
+    },
+    {
+      "task": "treat-check-backflow-01",
+      "level": 1,
+      "category": "what_if",
+      "domain": "distribution",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 0,
+          "answers_passed": 2,
+          "answers": 3
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        }
+      }
+    },
+    {
+      "task": "treat-filter-clog-01",
+      "level": 1,
+      "category": "what_if",
+      "domain": "treatment",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        }
+      }
+    },
+    {
+      "task": "treat-uv-dose-01",
+      "level": 1,
+      "category": "operating_point",
+      "domain": "treatment",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        }
+      }
+    },
+    {
+      "task": "treat-uv-throttle-01",
+      "level": 1,
+      "category": "sizing",
+      "domain": "treatment",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        }
+      }
+    },
+    {
+      "task": "judge-02",
+      "level": 2,
+      "category": "judgement",
+      "domain": "pumping",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 2,
+          "answers": 2
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 2,
+          "answers": 2
+        }
+      }
+    },
+    {
+      "task": "judge-04",
+      "level": 2,
+      "category": "judgement",
+      "domain": "pumping",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 2,
+          "answers": 2
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 2,
+          "answers": 2
+        }
+      }
+    },
+    {
+      "task": "judge-05",
+      "level": 2,
+      "category": "judgement",
+      "domain": "treatment",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 2,
+          "answers": 2
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 2,
+          "answers": 2
+        }
+      }
+    },
+    {
+      "task": "pump-npsh-01",
+      "level": 2,
+      "category": "what_if",
+      "domain": "pumping",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 0,
+          "answers_passed": 1,
+          "answers": 5
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 5,
+          "answers": 5
+        }
+      }
+    },
+    {
+      "task": "pump-parallel-01",
+      "level": 2,
+      "category": "what_if",
+      "domain": "pumping",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 0,
+          "answers_passed": 0,
+          "answers": 3
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        }
+      }
+    },
+    {
+      "task": "pump-series-01",
+      "level": 2,
+      "category": "sizing",
+      "domain": "pumping",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 0,
+          "answers_passed": 0,
+          "answers": 3
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        }
+      }
+    },
+    {
+      "task": "pump-throttle-01",
+      "level": 2,
+      "category": "what_if",
+      "domain": "pumping",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 0,
+          "answers_passed": 3,
+          "answers": 4
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 4,
+          "answers": 4
+        }
+      }
+    },
+    {
+      "task": "pump-transfer-01",
+      "level": 2,
+      "category": "transient",
+      "domain": "storage",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 0,
+          "answers_passed": 1,
+          "answers": 3
+        }
+      }
+    },
+    {
+      "task": "treat-clearwell-fill-01",
+      "level": 2,
+      "category": "transient",
+      "domain": "treatment",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 4,
+          "answers": 4
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 4,
+          "answers": 4
+        }
+      }
+    },
+    {
+      "task": "treat-diagnose-filter-01",
+      "level": 2,
+      "category": "diagnosis",
+      "domain": "treatment",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 0,
+          "answers_passed": 2,
+          "answers": 3
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        }
+      }
+    },
+    {
+      "task": "treat-skid-duty-01",
+      "level": 2,
+      "category": "operating_point",
+      "domain": "treatment",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 0,
+          "answers_passed": 0,
+          "answers": 4
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 4,
+          "answers": 4
+        }
+      }
+    },
+    {
+      "task": "treat-two-source-01",
+      "level": 2,
+      "category": "operating_point",
+      "domain": "distribution",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 4,
+          "answers": 4
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 4,
+          "answers": 4
+        }
+      }
+    },
+    {
+      "task": "treat-uv-lamp-01",
+      "level": 2,
+      "category": "what_if",
+      "domain": "treatment",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 4,
+          "answers": 4
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 4,
+          "answers": 4
+        }
+      }
+    },
+    {
+      "task": "judge-06",
+      "level": 3,
+      "category": "judgement",
+      "domain": "storage",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 2,
+          "answers": 2
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 2,
+          "answers": 2
+        }
+      }
+    },
+    {
+      "task": "judge-08",
+      "level": 3,
+      "category": "judgement",
+      "domain": "treatment",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 2,
+          "answers": 2
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 2,
+          "answers": 2
+        }
+      }
+    },
+    {
+      "task": "pump-leak-01",
+      "level": 3,
+      "category": "diagnosis",
+      "domain": "pumping",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        }
+      }
+    },
+    {
+      "task": "pump-station-01",
+      "level": 3,
+      "category": "operating_point",
+      "domain": "pumping",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 4,
+          "answers": 4
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 4,
+          "answers": 4
+        }
+      }
+    },
+    {
+      "task": "pump-tower-01",
+      "level": 3,
+      "category": "transient",
+      "domain": "storage",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 0,
+          "answers_passed": 0,
+          "answers": 3
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 0,
+          "answers_passed": 2,
+          "answers": 3
+        }
+      }
+    },
+    {
+      "task": "treat-diagnose-train-01",
+      "level": 3,
+      "category": "diagnosis",
+      "domain": "treatment",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 0,
+          "answers_passed": 1,
+          "answers": 3
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 0,
+          "answers_passed": 2,
+          "answers": 3
+        }
+      }
+    },
+    {
+      "task": "treat-parallel-uv-01",
+      "level": 3,
+      "category": "sizing",
+      "domain": "treatment",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 0,
+          "answers_passed": 1,
+          "answers": 5
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 0,
+          "answers_passed": 4,
+          "answers": 5
+        }
+      }
+    },
+    {
+      "task": "treat-tower-drain-01",
+      "level": 3,
+      "category": "transient",
+      "domain": "distribution",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 4,
+          "answers": 4
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 0,
+          "answers_passed": 3,
+          "answers": 4
+        }
+      }
+    }
+  ],
+  "decision_gate": {
+    "runs": 11,
+    "passed": 11,
+    "pass_rate": 1.0,
+    "ci95": [
+      0.7412,
+      1.0
+    ],
+    "threshold": 0.8,
+    "met": true
+  },
+  "infra_errors": [],
+  "contaminated": []
+}

@@ -12,6 +12,21 @@ Run on 23 and 24 September 2026. Raw summaries are in
 
 This result changes what worldparts should claim and what it should measure next. See [What this means](#what-this-means).
 
+## Update: Claude Haiku 4.5
+
+A follow-up run put Claude Haiku 4.5 through the same 32 tasks, using the same product and harness versions as the Sonnet and Opus runs. This is the first result where the tools make a clear difference.
+
+| Model | Condition | Passed | 95 % CI | Level 1 | Answers correct | Median tool calls | Median tokens | Median cost | Total cost |
+|---|---|---:|---|---:|---:|---:|---:|---:|---:|
+| Haiku 4.5 | code | 19/32 (59 %) | 42 to 74 % | 7/11 | 67/98 (68 %) | 4 | 115,110 | $0.098 | $4.27 |
+| Haiku 4.5 | mcp | 27/32 (84 %) | 68 to 93 % | 11/11 | 92/98 (94 %) | 13 | 241,883 | $0.130 | $4.50 |
+
+- **The tools add 25 points of pass rate for the smaller model.** The gains are largest on what-if tasks (100 against 33 percent), diagnosis (75 against 25 percent), operating points (100 against 60 percent) and level-1 tasks (100 against 64 percent).
+- **Code did better on transient tasks** (4 of 5 against 2 of 5) and on level 3 (5 of 8 against 4 of 8).
+- **The five MCP failures are the agent's.** One is a unit slip: the simulation found the right time, but the answer was given in hours instead of minutes. One read two event times about 4 minutes early. Three are modelling misses of 3 to 6 percent.
+- **The run was clean:** no infrastructure errors, no denied tool calls and no contamination.
+- **This is not an argument that the tools save money.** Sonnet 5 writing Python from scratch scored 100 percent at a median of $0.027 per task. Haiku with worldparts scored 84 percent at $0.130, because it took more turns. The finding is narrower: packaged, tested components substantially raise the reliability of a smaller model. That matters where a small model is required, for example for latency, deployment or policy reasons.
+
 ## Setup
 
 - **Tasks.** 24 calculation tasks: operating point, sizing, what-if, transient and diagnosis, covering pumping, storage, treatment and distribution. Also 8 judgement tasks, each asking whether a design is acceptable and naming its primary problem from a fixed list. Every task is fully specified with numbers, so an engineer could solve it by hand. Independent auditors solved all 32 without worldparts to confirm this.
@@ -64,7 +79,7 @@ So the value of worldparts, if any, is not accuracy on small, fully specified ca
 - **Scale.** Large networks, long simulations with controls and events, and repeated what-if studies on the same system, where a from-scratch agent must build and debug a solver each time.
 - **Operations.** Calibration and diagnosis against plant data, and a persistent model queried many times across sessions.
 - **Data.** Real product curves and ratings with provenance, which a from-scratch agent does not have. This is milestone v0.4.
-- **Weaker or cheaper models.** Tools may help small models more. Claude Haiku was not tested.
+- **Weaker or cheaper models.** Confirmed for Claude Haiku 4.5: +25 points of pass rate (see the update above).
 - **Auditability.** A system document with contracts and provenance can be reviewed and rerun; an ad-hoc script usually cannot.
 - **Cost.** The tool list (about 35 KB) and the component descriptions dominate the MCP condition's tokens. They can be cut.
 
@@ -74,4 +89,4 @@ So the value of worldparts, if any, is not accuracy on small, fully specified ca
 - Tasks are fully specified by design. That is fair to the code condition, but it removes the knowledge advantage a library could have.
 - The largest system has 11 components.
 - The tasks were written by the same project. Independent audits reduced this risk but did not remove it.
-- Only two models were tested, both frontier models, and all runs were on one machine.
+- Three models were tested, and all runs were on one machine.
