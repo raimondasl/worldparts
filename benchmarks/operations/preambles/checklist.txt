@@ -1,0 +1,28 @@
+Method checklist for questions answered from plant data.
+1. Read plant.md, tables/ and events.csv first. Note each instrument's stated
+   accuracy and mounting height, and the motor and drive nameplate data.
+2. Inspect the data before fitting: gaps, spikes, repeated (frozen) values,
+   time shifts, and offsets after recalibration events. Remove or flag data
+   artefacts; they are not plant faults.
+3. Aggregate the record into steady operating points (for example hourly or
+   per-setting means) before fitting; use dynamics only when a question needs them.
+4. Build the plant model from the datasheet (pump curves with affinity laws,
+   motor slip and efficiency, pipe and valve losses, filter and reactor data)
+   and check that it reproduces healthy operation within instrument accuracy.
+5. Treat sensor biases and datasheet tolerances as unknowns within their bounds.
+6. Fit unknowns by weighted least squares, weighting each residual by its
+   measurement uncertainty; take standard errors from the Jacobian at the
+   optimum, scaled by the reduced chi-square when it exceeds 1.
+7. Check identifiability with the singular values of the scaled Jacobian and
+   the parameter correlations; a parameter the data do not determine must not
+   be reported as if it were.
+8. For diagnosis, consider every fault in the list, including none and sensor
+   faults. A fault counts only at or above its stated minimum magnitude.
+9. Prefer none, then single faults; fit pairs of faults only when no single
+   fault explains the data. Compare fits by chi-square, AIC or BIC.
+10. If several candidates explain the data comparably, the answer is ambiguous:
+    list them and name a measurement that would separate them.
+11. Fit trends against their physical driver (for example filter loss against
+    solids load since the last backwash), and use the stated future inputs.
+12. Give 90 % intervals. If the data cannot determine a quantity, answer
+    cannot_determine instead of guessing. Check answers against physics.

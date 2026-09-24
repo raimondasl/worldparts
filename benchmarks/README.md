@@ -516,3 +516,76 @@ any session starts (set `WPBENCH_CLAUDE` to the executable).
   when wntr is installed (it is, as a development dependency).
 - Cost and token figures come from the CLI's `result` message; they are what the CLI
   reports, not an invoice.
+
+## Operations benchmark (v0.3)
+
+The protocol is [operations/PREREGISTRATION.md](operations/PREREGISTRATION.md); the bundle,
+task and truth formats are in [operations/INTERFACE.md](operations/INTERFACE.md). The
+harness is `benchmarks/operations/harness/`. It reuses the v0.2 session isolation,
+environment scrubbing, stream and final-JSON parsers and contamination markers. The
+section-9 outcome rule and the operating characteristics are in
+`benchmarks/operations/analysis/` (see the [power tables](operations/analysis/power-tables.md)).
+
+### Locations
+
+- **Bundles**: `$WPBENCH_OPS_BUNDLES/<set>/<task>/r<k>/`, by default
+  `C:/Users/raimo/world-model/opsbench-bundles`. A run checks them against the committed
+  `operations/bundles-<set>.sha256` first.
+- **Truth**: `$WPBENCH_OPS_TRUTH/<set>/<task>.truth.json`. Only `grade` and `headroom` read
+  it, and no `WPBENCH*` variable reaches a session.
+- **Runs**: `operations/results/<run>/`, which is not in git. It holds:
+  - `run.json`;
+  - `index.json`, which maps each session id to its model, task, arm and realisation;
+  - `sessions/<id>/attempt-<n>/`: the prompt, command, stream, stderr, outcome and the
+    files the agent wrote;
+  - `sessions/<id>/record.json`, `audit.json` and `summary.md`.
+
+### Stage 0
+
+```sh
+# Print the exact command lines, environment and prompts; run nothing.
+uv run python -m benchmarks.operations.harness run --set dev --arms code+ code-hint \
+    --models sonnet opus --realisation 1 --dry-run
+# Build the code-plus environment (numpy, scipy, pandas, statsmodels, scikit-learn, lmfit,
+# fluids, wntr, matplotlib; no worldparts), keyed by a hash of its versions.
+uv run python -m benchmarks.operations.harness code-env
+# The 64 sessions (paid: the owner approves the projected cost first).
+uv run python -m benchmarks.operations.harness run --set dev --models sonnet opus \
+    --jobs 4 --out benchmarks/operations/results/stage0
+# The blind audit (opaque session ids; no arms, no grades), re-runs of the flagged
+# sessions (same realisation, at most twice), then grading and the headroom rule.
+uv run python -m benchmarks.operations.harness audit benchmarks/operations/results/stage0
+uv run python -m benchmarks.operations.harness run --out benchmarks/operations/results/stage0 \
+    --rerun-flagged
+uv run python -m benchmarks.operations.harness grade benchmarks/operations/results/stage0
+uv run python -m benchmarks.operations.harness headroom benchmarks/operations/results/stage0
+# The bundle manifest (freeze-0), and its check.
+uv run python -m benchmarks.operations.harness manifest --set dev
+uv run python -m benchmarks.operations.harness manifest --set dev --check
+```
+
+- **Arms.** Stage 0 runs `code+` and `code-hint`:
+  - tools Bash, Read, Write and Edit, with `--max-turns 120` and 2,400 s per session;
+  - the prompt is `task.md`, then the arm's preamble, then the answer-format instruction;
+  - the preamble is `operations/preambles/environment.txt`, and `code-hint` adds the
+    verbatim methods checklist, `checklist.txt`.
+
+  `code-skill`, `lib`, `lib-directed` and `mcp-hybrid` are registered in `harness/arms.py`,
+  but they refuse to run before freeze-1.
+- **Infrastructure errors** (`harness/infra.py`). The pre-registered signatures are
+  `harness_interrupted`, `harness_start`, `authentication`, `mcp_not_connected`,
+  `no_model_turn`, `api_or_cli_error`, `permission_denied` and `killed`. They are read from
+  `stream.jsonl`, `stderr.txt` and `outcome.json` only.
+  - These count as failures instead: a timeout after a model turn, the turn limit, a
+    context overflow and an exception in the agent's code.
+  - A flagged session is re-run at most twice and never excluded.
+- **Grading** (`harness/grading.py`) covers every answer kind and the diagnosis table of
+  section 6.6. Records hold no truth values. `run` never grades, and `grade` runs the audit
+  first.
+- **Headroom** (`harness/headroom.py`) prints the rule verbatim with F(Sonnet 5) and
+  F(Opus 5.5). It refuses to compute while any of these holds:
+  - a re-run is pending;
+  - a code-hint session is missing;
+  - more than 5 % of an arm's sessions are contaminated.
+- **Power**: `uv run python -m benchmarks.operations.analysis.power --write` reproduces the
+  operating characteristics of section 8 and writes `analysis/power-tables.md`.

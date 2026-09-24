@@ -20,6 +20,8 @@ htmlcov/
 
 # Benchmark run output (raw streams and per-run files); summaries are copied to benchmarks/composition/reports/
 benchmarks/composition/results/
+# Operations benchmark runs (transcripts and grades; kept local)
+benchmarks/operations/results/
 
 # Agent worktrees
 .claude/worktrees/
