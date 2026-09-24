@@ -2,9 +2,10 @@
 
 Input: the ``record.json`` of every run under ``results/<run-id>/<task>/<cond>-<rep>/``
 (written by the grader). Output: pass rates by condition, level, category and domain,
-per-answer accuracy, traceability, medians of tool calls, tokens, cost and duration, a
-per-task table and the v0.2 decision-gate line (level-1 pass rate of condition mcp versus
-80 %).
+per-answer accuracy, traceability, medians of tool calls, tokens, cost and duration (per
+condition, and per level and condition with timeouts, turn-limit hits and the session
+limits used, so that the level-4 scale tasks can be compared with levels 1-3), a per-task
+table and the v0.2 decision-gate line (level-1 pass rate of condition mcp versus 80 %).
 """
 
 from __future__ import annotations
@@ -15,6 +16,8 @@ import statistics
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+
+from .tasks import level_label
 
 GATE_THRESHOLD = 0.80
 GATE_LEVEL = 1
@@ -47,6 +50,44 @@ def _rate(records: list[dict[str, Any]]) -> dict[str, Any]:
 def _median(values: list[float | None]) -> float | None:
     xs = [float(v) for v in values if v is not None]
     return statistics.median(xs) if xs else None
+
+
+def _usage(rs: list[dict[str, Any]]) -> dict[str, Any]:
+    """Medians and counts of effort and cost over the runs ``rs``."""
+    return {
+        "median_tool_calls": _median([r["stream"].get("tool_calls") for r in rs]),
+        "median_tool_errors": _median([r["stream"].get("tool_errors") for r in rs]),
+        "median_turns": _median([r["stream"].get("num_turns") for r in rs]),
+        "median_total_tokens": _median([r["stream"].get("total_tokens") for r in rs]),
+        "median_output_tokens": _median(
+            [(r["stream"].get("usage") or {}).get("output_tokens") for r in rs]
+        ),
+        "median_cost_usd": _median([r["stream"].get("cost_usd") for r in rs]),
+        "total_cost_usd": round(sum(float(r["stream"].get("cost_usd") or 0) for r in rs), 4),
+        "median_duration_s": _median(
+            [
+                (r["stream"]["duration_ms"] / 1000.0)
+                if r["stream"].get("duration_ms") is not None
+                else r["outcome"].get("wall_s")
+                for r in rs
+            ]
+        ),
+        "timeouts": sum(1 for r in rs if r["outcome"].get("timed_out")),
+        "turn_limit_hits": sum(
+            1 for r in rs if r["stream"].get("result_subtype") == "error_max_turns"
+        ),
+        "cli_errors": sum(
+            1 for r in rs if r["stream"].get("is_error") or r["outcome"].get("error")
+        ),
+    }
+
+
+def _limits_used(rs: list[dict[str, Any]]) -> dict[str, list[float]]:
+    """The distinct session limits recorded in the runs' outcomes (older runs: none)."""
+    return {
+        key: sorted({r["outcome"][key] for r in rs if r["outcome"].get(key) is not None})
+        for key in ("max_turns", "timeout_s")
+    }
 
 
 def load_records(run_dir: Path) -> list[dict[str, Any]]:
@@ -137,29 +178,7 @@ def summarise(records: list[dict[str, Any]], run_id: str = "") -> dict[str, Any]
         )
         trace[c] = tr
         rs = by_cond[c]
-        costs[c] = {
-            "median_tool_calls": _median([r["stream"].get("tool_calls") for r in rs]),
-            "median_tool_errors": _median([r["stream"].get("tool_errors") for r in rs]),
-            "median_turns": _median([r["stream"].get("num_turns") for r in rs]),
-            "median_total_tokens": _median([r["stream"].get("total_tokens") for r in rs]),
-            "median_output_tokens": _median(
-                [(r["stream"].get("usage") or {}).get("output_tokens") for r in rs]
-            ),
-            "median_cost_usd": _median([r["stream"].get("cost_usd") for r in rs]),
-            "total_cost_usd": round(sum(float(r["stream"].get("cost_usd") or 0) for r in rs), 4),
-            "median_duration_s": _median(
-                [
-                    (r["stream"]["duration_ms"] / 1000.0)
-                    if r["stream"].get("duration_ms") is not None
-                    else r["outcome"].get("wall_s")
-                    for r in rs
-                ]
-            ),
-            "timeouts": sum(1 for r in rs if r["outcome"].get("timed_out")),
-            "cli_errors": sum(
-                1 for r in rs if r["stream"].get("is_error") or r["outcome"].get("error")
-            ),
-        }
+        costs[c] = _usage(rs)
         fmt[c] = {
             "runs_with_format_issues": sum(1 for r in rs if r["grade"]["format_issues"]),
             "unparseable": sum(1 for r in rs if r["grade"]["parse_error"]),
@@ -185,6 +204,16 @@ def summarise(records: list[dict[str, Any]], run_id: str = "") -> dict[str, Any]
         slot["answers"] += len(r["grade"]["answers"])
         slot["answers_passed"] += sum(int(a["passed"]) for a in r["grade"]["answers"])
 
+    by_level_usage: dict[str, dict[str, Any]] = {}
+    for c in conds:
+        levels: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        for r in by_cond[c]:
+            levels[int(r["level"])].append(r)
+        by_level_usage[c] = {
+            str(lv): {**_rate(rs), **_usage(rs), "limits": _limits_used(rs)}
+            for lv, rs in sorted(levels.items())
+        }
+
     gate_records = [r for r in by_cond.get(GATE_CONDITION, []) if int(r["level"]) == GATE_LEVEL]
     gate = _rate(gate_records)
     gate["threshold"] = GATE_THRESHOLD
@@ -202,6 +231,7 @@ def summarise(records: list[dict[str, Any]], run_id: str = "") -> dict[str, Any]
         "answers": answers,
         "traceability": trace,
         "usage": costs,
+        "usage_by_level": by_level_usage,
         "format": fmt,
         "per_task": sorted(tasks.values(), key=lambda t: (t["level"], t["task"])),
         "decision_gate": gate,
@@ -287,6 +317,8 @@ def to_markdown(summary: dict[str, Any]) -> str:
         lines.append(f"| {c} | {r['passed']} | {r['runs']} | {_pct(r['pass_rate'])} | {ci_text} |")
     for title, key in (("level", "by_level"), ("category", "by_category"), ("domain", "by_domain")):
         groups = sorted({g for c in conds for g in summary[key].get(c, {})})
+        if key == "by_level":  # numerically, with the component range
+            groups.sort(key=lambda g: (0, int(g), g) if g.isdigit() else (1, 0, g))
         lines += [
             "",
             f"## Pass rate by {title}",
@@ -299,7 +331,8 @@ def to_markdown(summary: dict[str, Any]) -> str:
             for c in conds:
                 r = summary[key].get(c, {}).get(g)
                 cells.append(f"{_pct(r['pass_rate'])} ({r['passed']}/{r['runs']})" if r else "-")
-            lines.append(f"| {g} | " + " | ".join(cells) + " |")
+            label = level_label(g) if key == "by_level" else g
+            lines.append(f"| {label} | " + " | ".join(cells) + " |")
     lines += [
         "",
         "## Answers and traceability",
@@ -342,6 +375,36 @@ def to_markdown(summary: dict[str, Any]) -> str:
             f"${u['total_cost_usd']:.2f} | {_num(u['median_duration_s'], 0)} s | "
             f"{u['timeouts']} | {u['cli_errors']} | {f['runs_with_format_issues']} |"
         )
+    by_level_usage = summary.get("usage_by_level") or {}
+    level_rows = sorted({(int(lv), c) for c in conds for lv in by_level_usage.get(c, {})})
+    if level_rows:
+        lines += [
+            "",
+            "## Effort and cost by level",
+            "",
+            "Larger systems take more turns and time; timeouts and turn-limit hits count as "
+            "failures. 'Limits' are the session limits the runs used (older runs did not "
+            "record them).",
+            "",
+            "| Level | Condition | Pass rate | Median turns | Median tool calls | "
+            "Median tokens | Median cost | Median duration | Timeouts | Turn-limit hits | "
+            "Limits |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+        ]
+        for lv, c in level_rows:
+            u = by_level_usage[c][str(lv)]
+            med_cost = u["median_cost_usd"]
+            lim = u.get("limits") or {}
+            turns = "/".join(f"{x:g}" for x in lim.get("max_turns", [])) or "n/a"
+            secs = "/".join(f"{x:g}" for x in lim.get("timeout_s", [])) or "n/a"
+            cost = "n/a" if med_cost is None else f"${med_cost:.3f}"
+            lines.append(
+                f"| {level_label(lv)} | {c} | {_pct(u['pass_rate'])} ({u['passed']}/{u['runs']})"
+                f" | {_num(u['median_turns'], 1)} | {_num(u['median_tool_calls'], 1)} | "
+                f"{_num(u['median_total_tokens'])} | {cost} | "
+                f"{_num(u['median_duration_s'], 0)} s | {u['timeouts']} | "
+                f"{u['turn_limit_hits']} | {turns} turns, {secs} s |"
+            )
     lines += [
         "",
         "## Per task",

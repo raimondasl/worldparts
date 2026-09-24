@@ -1,0 +1,308 @@
+id: scale-plant-transfer-01
+title: Three pumped stages from river to tower over one day
+level: 4
+category: transient
+domain: distribution
+prompt: |
+  A water system moves water in three pumped stages over one day, 0 h to 24 h. Intake
+  pumps lift river water into a settling tank; three treatment trains pump settled water
+  through filters and UV reactors into a clearwell; a high-lift station pumps from the
+  clearwell up to a water tower that supplies a looped town network.
+
+  Elevations are relative to the settling-tank floor (the datum). Every tank is an open
+  vertical cylinder fed through its bottom inlet and drained through its bottom outlet;
+  tank connections add no loss.
+
+  | Tank | Floor elevation (m) | Inner diameter (m) | Height (m) | Depth at 0 h (m) |
+  |---|---:|---:|---:|---:|
+  | Settling tank | 0 | 20 | 5.0 | 3.0 |
+  | Clearwell | 5.0 | 24 | 6.0 | 3.5 |
+  | Tower | 45.0 | 12 | 6.0 | 3.0 |
+
+  Stage 1 (intake). An intake pipe runs from the river end, held at 0.2 bar gauge at
+  elevation -12.0 m, to the intake header. Two identical pumps, I1 and I2, run in parallel
+  from the header, each through its own non-return valve (Kv 500 m3/h) into the raw main to
+  the settling tank. The header, pumps and valves are at -12.0 m.
+
+  Stage 2 (treatment). The settling tank's outlet feeds a suction main to header S. Three
+  trains, A, B and C, run from S to a collector header C, each in flow order: a branch pipe,
+  a pump, a non-return valve (Kv 300 m3/h), a media filter (clean pressure drop 0.25 bar at
+  100 m3/h: 70 % a media loss proportional to the flow, 30 % a housing loss proportional to
+  the flow squared; all filters clean), a UV reactor (0.12 bar at 100 m3/h, proportional to
+  the flow squared) and a fully open valve (Kv 250 m3/h). S, C and the trains are at the
+  datum. A collector main runs from C to the clearwell.
+
+  Stage 3 (high-lift). The clearwell's outlet feeds a suction pipe to the station header at
+  elevation 5.0 m. Two identical pumps, L1 and L2, run in parallel from it, each through its
+  own non-return valve (Kv 600 m3/h) into the rising main to the tower. Pipe T1 leaves the
+  tower's outlet for the town. Non-return valves block reverse flow.
+
+  | Pipe | From | To | Length (m) | Inner diameter (mm) | Rise (m) | K |
+  |---|---|---|---:|---:|---:|---:|
+  | Intake | river end | intake header | 40 | 300 | 0 | 1.5 |
+  | Raw main | I1, I2 valves | settling tank | 600 | 300 | 12.0 | 4.0 |
+  | Suction main | settling tank | S | 25 | 300 | 0 | 1.0 |
+  | Branch A, B, C (each) | S | pump of its train | 12 | 150 | 0 | 1.5 |
+  | Collector main | C | clearwell | 120 | 300 | 5.0 | 3.0 |
+  | Station suction | clearwell | station header | 20 | 300 | 0 | 0.5 |
+  | Rising main | L1, L2 valves | tower | 2500 | 250 | 40.0 | 5.0 |
+
+  K includes any exit loss into a tank. Pumps at rated speed (every curve an exact
+  quadratic through its points):
+
+  | Pumps | Head at 0 / 100 / 200 / 300 m3/h (m) |
+  |---|---|
+  | I1, I2 | 32.0 / 29.5 / 22.0 / 9.5 |
+  | L1, L2 | 72.0 / 70.0 / 64.0 / 54.0 |
+
+  | Pumps | Head at 0 / 40 / 80 / 120 m3/h (m) |
+  |---|---|
+  | A, B, C | 24.0 / 22.08 / 16.32 / 6.72 |
+
+  A running pump runs at rated speed; a stopped pump passes no flow.
+
+  Town network:
+
+  | Pipe | From | To | Length (m) | Inner diameter (mm) |
+  |---|---|---|---:|---:|
+  | T1 | tower outlet | J1 | 600 | 300 |
+  | P12 | J1 | J2 | 500 | 200 |
+  | P23 | J2 | J3 | 400 | 150 |
+  | P34 | J3 | J4 | 500 | 150 |
+  | P41 | J4 | J1 | 400 | 200 |
+  | P25 | J2 | J5 | 300 | 100 |
+  | P46 | J4 | J6 | 350 | 100 |
+
+  | Node | J1 | J2 | J3 | J4 | J5 | J6 |
+  |---|---:|---:|---:|---:|---:|---:|
+  | Elevation (m) | 5.0 | 3.0 | 9.0 | 6.0 | 1.0 | 4.0 |
+  | Outlet orifice diameter (mm) | none | 34 | 28 | 34 | 32 | 28 |
+
+  The town pipes have no minor losses. The town's demand is
+  pressure-driven: the consumers at each of J2 to J6 act as one sharp-edged orifice
+  discharging to atmosphere at the node's elevation, passing Q = 0.62 x A x f x sqrt(2 p /
+  rho), with A the orifice area from the diameter in the table, p the node's gauge pressure
+  and f the open fraction of every orifice, which follows this schedule (each value holds
+  from its From hour, inclusive, up to its To hour):
+
+  | From (h) | To (h) | Open fraction |
+  |---:|---:|---:|
+  | 0 | 6 | 0.35 |
+  | 6 | 9 | 0.85 |
+  | 9 | 12 | 1.00 |
+  | 12 | 18 | 0.70 |
+  | 18 | 22 | 0.95 |
+  | 22 | 24 | 0.50 |
+
+  Controls. Each pump has a level switch: it starts when the depth of its tank is below its
+  start depth and stops when the depth is above its stop depth; in between it keeps its
+  state.
+
+  | Pump | Tank measured | Start below (m) | Stop above (m) | State at 0 h |
+  |---|---|---:|---:|---|
+  | I1 | settling tank | 2.0 | 4.0 | running |
+  | I2 | settling tank | 1.2 | 3.5 | stopped |
+  | A | clearwell | 3.5 | 5.2 | running |
+  | B | clearwell | 3.0 | 4.8 | running |
+  | C | clearwell | 2.5 | 4.6 | stopped |
+  | L1 | tower | 2.0 | 5.0 | running |
+  | L2 | tower | 1.0 | 4.0 | stopped |
+
+  Simulation. Quasi-steady, with a fixed time step of 60 s. At each step time t: apply the
+  schedule for t, solve the network with the current depths and pump states, check every
+  switch against the depths at t (switches take effect at t and the network is solved
+  again), then advance all three depths to t + 60 s with that solution's flows (explicit
+  Euler). The flows found at t hold for the step that follows.
+
+  Conventions: water density 998.2 kg/m3, dynamic viscosity 1.002e-3 Pa s, g = 9.80665
+  m/s2. Pipes follow Darcy-Weisbach with the Colebrook friction factor (or an equivalent
+  explicit formula); a pipe's minor-loss coefficient K acts on its own velocity head. A Kv
+  element passes Q (m3/h) with a pressure drop of 0.9982 (Q/Kv)^2 bar. Velocity heads at
+  junctions are neglected (as in EPANET), so a node pressure is the static pressure there.
+  Pressures are gauge. All pipes have a roughness of 0.1 mm; the rise of each town pipe follows
+  from the tower floor and node elevations.
+
+  Find the flow of pump I1 at 0 h. Over the day, find the total volume pumped by each
+  stage (into the settling tank, into the clearwell and into the tower) and the lowest
+  clearwell depth.
+answers:
+  - key: flow_intake_start
+    description: Flow of intake pump I1 at 0 h
+    unit: "m3/h"
+    rel_tol: 0.03
+  - key: intake_volume
+    description: Total volume pumped into the settling tank over the day
+    unit: "m3"
+    rel_tol: 0.05
+  - key: treated_volume
+    description: Total volume pumped into the clearwell over the day
+    unit: "m3"
+    rel_tol: 0.05
+  - key: distributed_volume
+    description: Total volume pumped into the tower over the day
+    unit: "m3"
+    rel_tol: 0.05
+  - key: min_clearwell_level
+    description: Lowest clearwell water depth over the day
+    unit: "m"
+    rel_tol: 0.05
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: two-stage transfer
+    components:
+      - {name: river, type: supply, parameters: {pressure: 0.2, temperature: 12}}
+      - {name: intake, type: pipe, parameters: {length: 40, diameter: 300, roughness: 0.1, minor_loss: 1.5}}
+      - {name: intake_1, type: centrifugal_pump, parameters: {head_curve: [[0, 32.0], [100, 29.5], [200, 22.0], [300, 9.5]], power_curve: [[0, 8.0], [150, 15.875], [300, 21.5]], npsh_curve: [[100, 2.0], [200, 3.0], [300, 4.8]], motor_power: 30}}
+      - {name: intake_2, type: centrifugal_pump, parameters: {head_curve: [[0, 32.0], [100, 29.5], [200, 22.0], [300, 9.5]], power_curve: [[0, 8.0], [150, 15.875], [300, 21.5]], npsh_curve: [[100, 2.0], [200, 3.0], [300, 4.8]], motor_power: 30}}
+      - {name: nrv_i1, type: check_valve, parameters: {kv: 500}}
+      - {name: nrv_i2, type: check_valve, parameters: {kv: 500}}
+      - {name: raw_main, type: pipe, parameters: {length: 600, diameter: 300, roughness: 0.1, height_difference: 12.0, minor_loss: 4.0}}
+      - {name: settling, type: tank, parameters: {diameter: 20, height: 5.0, initial_level: 3.0, port_kv: 1000000}}
+      - {name: suction, type: pipe, parameters: {length: 25, diameter: 300, roughness: 0.1, minor_loss: 1.0}}
+      - {name: branch_a, type: pipe, parameters: {length: 12, diameter: 150, roughness: 0.1, minor_loss: 1.5}}
+      - {name: pump_a, type: centrifugal_pump, parameters: {head_curve: [[0, 24.0], [40, 22.08], [80, 16.32], [120, 6.72]], power_curve: [[0, 1.5], [60, 4.38], [120, 5.82]], npsh_curve: [[40, 2.0], [80, 2.8], [120, 4.4]], motor_power: 7.5}}
+      - {name: nrv_a, type: check_valve, parameters: {kv: 300}}
+      - {name: filter_a, type: media_filter, parameters: {rated_flow: 100, clean_pressure_drop: 0.25, housing_fraction: 0.3, change_pressure_drop: 0.6}}
+      - {name: uv_a, type: uv_reactor, parameters: {rated_flow: 100, rated_pressure_drop: 0.12, volume: 60, fluence_rate: 25, required_dose: 40}}
+      - {name: valve_a, type: valve, parameters: {kv: 250, leakage: 1.0e-08}}
+      - {name: branch_b, type: pipe, parameters: {length: 12, diameter: 150, roughness: 0.1, minor_loss: 1.5}}
+      - {name: pump_b, type: centrifugal_pump, parameters: {head_curve: [[0, 24.0], [40, 22.08], [80, 16.32], [120, 6.72]], power_curve: [[0, 1.5], [60, 4.38], [120, 5.82]], npsh_curve: [[40, 2.0], [80, 2.8], [120, 4.4]], motor_power: 7.5}}
+      - {name: nrv_b, type: check_valve, parameters: {kv: 300}}
+      - {name: filter_b, type: media_filter, parameters: {rated_flow: 100, clean_pressure_drop: 0.25, housing_fraction: 0.3, change_pressure_drop: 0.6}}
+      - {name: uv_b, type: uv_reactor, parameters: {rated_flow: 100, rated_pressure_drop: 0.12, volume: 60, fluence_rate: 25, required_dose: 40}}
+      - {name: valve_b, type: valve, parameters: {kv: 250, leakage: 1.0e-08}}
+      - {name: branch_c, type: pipe, parameters: {length: 12, diameter: 150, roughness: 0.1, minor_loss: 1.5}}
+      - {name: pump_c, type: centrifugal_pump, parameters: {head_curve: [[0, 24.0], [40, 22.08], [80, 16.32], [120, 6.72]], power_curve: [[0, 1.5], [60, 4.38], [120, 5.82]], npsh_curve: [[40, 2.0], [80, 2.8], [120, 4.4]], motor_power: 7.5}}
+      - {name: nrv_c, type: check_valve, parameters: {kv: 300}}
+      - {name: filter_c, type: media_filter, parameters: {rated_flow: 100, clean_pressure_drop: 0.25, housing_fraction: 0.3, change_pressure_drop: 0.6}}
+      - {name: uv_c, type: uv_reactor, parameters: {rated_flow: 100, rated_pressure_drop: 0.12, volume: 60, fluence_rate: 25, required_dose: 40}}
+      - {name: valve_c, type: valve, parameters: {kv: 250, leakage: 1.0e-08}}
+      - {name: collector, type: pipe, parameters: {length: 120, diameter: 300, roughness: 0.1, height_difference: 5.0, minor_loss: 3.0}}
+      - {name: clearwell, type: tank, parameters: {diameter: 24, height: 6.0, initial_level: 3.5, port_kv: 1000000}}
+      - {name: station_suction, type: pipe, parameters: {length: 20, diameter: 300, roughness: 0.1, minor_loss: 0.5}}
+      - {name: lift_1, type: centrifugal_pump, parameters: {head_curve: [[0, 72.0], [100, 70.0], [200, 64.0], [300, 54.0]], power_curve: [[0, 25.0], [150, 44.8], [300, 59.2]], npsh_curve: [[100, 2.5], [200, 3.6], [300, 5.5]], motor_power: 75}}
+      - {name: lift_2, type: centrifugal_pump, parameters: {head_curve: [[0, 72.0], [100, 70.0], [200, 64.0], [300, 54.0]], power_curve: [[0, 25.0], [150, 44.8], [300, 59.2]], npsh_curve: [[100, 2.5], [200, 3.6], [300, 5.5]], motor_power: 75}}
+      - {name: nrv_1, type: check_valve, parameters: {kv: 600}}
+      - {name: nrv_2, type: check_valve, parameters: {kv: 600}}
+      - {name: rising_main, type: pipe, parameters: {length: 2500, diameter: 250, roughness: 0.1, height_difference: 40.0, minor_loss: 5.0}}
+      - {name: tower, type: tank, parameters: {diameter: 12, height: 6.0, initial_level: 3.0, port_kv: 1000000}}
+      - {name: t1, type: pipe, parameters: {length: 600, diameter: 300, roughness: 0.1, height_difference: -40.0}}
+      - {name: p12, type: pipe, parameters: {length: 500, diameter: 200, roughness: 0.1, height_difference: -2.0}}
+      - {name: p23, type: pipe, parameters: {length: 400, diameter: 150, roughness: 0.1, height_difference: 6.0}}
+      - {name: p34, type: pipe, parameters: {length: 500, diameter: 150, roughness: 0.1, height_difference: -3.0}}
+      - {name: p41, type: pipe, parameters: {length: 400, diameter: 200, roughness: 0.1, height_difference: -1.0}}
+      - {name: p25, type: pipe, parameters: {length: 300, diameter: 100, roughness: 0.1, height_difference: -2.0}}
+      - {name: p46, type: pipe, parameters: {length: 350, diameter: 100, roughness: 0.1, height_difference: -2.0}}
+      - {name: out_j2, type: leak, parameters: {diameter: 34, discharge_coefficient: 0.62}, inputs: {opening: 0.35}}
+      - {name: out_j3, type: leak, parameters: {diameter: 28, discharge_coefficient: 0.62}, inputs: {opening: 0.35}}
+      - {name: out_j4, type: leak, parameters: {diameter: 34, discharge_coefficient: 0.62}, inputs: {opening: 0.35}}
+      - {name: out_j5, type: leak, parameters: {diameter: 32, discharge_coefficient: 0.62}, inputs: {opening: 0.35}}
+      - {name: out_j6, type: leak, parameters: {diameter: 28, discharge_coefficient: 0.62}, inputs: {opening: 0.35}}
+    connections:
+      - [river.port, intake.port_a]
+      - [intake.port_b, intake_1.inlet]
+      - [intake.port_b, intake_2.inlet]
+      - [intake_1.outlet, nrv_i1.port_a]
+      - [intake_2.outlet, nrv_i2.port_a]
+      - [nrv_i1.port_b, raw_main.port_a]
+      - [nrv_i2.port_b, raw_main.port_a]
+      - [raw_main.port_b, settling.inlet]
+      - [settling.outlet, suction.port_a]
+      - [suction.port_b, branch_a.port_a]
+      - [branch_a.port_b, pump_a.inlet]
+      - [pump_a.outlet, nrv_a.port_a]
+      - [nrv_a.port_b, filter_a.inlet]
+      - [filter_a.outlet, uv_a.inlet]
+      - [uv_a.outlet, valve_a.port_a]
+      - [valve_a.port_b, collector.port_a]
+      - [suction.port_b, branch_b.port_a]
+      - [branch_b.port_b, pump_b.inlet]
+      - [pump_b.outlet, nrv_b.port_a]
+      - [nrv_b.port_b, filter_b.inlet]
+      - [filter_b.outlet, uv_b.inlet]
+      - [uv_b.outlet, valve_b.port_a]
+      - [valve_b.port_b, collector.port_a]
+      - [suction.port_b, branch_c.port_a]
+      - [branch_c.port_b, pump_c.inlet]
+      - [pump_c.outlet, nrv_c.port_a]
+      - [nrv_c.port_b, filter_c.inlet]
+      - [filter_c.outlet, uv_c.inlet]
+      - [uv_c.outlet, valve_c.port_a]
+      - [valve_c.port_b, collector.port_a]
+      - [collector.port_b, clearwell.inlet]
+      - [clearwell.outlet, station_suction.port_a]
+      - [station_suction.port_b, lift_1.inlet]
+      - [station_suction.port_b, lift_2.inlet]
+      - [lift_1.outlet, nrv_1.port_a]
+      - [lift_2.outlet, nrv_2.port_a]
+      - [nrv_1.port_b, rising_main.port_a]
+      - [nrv_2.port_b, rising_main.port_a]
+      - [rising_main.port_b, tower.inlet]
+      - [tower.outlet, t1.port_a]
+      - [t1.port_b, p12.port_a]
+      - [p12.port_b, p23.port_a]
+      - [p23.port_b, p34.port_a]
+      - [p34.port_b, p41.port_a]
+      - [t1.port_b, p41.port_b]
+      - [p12.port_b, p25.port_a]
+      - [p34.port_b, p46.port_a]
+      - [p12.port_b, out_j2.port]
+      - [p23.port_b, out_j3.port]
+      - [p34.port_b, out_j4.port]
+      - [p25.port_b, out_j5.port]
+      - [p46.port_b, out_j6.port]
+    controls:
+      - {name: intake_lead, type: hysteresis, measure: settling.level, actuate: intake_1.speed, on_below: 2.0, off_above: 4.0, on_value: 1.0, off_value: 0.0, initial: "on"}
+      - {name: intake_lag, type: hysteresis, measure: settling.level, actuate: intake_2.speed, on_below: 1.2, off_above: 3.5, on_value: 1.0, off_value: 0.0, initial: "off"}
+      - {name: train_a, type: hysteresis, measure: clearwell.level, actuate: pump_a.speed, on_below: 3.5, off_above: 5.2, on_value: 1.0, off_value: 0.0, initial: "on"}
+      - {name: train_b, type: hysteresis, measure: clearwell.level, actuate: pump_b.speed, on_below: 3.0, off_above: 4.8, on_value: 1.0, off_value: 0.0, initial: "on"}
+      - {name: train_c, type: hysteresis, measure: clearwell.level, actuate: pump_c.speed, on_below: 2.5, off_above: 4.6, on_value: 1.0, off_value: 0.0, initial: "off"}
+      - {name: lift_lead, type: hysteresis, measure: tower.level, actuate: lift_1.speed, on_below: 2.0, off_above: 5.0, on_value: 1.0, off_value: 0.0, initial: "on"}
+      - {name: lift_lag, type: hysteresis, measure: tower.level, actuate: lift_2.speed, on_below: 1.0, off_above: 4.0, on_value: 1.0, off_value: 0.0, initial: "off"}
+  steps:
+    - {op: solve, read: {flow_intake_start: intake_1.volume_flow}}
+    - op: simulate
+      duration: "24 h"
+      step: "60 s"
+      events:
+        - {at: "6 h", set: {out_j2.opening: 0.85, out_j3.opening: 0.85, out_j4.opening: 0.85, out_j5.opening: 0.85, out_j6.opening: 0.85}}
+        - {at: "9 h", set: {out_j2.opening: 1.0, out_j3.opening: 1.0, out_j4.opening: 1.0, out_j5.opening: 1.0, out_j6.opening: 1.0}}
+        - {at: "12 h", set: {out_j2.opening: 0.7, out_j3.opening: 0.7, out_j4.opening: 0.7, out_j5.opening: 0.7, out_j6.opening: 0.7}}
+        - {at: "18 h", set: {out_j2.opening: 0.95, out_j3.opening: 0.95, out_j4.opening: 0.95, out_j5.opening: 0.95, out_j6.opening: 0.95}}
+        - {at: "22 h", set: {out_j2.opening: 0.5, out_j3.opening: 0.5, out_j4.opening: 0.5, out_j5.opening: 0.5, out_j6.opening: 0.5}}
+      read_min: {min_clearwell_level: clearwell.level}
+      read_total: {intake_volume: raw_main.volume_flow, treated_volume: collector.volume_flow, distributed_volume: rising_main.volume_flow}
+  expected: {flow_intake_start: 242.2787429, intake_volume: 4340.620864, treated_volume: 4088.337424, distributed_volume: 4010.98993, min_clearwell_level: 2.806605501}
+notes: |
+  Scale task (48 components, seven level switches, 24 h with a demand schedule). Every
+  pump curve is an exact quadratic (intake 32 - 0.00025 Q^2, trains 24 - 0.0012 Q^2,
+  high-lift 72 - 0.0002 Q^2). The lag units (I2, train C, L2) never start: I1 alone (about
+  240 m3/h) refills the settling tank, trains A and B (about 97 m3/h each) keep up with the
+  clearwell, and L1 alone keeps the tower above 1.98 m. Switching in the reference run: I1
+  is off from 5.5 h to 11.6 h; train B is off from 4.8 h to 11.2 h; L1 stops at 1.5 h, starts
+  at 5.4 h, stops at 13.0 h, starts at 15.0 h and stops at 22.3 h. The lowest clearwell
+  depth, 2.81 m at 13.0 h, comes after L1 (about 241 m3/h) has drawn the clearwell below
+  train B's 3.0 m start depth while A and B together deliver only about 194 m3/h. It is set
+  by when L1 stops, not by a threshold. The highest clearwell depth, 4.92 m at 5.4 h (not an
+  answer), stays 0.28 m below train A's 5.2 m stop depth, so no model variant stops train A
+  (every independent variant peaked at 4.91 to 4.94 m). Balances from the reference run (m3): intake 4340.6
+  = treated 4088.3 + settling rise 314.16 m2 x 0.803 m = 252.3; treated 4088.3 =
+  distributed 4011.0 + clearwell rise 452.39 m2 x 0.171 m = 77.3; distributed 4011.0 =
+  delivered 3997.3 + tower rise 113.10 m2 x 0.121 m = 13.7.
+
+  Independent checks without worldparts. Answers in order: I1 flow at 0 h (m3/h); intake,
+  treated and distributed volume (m3); lowest clearwell depth (m):
+  - reference (worldparts, Churchill, 60 s): 242.28; 4340.6, 4088.3, 4011.0; 2.807.
+  - own Python (scipy.optimize.root, explicit Euler, switches as stated), Colebrook, 60 s:
+    242.38; 4342.6, 4090.6, 4009.1; 2.806.
+  - own Python, Swamee-Jain, 60 s: 242.32; 4341.4, 4088.7, 4011.3; 2.807.
+  - own Python, Colebrook, 15 s: 242.38; 4351.0, 4095.8, 4003.1; 2.813.
+  - own Python, Colebrook, 300 s: 242.38; 4313.3, 4076.3, 4042.0; 2.795.
+  - WNTR 1.5.0 EpanetSimulator (EPANET 2.2, hydraulic and report step 60 s; pumps as
+    three-point curves; clean filters as GPVs with a head-loss curve from the
+    linear-plus-quadratic law; UV reactors and valves as TCVs; non-return valves as CV
+    pipes; orifices as TCVs into reservoirs with time controls; EPANET level controls;
+    totals as rectangle sums over the 60 s report): 242.33; 4349.0, 4095.5, 4005.7; 2.814.
+  Largest difference 0.8 % (300 s step), 0.3 % at 60 s. Timing: load 0.02 s, solve 76 ms,
+  simulate 6.1 s (MCP load_system 0.05 s, simulate 11.4 s).

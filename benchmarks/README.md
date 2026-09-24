@@ -32,7 +32,8 @@ Every report prints this line: the level-1 pass rate of condition `mcp` versus 8
 
 Both conditions get the same task prompt, the same appended answer-format instruction, the
 default Claude Code system prompt plus a one-paragraph description of the condition's
-tools, and the same turn and time limits. Because the `code` agent must be able to reach
+tools, and the same turn and time limits (which may differ by level, see
+[Scale tasks](#scale-tasks-level-4)). Because the `code` agent must be able to reach
 the same answer by hand or in plain Python, every prompt gives every number with units and
 states every convention that is not textbook-standard (for example how a filter's pressure
 drop splits into a linear and a quadratic part, or that UV dose is fluence rate times
@@ -46,7 +47,7 @@ One YAML file per task in `composition/tasks/<id>.yaml`, validated against
 ```yaml
 id: pump-lift-01              # kebab-case, equals the file name
 title: Rooftop lift operating point
-level: 1                      # 1: 2-4 components, 2: 5-7, 3: 8 or more (reference system)
+level: 1                      # 1: 2-4 components, 2: 5-7, 3: 8-19, 4: 20 or more (reference system)
 category: operating_point     # operating_point | sizing | what_if | transient | diagnosis | judgement
 domain: pumping               # pumping | storage | treatment | distribution
 prompt: |
@@ -73,7 +74,18 @@ notes: Hand calculation and the reason for any loose tolerance.
 
 - Ops run in order on one system. `solve_for` has exactly the MCP tool's semantics
   (Brent's method; the varied value stays at the root). `simulate` also takes ramp events
-  (`{at, ramp: {path: [start, end]}, over}`), `restore`, `read_min` and `read_max`.
+  (`{at, ramp: {path: [start, end]}, over}`), `restore`, `read_min`, `read_max` and
+  `read_total`: `{pumped: pipe.volume_flow}` or `{energy: [p1.shaft_power,
+  p2.shaft_power]}` is the time integral of a variable (or the sum of several) over the
+  run, `sum(v[k] * (t[k+1] - t[k]))`: each sample's value holds over the step it drives,
+  as in the explicit-Euler tank update, so a flow into a tank totals exactly the volume the
+  tank receives. The answer unit must be the variable's unit times a time (m3/h to m3, kW
+  to kWh); pressures and temperatures are rejected. No agent tool returns a total: the MCP
+  `simulate` tool gives the minimum, maximum and final value of each series and the series
+  itself, downsampled to `max_points` (up to 10,000, so a 24 h run at 60 s can come back
+  whole). An MCP agent reaches a total from tank balances (final depths) and switch times,
+  or from the returned series; tasks that ask for totals give them a 5 % tolerance, and
+  their notes show that the balance route lands within about 1 %.
 - Every read is converted to its answer's unit. Every answer key is produced by exactly one
   read or `answer` op; `expected` must equal what the steps produce (1e-6 relative).
 - Tolerances: 3 % relative for steady flows, heads and pressures (friction-factor
@@ -85,7 +97,8 @@ notes: Hand calculation and the reason for any loose tolerance.
   answer-format line (answer keys, descriptions, choices) names a worldparts identifier. An
   answer key may not even contain one as a part (`npsh_available_20c` is rejected), so keys
   are plain engineering names such as `pump_power`, `pump_speed`, `npshr`.
-- A `judgement` task has its own rules, listed in the next section.
+- A `judgement` task has its own rules, listed in the next section; a level-4 task has
+  its own prompt rules, listed in [Scale tasks](#scale-tasks-level-4).
 
 ### Judgement tasks
 
@@ -154,6 +167,88 @@ uv run python -m benchmarks.composition.harness oracle --corrupt  # must be 0 %
 `regen` rewrites only the `expected:` line of each file, so comments survive.
 `tests/test_benchmark_harness.py` runs the same checks on every task file.
 
+### Scale tasks (level 4)
+
+Benchmark v0.2 found that on small, fully specified tasks (at most 11 components) a
+frontier model writing Python from scratch was as accurate as an agent using worldparts and
+several times cheaper ([results](../docs/benchmark-results-v0.2.md)). Level 4 tests the
+**scale** hypothesis: with 20 to 80 components, looped networks, tanks, controls and
+24-hour simulations, an agent writing its own model (in plain Python or with WNTR, which
+the code condition also has) has much more to build and debug, while a worldparts agent
+loads or builds one system document. The tasks stay fully specified and fair: a careful
+engineer with Python and WNTR must be able to reach every answer within tolerance.
+
+A task is level 4 when its reference system has **20 or more components** (controls are
+not components). The loader enforces, for `level: 4`:
+
+- the prompt has at most **1,200 words** (`SCALE_PROMPT_WORDS` in `harness/tasks.py`).
+  Table markup is not counted: delimiter rows are skipped and `|` only separates cells,
+  so a table counts the words in its cells (`prompt_word_count`);
+- the prompt may give data in **markdown tables** (nodes, pipes, outlets, pumps,
+  schedules). Every table must be well formed: a header row, a delimiter row such as
+  `|---|---:|` and at least one body row; every row starts and ends with `|` and has as
+  many cells as the header; no cell is empty, because an empty cell is an unstated value
+  (write `0` or `none`);
+- every other prompt rule is unchanged: no worldparts identifier (in prose or in a table
+  cell), no JSON or fenced code, no answer-format text;
+- a level-4 `judgement` task keeps every judgement rule except the length: its prompt has
+  100-1,200 words instead of 100-250.
+
+Prompts of levels 1-3 keep their v0.2 rules (judgement prompts 100-250 words; the pumping
+and treatment task tests also hold their prompts to 80-250 words) and contain no table.
+
+**Session limits.** The defaults stay `--max-turns 80` and `--timeout 1800` for every
+level. Building and simulating a large network takes more turns and time, so `run` can set
+the limits per level:
+
+- `--level-max-turns LEVEL=N` and `--level-timeout LEVEL=SECONDS` (several values, comma
+  or space separated, e.g. `--level-timeout 4=2400 3=2000`) override `--max-turns` and
+  `--timeout` for tasks of that level;
+- `--recommended-level-limits` applies the table `RECOMMENDED_LEVEL_LIMITS` in
+  `harness/runner.py`:
+
+| Level | Max turns | Timeout | Why |
+|---|---:|---:|---|
+| 1-3 | 80 (default) | 1800 s (default) | v0.2 sessions took a median of 2-5 turns and 15-19 s, with no timeouts |
+| 4 | **120** | **2400 s** | 20-80 components and 24-hour simulations: a from-scratch agent builds, runs and debugs a network model; a worldparts agent adds many components one call at a time |
+
+Precedence per limit: a `--level-*` value, then the recommended table (only with the
+flag), then `--max-turns`/`--timeout`. Both conditions always get the same limits. The
+dry run prints each session's limits; `run.json` records the limits per level and each
+run's `outcome.json` the limits it ran with. Timeouts and turn limits count as failures, so
+a level-4 run should use the recommended limits (and a `--max-budget-usd` cap) and the
+report's per-level table shows how many sessions hit them.
+
+`tests/test_benchmark_harness_scale.py` tests these rules, the limits and the report on a
+20-component fixture built in the test (the lift fixture with its riser split into 17
+segments given as a table), which also runs through the reference executor, regen and the
+oracle.
+
+**Scale tasks.** Each prompt gives every number, the time step and the exact control
+semantics (when a switch or a PI loop samples, and that its command takes effect at that
+step), and says that outlets are orifices discharging to atmosphere. Answers avoid
+switch thresholds and switch counts: steady flows and pressures (3 %), totals over the day,
+tank-level extremes that fall between thresholds and first crossings with a clear margin
+(5 %). Each task's notes give an independent check without worldparts: an own Python
+network model (Colebrook and Swamee-Jain friction, time steps from 15 s to 300 s) and,
+where EPANET can represent the plant, WNTR's EpanetSimulator; every task was also audited
+by a second, independent model built from the prompt alone.
+`tests/test_benchmark_tasks_scale_scale-plant.py` reruns the scale-plant references, solves
+the steady task independently and checks the tanks' volume balances;
+`tests/test_benchmark_tasks_scale_scale-net.py` reruns the scale-net references and checks
+the zone answer, the mass balances and the switching sequences and their margins.
+
+| Task | Components | Category | Answers | Tolerance | Largest independent difference |
+|---|---:|---|---|---|---:|
+| scale-plant-steady-01 | 22 | operating_point | three train flows, three UV doses, total flow, collector pressure | 3 % | 0.02 % |
+| scale-plant-clog-01 | 27 | transient | trim-pump speed at 0 h; first filter to reach its backwash drop and when; total flow, train-B flow and train-A dose at 24 h | 3 %, time 5 %, choice exact | 0.1 % |
+| scale-plant-tower-01 | 22 | transient | pump flow and node pressure at 0 h; lowest and highest clearwell depth; pumped and delivered volume; pump energy | 3 % (0 h), 5 % | 0.7 % (1.3 % at a 300 s step) |
+| scale-plant-transfer-01 | 48 | transient | intake pump flow at 0 h; volume pumped by each of three stages; lowest clearwell depth | 3 % (0 h), 5 % | 0.3 % (0.8 % at a 300 s step) |
+| scale-net-irrigation-01 | 57 | operating_point | pump flow; mainline pressure; one zone's flow; lowest sprinkler pressure; the zone that holds it | 3 %, choice exact | 0.17 % |
+| scale-net-loop-01 | 40 | operating_point | flow from each of two reservoirs; two node pressures; one pipe flow | 3 % | 0.2 % |
+| scale-net-tower-01 | 26 | transient | lowest tower level; tower and reservoir levels at 24 h; lowest outlet pressure; highest pump flow | 5 % (tower), 0.2 m (reservoir), 3 % | 0.6 % (7.7 % at a 300 s step, not the stated 60 s) |
+| scale-net-booster-01 | 30 | transient | highest and lowest header pressure; lowest pressure at one node; highest station flow; reservoir level at 24 h | 3 %, 0.1 m (reservoir) | 0.24 % |
+
 ### How to run
 
 All commands run from the repository root. Real runs call the Claude Code CLI and consume
@@ -172,6 +267,16 @@ uv run python -m benchmarks.composition.harness run --model opus --levels 1 --re
 # Selected tasks (ids or glob patterns), one condition, a spending cap per session.
 uv run python -m benchmarks.composition.harness run --model sonnet --tasks "pump-*" \
     --conditions mcp --repeats 1 --max-budget-usd 2 --max-turns 80 --timeout 1800
+
+# Scale tasks (level 4) with the recommended limits (120 turns, 2400 s per session).
+uv run python -m benchmarks.composition.harness run --dry-run --model opus --levels 4 \
+    --recommended-level-limits
+uv run python -m benchmarks.composition.harness run --model opus --levels 4 --repeats 3 \
+    --recommended-level-limits --max-budget-usd 10
+
+# All levels; only level-4 sessions get the longer limits (explicit values win).
+uv run python -m benchmarks.composition.harness run --model opus --repeats 3 \
+    --level-max-turns 4=120 --level-timeout 4=2400
 
 # Re-grade saved streams (after a tolerance fix) and rebuild the report.
 uv run python -m benchmarks.composition.harness grade <run-id>
@@ -255,7 +360,12 @@ no pip, `PIP_NO_INDEX=1` and `UV_OFFLINE=1`.
   turn limits count as failures.
 - The report gives pass rates by condition, level, category and domain (with 95 % Wilson
   intervals), per-answer accuracy, traceability, median tool calls, turns, tokens, cost
-  and duration, total cost, a per-task table and the decision-gate line.
+  and duration, total cost, a per-task table and the decision-gate line. Levels are shown
+  with their component ranges (`4 (20+ components)`), and an "Effort and cost by level"
+  table gives, per level and condition, the pass rate, median turns, tool calls, tokens,
+  cost and duration, timeouts, turn-limit hits (`error_max_turns`) and the session limits
+  the runs used, so level-4 cost and failures can be read against levels 1-3. The decision
+  gate stays the level-1 pass rate of condition `mcp`.
 
 ### Known limitations
 

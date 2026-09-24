@@ -1,0 +1,218 @@
+id: scale-plant-tower-01
+title: Clearwell, high-lift station and tower over one day
+level: 4
+category: transient
+domain: storage
+prompt: |
+  A treatment plant's clearwell feeds a high-lift pump station that pumps up to a water
+  tower; the tower supplies a looped town network whose demand follows a daily pattern.
+  Follow the system through one day, 0 h to 24 h.
+
+  Clearwell. An open vertical cylinder, 24 m inner diameter and 6.0 m high, its floor at the
+  datum (elevation 0); 3.5 m of water at 0 h. The treatment plant delivers into it through a
+  150 m pipe (inner diameter 150 mm, K = 1.0 including the exit loss) whose upstream end is
+  held at 1.2 bar gauge at elevation 0 and whose mouth discharges freely 5.8 m above the
+  clearwell floor, above the water surface.
+
+  Station. The clearwell's bottom outlet feeds a suction pipe (20 m, 300 mm, K = 0.5) to the
+  station header at elevation 0. Two identical pumps, P1 and P2, run in parallel from the
+  header, each followed by its own non-return valve (Kv 600 m3/h, blocks reverse flow),
+  into a rising main (2500 m, 250 mm, rising 45 m, K = 5.0 including the exit loss) to the
+  bottom inlet of the tower. Pump data at rated speed (both exact quadratics):
+
+  | Flow (m3/h) | 0 | 100 | 150 | 200 | 300 |
+  |---|---:|---:|---:|---:|---:|
+  | Head (m) | 72.0 | 70.0 | 67.5 | 64.0 | 54.0 |
+  | Shaft power (kW) | 25.0 | 38.8 | 44.8 | 50.2 | 59.2 |
+
+  A running pump runs at rated speed; a stopped pump passes no flow and uses no power.
+
+  Tower. An open vertical cylinder, 12 m inner diameter and 6.0 m high, its floor 45.0 m
+  above the datum; 3.0 m of water at 0 h. Its bottom outlet feeds the town through pipe T1.
+
+  | Pipe | From | To | Length (m) | Inner diameter (mm) |
+  |---|---|---|---:|---:|
+  | T1 | tower outlet | J1 | 600 | 300 |
+  | P12 | J1 | J2 | 500 | 200 |
+  | P23 | J2 | J3 | 400 | 150 |
+  | P34 | J3 | J4 | 500 | 150 |
+  | P41 | J4 | J1 | 400 | 200 |
+  | P25 | J2 | J5 | 300 | 100 |
+  | P46 | J4 | J6 | 350 | 100 |
+
+  | Node | J1 | J2 | J3 | J4 | J5 | J6 |
+  |---|---:|---:|---:|---:|---:|---:|
+  | Elevation (m) | 5.0 | 3.0 | 9.0 | 6.0 | 1.0 | 4.0 |
+  | Outlet orifice diameter (mm) | none | 34 | 28 | 34 | 32 | 28 |
+
+  The town pipes have no minor losses. The town's demand is
+  pressure-driven: the consumers at each of J2 to J6 act as one sharp-edged orifice
+  discharging to atmosphere at the node's elevation, passing Q = 0.62 x A x f x sqrt(2 p /
+  rho), with A the orifice area from the diameter in the table, p the node's gauge pressure
+  and f the open fraction of every orifice, which follows this schedule (each value holds
+  from its From hour, inclusive, up to its To hour):
+
+  | From (h) | To (h) | Open fraction |
+  |---:|---:|---:|
+  | 0 | 5 | 0.30 |
+  | 5 | 8 | 0.80 |
+  | 8 | 11 | 1.00 |
+  | 11 | 17 | 0.65 |
+  | 17 | 21 | 0.90 |
+  | 21 | 24 | 0.45 |
+
+  Controls. P1 (lead) starts when the tower depth is below 2.0 m and stops when it is above
+  5.0 m; P2 (lag) starts below 1.0 m and stops above 4.0 m; between its limits each pump
+  keeps its state. At 0 h P1 is running and P2 is stopped.
+
+  Simulation. Quasi-steady, with a fixed time step of 60 s. At each step time t: apply the
+  schedule for t, solve the network with the current depths and pump states, check the
+  tower depth against the switch limits (a switch takes effect at t and the network is
+  solved again), then advance both tank depths to t + 60 s with that solution's flows
+  (explicit Euler). The flows and shaft powers found at t hold for the step that follows.
+
+  Conventions: water density 998.2 kg/m3, dynamic viscosity 1.002e-3 Pa s, g = 9.80665
+  m/s2. Pipes follow Darcy-Weisbach with the Colebrook friction factor (or an equivalent
+  explicit formula); a pipe's minor-loss coefficient K acts on its own velocity head. A Kv
+  element passes Q (m3/h) with a pressure drop of 0.9982 (Q/Kv)^2 bar. Velocity heads at
+  junctions are neglected (as in EPANET), so a node pressure is the static pressure there.
+  Pressures are gauge. All pipes (the plant feed pipe, the station suction pipe, the rising
+  main and the town pipes) have an absolute roughness of 0.1 mm. The rise of each town pipe
+  follows from the tower floor and node elevations.
+
+  At 0 h, find P1's flow and the gauge pressure at J3. Over the day, find the lowest and the
+  highest clearwell depth, the total volume pumped into the tower, the total volume
+  delivered by the five orifices and the total shaft energy of the two pumps.
+answers:
+  - key: flow_start
+    description: Flow of pump P1 at 0 h
+    unit: "m3/h"
+    rel_tol: 0.03
+  - key: pressure_j3_start
+    description: Gauge pressure at J3 at 0 h
+    unit: "bar"
+    rel_tol: 0.03
+  - key: min_clearwell_level
+    description: Lowest clearwell water depth over the day
+    unit: "m"
+    rel_tol: 0.05
+  - key: max_clearwell_level
+    description: Highest clearwell water depth over the day
+    unit: "m"
+    rel_tol: 0.05
+  - key: pumped_volume
+    description: Total volume pumped into the tower over the day
+    unit: "m3"
+    rel_tol: 0.05
+  - key: delivered_volume
+    description: Total volume delivered by the five orifices over the day
+    unit: "m3"
+    rel_tol: 0.05
+  - key: pump_energy
+    description: Total shaft energy of pumps P1 and P2 over the day
+    unit: "kWh"
+    rel_tol: 0.05
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: clearwell, high-lift station and tower
+    components:
+      - {name: plant, type: supply, parameters: {pressure: 1.2, temperature: 12}}
+      - {name: plant_main, type: pipe, parameters: {length: 150, diameter: 150, roughness: 0.1, minor_loss: 1.0}}
+      - {name: clearwell, type: tank, parameters: {diameter: 24, height: 6.0, initial_level: 3.5, port_kv: 1000000, inlet_height: 5.8}}
+      - {name: suction, type: pipe, parameters: {length: 20, diameter: 300, roughness: 0.1, minor_loss: 0.5}}
+      - {name: pump_1, type: centrifugal_pump, parameters: {head_curve: [[0, 72.0], [100, 70.0], [200, 64.0], [300, 54.0]], power_curve: [[0, 25.0], [150, 44.8], [300, 59.2]], npsh_curve: [[100, 2.5], [200, 3.6], [300, 5.5]], motor_power: 75}}
+      - {name: pump_2, type: centrifugal_pump, parameters: {head_curve: [[0, 72.0], [100, 70.0], [200, 64.0], [300, 54.0]], power_curve: [[0, 25.0], [150, 44.8], [300, 59.2]], npsh_curve: [[100, 2.5], [200, 3.6], [300, 5.5]], motor_power: 75}}
+      - {name: nrv_1, type: check_valve, parameters: {kv: 600}}
+      - {name: nrv_2, type: check_valve, parameters: {kv: 600}}
+      - {name: rising_main, type: pipe, parameters: {length: 2500, diameter: 250, roughness: 0.1, height_difference: 45.0, minor_loss: 5.0}}
+      - {name: tower, type: tank, parameters: {diameter: 12, height: 6.0, initial_level: 3.0, port_kv: 1000000}}
+      - {name: t1, type: pipe, parameters: {length: 600, diameter: 300, roughness: 0.1, height_difference: -40.0}}
+      - {name: p12, type: pipe, parameters: {length: 500, diameter: 200, roughness: 0.1, height_difference: -2.0}}
+      - {name: p23, type: pipe, parameters: {length: 400, diameter: 150, roughness: 0.1, height_difference: 6.0}}
+      - {name: p34, type: pipe, parameters: {length: 500, diameter: 150, roughness: 0.1, height_difference: -3.0}}
+      - {name: p41, type: pipe, parameters: {length: 400, diameter: 200, roughness: 0.1, height_difference: -1.0}}
+      - {name: p25, type: pipe, parameters: {length: 300, diameter: 100, roughness: 0.1, height_difference: -2.0}}
+      - {name: p46, type: pipe, parameters: {length: 350, diameter: 100, roughness: 0.1, height_difference: -2.0}}
+      - {name: out_j2, type: leak, parameters: {diameter: 34, discharge_coefficient: 0.62}, inputs: {opening: 0.3}}
+      - {name: out_j3, type: leak, parameters: {diameter: 28, discharge_coefficient: 0.62}, inputs: {opening: 0.3}}
+      - {name: out_j4, type: leak, parameters: {diameter: 34, discharge_coefficient: 0.62}, inputs: {opening: 0.3}}
+      - {name: out_j5, type: leak, parameters: {diameter: 32, discharge_coefficient: 0.62}, inputs: {opening: 0.3}}
+      - {name: out_j6, type: leak, parameters: {diameter: 28, discharge_coefficient: 0.62}, inputs: {opening: 0.3}}
+    connections:
+      - [plant.port, plant_main.port_a]
+      - [plant_main.port_b, clearwell.inlet]
+      - [clearwell.outlet, suction.port_a]
+      - [suction.port_b, pump_1.inlet]
+      - [suction.port_b, pump_2.inlet]
+      - [pump_1.outlet, nrv_1.port_a]
+      - [pump_2.outlet, nrv_2.port_a]
+      - [nrv_1.port_b, rising_main.port_a]
+      - [nrv_2.port_b, rising_main.port_a]
+      - [rising_main.port_b, tower.inlet]
+      - [tower.outlet, t1.port_a]
+      - [t1.port_b, p12.port_a]
+      - [p12.port_b, p23.port_a]
+      - [p23.port_b, p34.port_a]
+      - [p34.port_b, p41.port_a]
+      - [t1.port_b, p41.port_b]
+      - [p12.port_b, p25.port_a]
+      - [p34.port_b, p46.port_a]
+      - [p12.port_b, out_j2.port]
+      - [p23.port_b, out_j3.port]
+      - [p34.port_b, out_j4.port]
+      - [p25.port_b, out_j5.port]
+      - [p46.port_b, out_j6.port]
+    controls:
+      - {name: lead, type: hysteresis, measure: tower.level, actuate: pump_1.speed, on_below: 2.0, off_above: 5.0, on_value: 1.0, off_value: 0.0, initial: "on"}
+      - {name: lag, type: hysteresis, measure: tower.level, actuate: pump_2.speed, on_below: 1.0, off_above: 4.0, on_value: 1.0, off_value: 0.0, initial: "off"}
+  steps:
+    - {op: solve, read: {flow_start: pump_1.volume_flow, pressure_j3_start: out_j3.pressure}}
+    - op: simulate
+      duration: "24 h"
+      step: "60 s"
+      events:
+        - {at: "5 h", set: {out_j2.opening: 0.8, out_j3.opening: 0.8, out_j4.opening: 0.8, out_j5.opening: 0.8, out_j6.opening: 0.8}}
+        - {at: "8 h", set: {out_j2.opening: 1.0, out_j3.opening: 1.0, out_j4.opening: 1.0, out_j5.opening: 1.0, out_j6.opening: 1.0}}
+        - {at: "11 h", set: {out_j2.opening: 0.65, out_j3.opening: 0.65, out_j4.opening: 0.65, out_j5.opening: 0.65, out_j6.opening: 0.65}}
+        - {at: "17 h", set: {out_j2.opening: 0.9, out_j3.opening: 0.9, out_j4.opening: 0.9, out_j5.opening: 0.9, out_j6.opening: 0.9}}
+        - {at: "21 h", set: {out_j2.opening: 0.45, out_j3.opening: 0.45, out_j4.opening: 0.45, out_j5.opening: 0.45, out_j6.opening: 0.45}}
+      read_min: {min_clearwell_level: clearwell.level}
+      read_max: {max_clearwell_level: clearwell.level}
+      read_total: {pumped_volume: rising_main.volume_flow, delivered_volume: [out_j2.volume_flow, out_j3.volume_flow, out_j4.volume_flow, out_j5.volume_flow, out_j6.volume_flow], pump_energy: [pump_1.shaft_power, pump_2.shaft_power]}
+  expected: {flow_start: 228.7134193, pressure_j3_start: 3.769698228, min_clearwell_level: 3.071476049, max_clearwell_level: 4.664749456, pumped_volume: 3882.959999, delivered_volume: 3765.625446, pump_energy: 900.4521967}
+notes: |
+  Scale task (22 components, two level switches, 24 h with a demand schedule). Every
+  curve is an exact quadratic (head 72 - 0.0002 Q^2, shaft power 25 + 0.15 Q - 0.00012
+  Q^2), so EPANET's three-point curve reproduces it. The plant feed is constant because its
+  mouth stays above the water: 1.2 bar = 12.26 m against the 5.8 m mouth drives 160.2 m3/h
+  through 150 m of 150 mm pipe. P1 alone keeps up (P2 never starts; the tower never falls
+  below 1.98 m). P1 stops at 1.5 h, starts at 5.4 h, stops at 14.5 h, starts at 16.6 h and
+  stops at 23.0 h. The clearwell is highest (4.66 m) when P1 restarts at 5.4 h after the
+  night and lowest (3.07 m) when P1 stops at 23.0 h; neither is a switch threshold of its
+  own. The prompt states the 0.1 mm roughness of the plant feed, the station suction and the
+  rising main as well as of the town pipes, because the answers depend on it: with smooth
+  station pipes P1's flow at 0 h is 6 % higher, the highest clearwell depth 13 % higher and
+  the energy 8 % lower (independent audit). Balances from the reference run: pumped = plant 160.16 m3/h x 24 h = 3843.9 m3 plus
+  the clearwell drawdown 452.39 m2 x (3.500 - 3.414) m = 39.0 m3, so 3883.0 m3; delivered =
+  pumped minus the tower rise 113.10 m2 x (4.037 - 3.000) m = 117.3 m3, so 3765.6 m3.
+  Energy: P1 runs at 212-237 m3/h with 0.227-0.238 kWh/m3, so about 0.232 x 3883 = 900 kWh.
+
+  Independent checks without worldparts. Answers in order: P1 flow at 0 h (m3/h), J3
+  pressure at 0 h (bar), lowest and highest clearwell depth (m), pumped and delivered volume
+  (m3), energy (kWh):
+  - reference (worldparts, Churchill, 60 s): 228.71, 3.770, 3.071, 4.665, 3883.0, 3765.6,
+    900.5.
+  - own Python (scipy.optimize.root, explicit Euler, switches as stated), Colebrook, 60 s:
+    229.13, 3.770, 3.087, 4.669, 3882.3, 3767.3, 899.3.
+  - own Python, Swamee-Jain, 60 s: 228.74, 3.770, 3.070, 4.664, 3883.3, 3765.7, 900.5.
+  - own Python, Colebrook, 15 s: 229.13, 3.770, 3.087, 4.668, 3878.9, 3767.5, 898.6.
+  - own Python, Colebrook, 300 s: 229.13, 3.770, 3.110, 4.668, 3898.6, 3765.2, 902.4.
+  - WNTR 1.5.0 EpanetSimulator (EPANET 2.2, hydraulic and report step 60 s; pumps as
+    three-point curves; non-return valves as CV pipes; orifices as TCVs into reservoirs at
+    the node elevations, with time controls for the schedule; EPANET level controls, which
+    act at the exact crossing; the plant feed as a constant negative demand of 160.67 m3/h
+    from a Colebrook calculation of the feed pipe; totals as rectangle sums over the 60 s
+    report): 228.79, 3.770, 3.093, 4.666, 3883.9, 3766.4, 900.5.
+  Largest difference 1.3 % (lowest clearwell depth with a 300 s step), 0.7 % at 60 s.
+  Timing: load 0.01 s, solve 14 ms, simulate 2.8 s (MCP load_system 0.04 s, simulate 5.1 s).

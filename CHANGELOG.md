@@ -53,6 +53,27 @@ wear, a leak component and top-fed tanks.
 - **Ramp events in component-manifest scenarios**: `scenarios[].simulate.events` accept
   `{at, ramp: {path: [start, end]}, over}` (the schema now matches `system.schema.json`; the
   scenario runner already called `System.simulate`).
+- **Benchmark scale level** (benchmarks/README.md, "Scale tasks"). A task whose reference
+  system has 20 or more components is level 4 (level 3 is now 8-19). A level-4 prompt may
+  have up to 1,200 words (table markup not counted) and give data in markdown tables,
+  which the loader checks for shape and empty cells; prompts of levels 1-3 keep their
+  rules and contain no table. `run` takes per-level limits (`--level-max-turns 4=120`,
+  `--level-timeout 4=2400`, or `--recommended-level-limits` for the recommended table:
+  level 4, 120 turns and 2400 s); the defaults (80 turns, 1800 s) are unchanged. Runs
+  record the limits they used, and the report adds a per-level effort and cost table with
+  timeouts and turn-limit hits.
+- **Benchmark totals and the first scale tasks.** A reference `simulate` step can read
+  `read_total`: the time integral of a variable, or the sum of several (a pumped volume
+  from a flow, an energy from shaft powers), each sample's value holding over the step it
+  drives. Four level-4 tasks, `scale-plant-*` (22 to 48 components): a three-train
+  treatment plant's operating point, the same plant over 24 h with clogging filters and a
+  PI trim pump, a clearwell and high-lift station feeding a tower and a looped town network
+  with level switches and a demand schedule, and a three-stage transfer from river to
+  tower with seven level switches. Four more, `scale-net-*` (26 to 57 components): a
+  five-zone irrigation network with zone valves and 22 sprinklers, a looped grid fed by two
+  reservoirs, a tower on a level switch over a 24 h stepped demand schedule, and a
+  three-pump booster staged by header pressure over a 24 h ramped schedule. Each task's
+  notes give an independent check (own Python and WNTR's EpanetSimulator).
 
 ### Changed
 

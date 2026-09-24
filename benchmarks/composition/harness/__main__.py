@@ -6,7 +6,8 @@ Run from the repository root::
     uv run python -m benchmarks.composition.harness regen [--check]
     uv run python -m benchmarks.composition.harness oracle [--corrupt]
     uv run python -m benchmarks.composition.harness run --model M [--tasks ...] \\
-        [--conditions mcp code] [--repeats N] [--dry-run]
+        [--conditions mcp code] [--repeats N] [--dry-run] \\
+        [--level-max-turns 4=120] [--level-timeout 4=2400] [--recommended-level-limits]
     uv run python -m benchmarks.composition.harness grade RUN_ID
     uv run python -m benchmarks.composition.harness report RUN_ID
     uv run python -m benchmarks.composition.harness smoke --condition code --prompt ...
@@ -31,7 +32,10 @@ from .reference import ReferenceStepError
 from .report import gate_line, summarise, to_markdown, write_report
 from .runner import (
     CONDITIONS,
+    DEFAULT_LIMITS,
+    RECOMMENDED_LEVEL_LIMITS,
     RunSpec,
+    SessionLimits,
     build_command,
     child_env,
     claude_version,
@@ -40,6 +44,8 @@ from .runner import (
     execute,
     format_command,
     mcp_config,
+    parse_level_values,
+    session_limits,
 )
 from .tasks import RESULTS_DIR, TASKS_DIR, Task, load_tasks
 
@@ -68,6 +74,30 @@ def _select_tasks(args: argparse.Namespace) -> list[Task]:
     if errors and not getattr(args, "allow_invalid", False):
         raise SystemExit(f"{len(errors)} invalid task file(s); fix them or pass --allow-invalid")
     return tasks
+
+
+def _level_overrides(args: argparse.Namespace) -> tuple[dict[int, int], dict[int, float]]:
+    """The per-level --level-max-turns and --level-timeout values (validated)."""
+    try:
+        turns = parse_level_values(
+            getattr(args, "level_max_turns", None), "--level-max-turns", integer=True
+        )
+        secs = parse_level_values(getattr(args, "level_timeout", None), "--level-timeout", False)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+    return turns, secs
+
+
+def _limits(level: int | None, args: argparse.Namespace) -> SessionLimits:
+    """The limits of one session: per-level overrides, else recommended, else global."""
+    turns, secs = _level_overrides(args)
+    return session_limits(
+        level,
+        SessionLimits(args.max_turns, float(args.timeout)),
+        turns,
+        secs,
+        recommended=bool(getattr(args, "recommended_level_limits", False)),
+    )
 
 
 def _record(
@@ -198,6 +228,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     for c in conditions:
         if c not in CONDITIONS:
             raise SystemExit(f"unknown condition '{c}' (choose from {', '.join(CONDITIONS)})")
+    _level_overrides(args)  # fail on a malformed override before anything runs
     missing = [t.id for t in tasks if t.expected is None]
     if missing and not args.dry_run:
         raise SystemExit(f"tasks without expected answers (run regen): {', '.join(missing)}")
@@ -221,6 +252,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         "tasks": [t.id for t in tasks],
         "max_turns": args.max_turns,
         "timeout_s": args.timeout,
+        "level_limits": {
+            str(level): _limits(level, args).to_dict() for level in sorted({t.level for t in tasks})
+        },
         "max_budget_usd": args.max_budget_usd,
         "claude_version": claude_version(),
         "started": datetime.now().isoformat(timespec="seconds"),
@@ -241,11 +275,12 @@ def cmd_run(args: argparse.Namespace) -> int:
                 print(f"skip {spec.label} {spec.condition}-{spec.repeat} (already graded)")
                 return rec
             shutil.rmtree(spec.out_dir, ignore_errors=True)
+        limits = _limits(task.level, args)
         outcome = execute(
             spec,
             args.model,
-            args.max_turns,
-            args.timeout,
+            limits.max_turns,
+            limits.timeout_s,
             code_env,
             args.max_budget_usd,
             keep_tmp=args.keep_tmp,
@@ -288,14 +323,15 @@ def cmd_run(args: argparse.Namespace) -> int:
 def dry_run(specs: list[tuple[Task | None, RunSpec]], args: argparse.Namespace) -> int:
     """Print the exact claude command lines and prompts without running anything."""
     code_env = args.code_env or default_code_env_dir()
-    for _, spec in specs:
+    for task, spec in specs:
         run = Path("<tmp-run-dir>")
+        limits = _limits(task.level if task is not None else None, args)
         cmd = build_command(
             spec.condition,
             args.model,
             run / "mcp.json",
             run / "settings.json",
-            args.max_turns,
+            limits.max_turns,
             args.max_budget_usd,
             claude="claude",
         )
@@ -305,7 +341,8 @@ def dry_run(specs: list[tuple[Task | None, RunSpec]], args: argparse.Namespace) 
         print(f"cwd: {run / 'work'}   (a fresh temporary directory outside the repository)")
         print("env: " + " ".join(f"{k}={v}" for k, v in changed.items()))
         print("mcp.json: " + json.dumps(mcp_config(spec.condition, run / "systems")))
-        print(f"timeout: {args.timeout} s")
+        level = f"level {task.level}, " if task is not None else ""
+        print(f"limits: {level}max-turns {limits.max_turns}, timeout {limits.timeout_s:g} s")
         print("command (prompt on stdin):")
         print("  " + format_command(cmd))
         print("prompt:")
@@ -415,7 +452,9 @@ def parser() -> argparse.ArgumentParser:
     def claude_opts(sp: argparse.ArgumentParser, default_turns: int) -> None:
         sp.add_argument("--model", default="opus", help="Claude model alias or id.")
         sp.add_argument("--max-turns", type=int, default=default_turns)
-        sp.add_argument("--timeout", type=float, default=1800.0, help="Seconds per session.")
+        sp.add_argument(
+            "--timeout", type=float, default=DEFAULT_LIMITS.timeout_s, help="Seconds per session."
+        )
         sp.add_argument("--max-budget-usd", type=float, default=None, help="Per session.")
         sp.add_argument("--code-env", type=Path, default=None, help="Code-condition env dir.")
         sp.add_argument("--run-id", default=None)
@@ -440,7 +479,28 @@ def parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("run", help="Run agent sessions and grade them.")
     tasks_opts(sp)
-    claude_opts(sp, default_turns=80)
+    claude_opts(sp, default_turns=DEFAULT_LIMITS.max_turns)
+    rec = ", ".join(
+        f"level {lv}: max-turns {lim.max_turns}, timeout {lim.timeout_s:g} s"
+        for lv, lim in sorted(RECOMMENDED_LEVEL_LIMITS.items())
+    )
+    sp.add_argument(
+        "--level-max-turns",
+        nargs="*",
+        metavar="LEVEL=N",
+        help="Per-level --max-turns, e.g. 4=120 (overrides --max-turns for that level).",
+    )
+    sp.add_argument(
+        "--level-timeout",
+        nargs="*",
+        metavar="LEVEL=SECONDS",
+        help="Per-level --timeout, e.g. 4=2400 (overrides --timeout for that level).",
+    )
+    sp.add_argument(
+        "--recommended-level-limits",
+        action="store_true",
+        help=f"Use the recommended per-level limits ({rec}); --level-* values still win.",
+    )
     sp.add_argument("--conditions", nargs="*", help="mcp, code (default: both).")
     sp.add_argument("--repeats", type=int, default=1)
     sp.add_argument("--jobs", type=int, default=1, help="Sessions in parallel.")

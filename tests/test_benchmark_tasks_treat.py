@@ -29,7 +29,7 @@ TASKS_DIR = REPO / "benchmarks" / "composition" / "tasks"
 TASK_FILES = sorted(TASKS_DIR.glob("treat-*.yaml"))
 #: Relative agreement required between the executed and the frozen reference values.
 REL = 1e-6
-LEVEL_RANGES = {1: (2, 4), 2: (5, 7), 3: (8, 10_000)}
+LEVEL_RANGES = {1: (2, 4), 2: (5, 7), 3: (8, 19), 4: (20, 10_000)}
 CATEGORIES = {"operating_point", "sizing", "what_if", "transient", "diagnosis"}
 DOMAINS = {"treatment", "distribution"}
 FAULTS = {"clogged_filter", "worn_pump", "partly_closed_valve", "uv_lamp_degradation"}

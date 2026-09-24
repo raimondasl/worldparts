@@ -1,0 +1,214 @@
+id: scale-plant-clog-01
+title: Clogging filters and a trim pump over one day
+level: 4
+category: transient
+domain: treatment
+prompt: |
+  A treatment plant has three parallel trains, A, B and C, between an open raw-water tank
+  and an open clearwell. Follow it through 24 hours while its filters clog.
+
+  Layout. An intake pipe from the river feeds the bottom inlet of the raw-water tank; its
+  river end is held at 0.45 bar gauge at the elevation of the raw-tank floor (the datum).
+  Raw water leaves the tank's bottom outlet through a suction main to a suction header S.
+  From S each train runs, in flow order: a branch pipe, a centrifugal pump, a non-return
+  valve, a pressure media filter, a UV reactor and an outlet valve, discharging into a
+  collector header C. A collector main rises from C to the bottom inlet of the clearwell,
+  whose floor is 5.0 m above the datum. The clearwell's bottom outlet feeds an outlet main
+  that falls back to the datum and ends in a valve (Kv 350 m3/h, fully open) discharging to
+  atmosphere. S, C and all train equipment are at the datum.
+
+  | Pipe | From | To | Length (m) | Inner diameter (mm) | Rise (m) | K |
+  |---|---|---|---:|---:|---:|---:|
+  | Intake | river end | raw-tank inlet | 300 | 300 | 0 | 2.0 |
+  | Suction main | raw-tank outlet | S | 25 | 300 | 0 | 1.0 |
+  | Branch A, B, C (each) | S | pump of its train | 12 | 150 | 0 | 1.5 |
+  | Collector main | C | clearwell inlet | 120 | 300 | 5.0 | 3.0 |
+  | Outlet main | clearwell outlet | outlet valve | 200 | 300 | -5.0 | 2.0 |
+
+  Roughness 0.1 mm for all pipes; K includes any exit loss into a tank.
+
+  | Tank | Inner diameter (m) | Height (m) | Water depth at 0 h (m) |
+  |---|---:|---:|---:|
+  | Raw-water tank | 15 | 5.0 | 3.2 |
+  | Clearwell | 20 | 5.5 | 3.0 |
+
+  Both tanks are open vertical cylinders; tank connections add no loss. The equipment is
+  the same in every train:
+
+  | Item | Data |
+  |---|---|
+  | Pump | head 24.0 m at 0 m3/h, 22.08 m at 40 m3/h, 16.32 m at 80 m3/h and 6.72 m at 120 m3/h at rated speed (an exact quadratic) |
+  | Non-return valve | Kv 300 m3/h for forward flow; it blocks reverse flow |
+  | Media filter | clean pressure drop 0.25 bar at 100 m3/h: 70 % of it is a media loss proportional to the flow, 30 % a housing loss proportional to the flow squared |
+  | UV reactor | pressure drop 0.12 bar at 100 m3/h, proportional to the flow squared; irradiated volume 60 L; average fluence rate 25 mW/cm2 at full lamp output |
+  | Outlet valve | Kv 250 m3/h, fully open unless stated |
+
+  At relative speed s a pump follows the affinity laws: H(Q, s) = s^2 H(Q/s, 1), which for
+  this curve is 24.0 s^2 - 0.0012 Q^2 (m, Q in m3/h).
+
+  Clogging. A filter's media loss is its clean media loss divided by (1 - c), where c is the
+  filter's clogging fraction; the housing loss does not change. Each c rises linearly in
+  time from its 0 h value to its 24 h value:
+
+  | Filter | c at 0 h | c at 24 h |
+  |---|---:|---:|
+  | A | 0.10 | 0.55 |
+  | B | 0.20 | 0.60 |
+  | C | 0.00 | 0.50 |
+
+  A filter must be backwashed once its pressure drop exceeds 0.45 bar; nobody backwashes
+  during these 24 hours.
+
+  Control. Pumps B and C run at rated speed. Pump A is a trim pump: a PI controller holds
+  the total flow in the collector main at 300 m3/h by setting pump A's relative speed. It
+  samples every 60 s. With e_k = 300 - Q_k (m3/h), Q_k the collector-main flow just
+  computed, the new speed is u_k = u_(k-1) + 0.0005 (e_k - e_(k-1)) + 0.0005 x (60 s /
+  120 s) x e_k, limited to 0.60-1.10; the first sample only records e_0. At 0 h the loop is
+  in steady state: pump A runs at the speed that gives exactly 300 m3/h with the 0 h
+  clogging and depths.
+
+  Simulation. Quasi-steady, with a fixed time step of 60 s from 0 h to 24 h. At each step
+  time t: set every c to its value at t, solve the network with the current depths and
+  speeds, let the controller act on that solution (a new speed takes effect at t and the
+  network is solved again), then advance both tank depths to t + 60 s with that solution's
+  flows (explicit Euler).
+
+  Conventions: water density 998.2 kg/m3, dynamic viscosity 1.002e-3 Pa s, g = 9.80665
+  m/s2. Pipes follow Darcy-Weisbach with the Colebrook friction factor (or an equivalent
+  explicit formula); a pipe's minor-loss coefficient K acts on its own velocity head. A Kv
+  element passes Q (m3/h) with a pressure drop of 0.9982 (Q/Kv)^2 bar. Velocity heads at
+  junctions are neglected (as in EPANET), so a node pressure is the static pressure there.
+  Pressures are gauge. The UV dose is the fluence rate times the irradiated volume divided by the
+  flow (mW/cm2 x s = mJ/cm2).
+
+  Find pump A's relative speed at 0 h. Which filter's pressure drop first exceeds 0.45 bar,
+  and at what time? At 24 h, find the total flow into the clearwell, the flow through
+  train B and the UV dose in train A.
+answers:
+  - key: trim_speed_start
+    description: Relative speed of pump A at 0 h
+    unit: "1"
+    rel_tol: 0.03
+  - key: first_filter
+    description: The filter whose pressure drop first exceeds 0.45 bar
+    kind: "choice"
+    choices: [a, b, c]
+  - key: change_time
+    description: Time at which that filter's pressure drop first exceeds 0.45 bar
+    unit: "h"
+    rel_tol: 0.05
+  - key: total_flow_end
+    description: Total flow into the clearwell at 24 h
+    unit: "m3/h"
+    rel_tol: 0.03
+  - key: flow_b_end
+    description: Flow through train B at 24 h
+    unit: "m3/h"
+    rel_tol: 0.03
+  - key: dose_a_end
+    description: UV dose in train A at 24 h
+    unit: "mJ/cm2"
+    rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: plant with clogging filters
+    components:
+      - {name: river, type: supply, parameters: {pressure: 0.45, temperature: 12}}
+      - {name: intake, type: pipe, parameters: {length: 300, diameter: 300, roughness: 0.1, minor_loss: 2.0}}
+      - {name: raw, type: tank, parameters: {diameter: 15, height: 5, initial_level: 3.2, port_kv: 1000000}}
+      - {name: suction, type: pipe, parameters: {length: 25, diameter: 300, roughness: 0.1, minor_loss: 1.0}}
+      - {name: branch_a, type: pipe, parameters: {length: 12, diameter: 150, roughness: 0.1, minor_loss: 1.5}}
+      - {name: pump_a, type: centrifugal_pump, parameters: {head_curve: [[0, 24.0], [40, 22.08], [80, 16.32], [120, 6.72]], power_curve: [[0, 1.5], [60, 4.38], [120, 5.82]], npsh_curve: [[40, 2.0], [80, 2.8], [120, 4.4]], motor_power: 7.5}}
+      - {name: nrv_a, type: check_valve, parameters: {kv: 300}}
+      - {name: filter_a, type: media_filter, parameters: {rated_flow: 100, clean_pressure_drop: 0.25, housing_fraction: 0.3, change_pressure_drop: 0.45}, inputs: {clogging: 0.1}}
+      - {name: uv_a, type: uv_reactor, parameters: {rated_flow: 100, rated_pressure_drop: 0.12, volume: 60, fluence_rate: 25, required_dose: 40}}
+      - {name: valve_a, type: valve, parameters: {kv: 250, leakage: 1.0e-08}}
+      - {name: branch_b, type: pipe, parameters: {length: 12, diameter: 150, roughness: 0.1, minor_loss: 1.5}}
+      - {name: pump_b, type: centrifugal_pump, parameters: {head_curve: [[0, 24.0], [40, 22.08], [80, 16.32], [120, 6.72]], power_curve: [[0, 1.5], [60, 4.38], [120, 5.82]], npsh_curve: [[40, 2.0], [80, 2.8], [120, 4.4]], motor_power: 7.5}}
+      - {name: nrv_b, type: check_valve, parameters: {kv: 300}}
+      - {name: filter_b, type: media_filter, parameters: {rated_flow: 100, clean_pressure_drop: 0.25, housing_fraction: 0.3, change_pressure_drop: 0.45}, inputs: {clogging: 0.2}}
+      - {name: uv_b, type: uv_reactor, parameters: {rated_flow: 100, rated_pressure_drop: 0.12, volume: 60, fluence_rate: 25, required_dose: 40}}
+      - {name: valve_b, type: valve, parameters: {kv: 250, leakage: 1.0e-08}}
+      - {name: branch_c, type: pipe, parameters: {length: 12, diameter: 150, roughness: 0.1, minor_loss: 1.5}}
+      - {name: pump_c, type: centrifugal_pump, parameters: {head_curve: [[0, 24.0], [40, 22.08], [80, 16.32], [120, 6.72]], power_curve: [[0, 1.5], [60, 4.38], [120, 5.82]], npsh_curve: [[40, 2.0], [80, 2.8], [120, 4.4]], motor_power: 7.5}}
+      - {name: nrv_c, type: check_valve, parameters: {kv: 300}}
+      - {name: filter_c, type: media_filter, parameters: {rated_flow: 100, clean_pressure_drop: 0.25, housing_fraction: 0.3, change_pressure_drop: 0.45}, inputs: {clogging: 0.0}}
+      - {name: uv_c, type: uv_reactor, parameters: {rated_flow: 100, rated_pressure_drop: 0.12, volume: 60, fluence_rate: 25, required_dose: 40}}
+      - {name: valve_c, type: valve, parameters: {kv: 250, leakage: 1.0e-08}}
+      - {name: collector, type: pipe, parameters: {length: 120, diameter: 300, roughness: 0.1, height_difference: 5.0, minor_loss: 3.0}}
+      - {name: clearwell, type: tank, parameters: {diameter: 20, height: 5.5, initial_level: 3.0, port_kv: 1000000}}
+      - {name: outlet_main, type: pipe, parameters: {length: 200, diameter: 300, roughness: 0.1, height_difference: -5.0, minor_loss: 2.0}}
+      - {name: outlet, type: valve, parameters: {kv: 350, leakage: 1.0e-08}}
+      - {name: zone, type: drain}
+    connections:
+      - [river.port, intake.port_a]
+      - [intake.port_b, raw.inlet]
+      - [raw.outlet, suction.port_a]
+      - [suction.port_b, branch_a.port_a]
+      - [branch_a.port_b, pump_a.inlet]
+      - [pump_a.outlet, nrv_a.port_a]
+      - [nrv_a.port_b, filter_a.inlet]
+      - [filter_a.outlet, uv_a.inlet]
+      - [uv_a.outlet, valve_a.port_a]
+      - [valve_a.port_b, collector.port_a]
+      - [suction.port_b, branch_b.port_a]
+      - [branch_b.port_b, pump_b.inlet]
+      - [pump_b.outlet, nrv_b.port_a]
+      - [nrv_b.port_b, filter_b.inlet]
+      - [filter_b.outlet, uv_b.inlet]
+      - [uv_b.outlet, valve_b.port_a]
+      - [valve_b.port_b, collector.port_a]
+      - [suction.port_b, branch_c.port_a]
+      - [branch_c.port_b, pump_c.inlet]
+      - [pump_c.outlet, nrv_c.port_a]
+      - [nrv_c.port_b, filter_c.inlet]
+      - [filter_c.outlet, uv_c.inlet]
+      - [uv_c.outlet, valve_c.port_a]
+      - [valve_c.port_b, collector.port_a]
+      - [collector.port_b, clearwell.inlet]
+      - [clearwell.outlet, outlet_main.port_a]
+      - [outlet_main.port_b, outlet.port_a]
+      - [outlet.port_b, zone.port]
+    controls:
+      - {name: total_flow, type: pi, measure: collector.volume_flow, setpoint: "300 m3/h", actuate: pump_a.speed, gain: 3.0e-05, integral_time: "120 s", output_min: 0.6, output_max: 1.1, direction: reverse}
+  steps:
+    - {op: solve, read: {trim_speed_start: pump_a.speed}}
+    - op: simulate
+      duration: "24 h"
+      step: "60 s"
+      events:
+        - {at: "0 h", ramp: {filter_a.clogging: [0.1, 0.55], filter_b.clogging: [0.2, 0.6], filter_c.clogging: [0.0, 0.5]}, over: "24 h"}
+      read_final: {total_flow_end: collector.volume_flow, flow_b_end: pump_b.volume_flow, dose_a_end: uv_a.dose}
+      read_first_warning: {change_time: {warning: filter_a.change_required, unit: h}}
+    - {op: answer, values: {first_filter: a}}
+  expected: {trim_speed_start: 1.05077462, first_filter: a, change_time: 20.66666667, total_flow_end: 290.3236282, flow_b_end: 91.14804166, dose_a_end: 51.08129799}
+notes: |
+  Scale task (27 components, one PI loop, clogging ramps over 24 h). The reference solves
+  first (the PI loop goal-seeks pump A to 300 m3/h: speed 1.0508), then simulates 24 h at
+  60 s with the three clogging ramps. The loop holds 300 m3/h (within 0.4 m3/h) until pump A
+  reaches its 1.10 limit at 12.1 h; after that the total falls to 290.3 m3/h at 24 h. Filter
+  A, the least clogged at the start of the two that cross but the one carrying the trim
+  pump's extra flow (about 110 m3/h against 91-96 m3/h), passes 0.45 bar first at 20.67 h;
+  filter B follows at 23.2 h and filter C stays below (0.39 bar at 24 h). Filter A at 24 h:
+  105.7 m3/h at clogging 0.55, drop 0.175 x 1.057 / 0.45 + 0.075 x 1.057^2 = 0.495 bar. Dose
+  A at 24 h: 25 x 0.060 / (105.71/3600) = 51.1 mJ/cm2.
+
+  Independent checks without worldparts (own Python: scipy.optimize.root on node heads and
+  link flows, the PI law, explicit Euler and the step order exactly as stated in the
+  prompt). Answers in order: speed at 0 h; first filter; time (h); total and train B flow
+  (m3/h) and dose A (mJ/cm2) at 24 h:
+  - reference (worldparts, Churchill): 1.0508; a; 20.667; 290.32, 91.15, 51.08.
+  - own Python, Colebrook, 60 s: 1.0503; a; 20.650 (B at 23.20); 290.43, 91.18, 51.07.
+  - own Python, Swamee-Jain, 60 s: 1.0506; a; 20.650; 290.34, 91.15, 51.08.
+  - own Python, Colebrook, 15 s: 1.0503; a; 20.638; 290.43, 91.18, 51.07.
+  - own Python, Colebrook, 300 s: 1.0503; a; 20.667; 290.42, 91.18, 51.07.
+  - own Python with an ideal controller instead of the PI law (pump A's speed solved to
+    exactly 300 m3/h at every step, 1.10 when that is not reachable): 1.0503; a; 20.650;
+    290.41, 91.18, 51.07.
+  Largest difference 0.1 %: the answers depend neither on the PI tuning, nor on the
+  friction formula, nor on the step. EPANET cannot model a linear media loss that changes
+  with time, so there is no WNTR run here. The change time has 5 % because it is a first
+  crossing: the drop rises about 0.014 bar/h there, so 5 % of 20.7 h is 3 % of the drop.
+  The next filter crosses 2.5 h later, so the choice is clear-cut. Timing: load 0.01 s,
+  solve 40 ms, simulate 5.0 s (MCP simulate 7.8 s).

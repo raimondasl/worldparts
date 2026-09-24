@@ -9,9 +9,10 @@ Ops (executed in order on one :class:`worldparts.System` built from ``reference.
   from the steady result at the root.
 - ``simulate``: ``duration``, ``step`` (default 1 s), ``events`` (set or ramp events, passed
   to ``System.simulate`` unchanged, as the MCP ``simulate`` tool does), ``restore`` (default
-  false, as in MCP); reads ``read_final`` / ``read_min`` / ``read_max`` (paths) and
-  ``read_first_warning`` (``{warning: <instance>.<code>, unit: min}``: time of the first
-  occurrence).
+  false, as in MCP); reads ``read_final`` / ``read_min`` / ``read_max`` (paths),
+  ``read_total`` (a path or a list of paths: the sum of their time integrals, e.g. a pumped
+  volume or an energy, see :func:`time_integral`) and ``read_first_warning``
+  (``{warning: <instance>.<code>, unit: min}``: time of the first occurrence).
 - ``answer``: constant ``values`` (choice and boolean answers, constants).
 
 Every read is converted to the answer's unit. Paths that are not in a solve result
@@ -25,7 +26,13 @@ from typing import Any
 from scipy.optimize import brentq
 
 import worldparts as wp
-from worldparts.units import convert, parse_value
+from worldparts.units import (
+    convert,
+    is_pressure_unit,
+    is_temperature_unit,
+    parse_value,
+    same_dimension,
+)
 
 from .tasks import Task
 
@@ -42,6 +49,38 @@ def _read(system: wp.System, result: wp.SolveResult, path: str, unit: str | None
     if value is None:
         raise ReferenceStepError(f"'{path}' is undefined (null)")
     return float(value)
+
+
+def time_integral(sim: wp.SimulationResult, path: str, unit: str | None) -> float:
+    """The time integral of ``path`` over a simulation, in ``unit`` (or its unit times s).
+
+    Each sample's value holds over the step that follows it: the solve at a sample drives
+    the explicit-Euler storage integration to the next sample (design 5.5), so the integral
+    is ``sum(v[k] * (t[k+1] - t[k]))`` and the last sample drives no step. For a flow into a
+    tank this is exactly the volume the tank receives. ``unit`` must have the dimension of
+    the variable's unit times time (a flow in m3/h integrates to m3, a power in kW to kWh).
+    Pressures and temperatures (offset units) are rejected.
+    """
+    if path not in sim.series:
+        raise ReferenceStepError(f"'{path}' is not recorded")
+    var_unit = sim.units[path]
+    if is_pressure_unit(var_unit) or is_temperature_unit(var_unit):
+        raise ReferenceStepError(
+            f"read_total integrates flows and powers; '{path}' is in {var_unit}"
+        )
+    values = [float(v) for v in sim.get(path) if v is not None]
+    t = sim.time
+    if len(values) != len(t):
+        raise ReferenceStepError(f"'{path}' is undefined at some samples")
+    total = sum(values[k] * (t[k + 1] - t[k]) for k in range(len(t) - 1))
+    integral_unit = f"{var_unit}*s"
+    if unit is None:
+        return total
+    if not same_dimension(integral_unit, unit):
+        raise ReferenceStepError(
+            f"the time integral of '{path}' ({var_unit} x time) cannot be given in '{unit}'"
+        )
+    return float(convert(total, integral_unit, unit))  # type: ignore[arg-type]
 
 
 def solve_for(
@@ -148,6 +187,9 @@ def run_reference(task: Task) -> dict[str, Any]:
                         if not series:
                             raise ReferenceStepError(f"'{path}' is undefined over the run")
                         out[key] = float(pick(series))
+                for key, src in (step.get("read_total") or {}).items():
+                    paths = [src] if isinstance(src, str) else list(src)
+                    out[key] = sum(time_integral(sim, p, unit_of(key)) for p in paths)
                 for key, spec in (step.get("read_first_warning") or {}).items():
                     code = spec["warning"]
                     hits = [w for w in sim.warnings if w.path == code]

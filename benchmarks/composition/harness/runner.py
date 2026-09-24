@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -47,7 +48,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .tasks import REPO_ROOT
+from .tasks import LEVEL_BOUNDS, REPO_ROOT
 
 CONDITIONS = ("mcp", "code")
 
@@ -122,6 +123,80 @@ ISOLATION_ENV = {
 }
 
 CODE_ENV_PACKAGES = ("numpy", "scipy", "fluids", "wntr")
+
+
+# ----------------------------------------------------------------------------------------
+# per-session limits
+# ----------------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class SessionLimits:
+    """The turn and wall-clock limits of one session."""
+
+    max_turns: int
+    timeout_s: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"max_turns": self.max_turns, "timeout_s": self.timeout_s}
+
+
+#: Defaults of ``run`` (``--max-turns``, ``--timeout``) for every level.
+DEFAULT_LIMITS = SessionLimits(max_turns=80, timeout_s=1800.0)
+
+#: Recommended per-level limits, applied only with ``run --recommended-level-limits``: a
+#: level-4 (scale) task means building a 20-80 component network and simulating it for up
+#: to 24 hours, which takes a from-scratch agent more turns and time than the defaults.
+RECOMMENDED_LEVEL_LIMITS = {4: SessionLimits(max_turns=120, timeout_s=2400.0)}
+
+
+def parse_level_values(values: list[str] | None, what: str, integer: bool) -> dict[int, Any]:
+    """``["4=120", "3=100,2=90"]`` -> {4: 120, 3: 100, 2: 90} (positive, finite numbers).
+
+    Raises ValueError naming ``what`` (e.g. '--level-max-turns') for a malformed item, an
+    unknown level or a value that is not positive.
+    """
+    out: dict[int, Any] = {}
+    for item in (x for v in values or [] for x in re.split(r"[,\s]+", v) if x):
+        level_text, sep, value_text = item.partition("=")
+        try:
+            if not sep:
+                raise ValueError
+            level = int(level_text)
+            value = int(value_text) if integer else float(value_text)
+        except ValueError:
+            kind = "an integer" if integer else "a number"
+            raise ValueError(f"{what}: '{item}' is not LEVEL=VALUE with {kind} VALUE") from None
+        if level not in LEVEL_BOUNDS:
+            raise ValueError(
+                f"{what}: unknown level {level} (levels are {', '.join(map(str, LEVEL_BOUNDS))})"
+            )
+        if not 0 < value < float("inf"):
+            raise ValueError(f"{what}: the value for level {level} must be positive and finite")
+        out[level] = value
+    return out
+
+
+def session_limits(
+    level: int | None,
+    base: SessionLimits,
+    max_turns: dict[int, int] | None = None,
+    timeout_s: dict[int, float] | None = None,
+    recommended: bool = False,
+) -> SessionLimits:
+    """The limits of a session on a task of ``level`` (None: no task, e.g. smoke).
+
+    Precedence, per limit: an explicit per-level override (``max_turns``/``timeout_s``,
+    from ``--level-max-turns``/``--level-timeout``), then :data:`RECOMMENDED_LEVEL_LIMITS`
+    when ``recommended``, then ``base`` (``--max-turns``/``--timeout``).
+    """
+    if level is None:
+        return base
+    turns, secs = base.max_turns, base.timeout_s
+    rec = RECOMMENDED_LEVEL_LIMITS.get(level) if recommended else None
+    if rec is not None:
+        turns, secs = rec.max_turns, rec.timeout_s
+    turns = (max_turns or {}).get(level, turns)
+    secs = float((timeout_s or {}).get(level, secs))
+    return SessionLimits(max_turns=int(turns), timeout_s=secs)
 
 
 # ----------------------------------------------------------------------------------------
@@ -470,8 +545,9 @@ def execute(
     if not keep_tmp:
         shutil.rmtree(tmp, ignore_errors=True)
     outcome = RunOutcome(code, timed_out, wall, error)
+    limits = SessionLimits(max_turns, timeout_s).to_dict()
     (out / "outcome.json").write_text(
-        json.dumps({**outcome.__dict__, "tmp_dir": str(tmp), "kept": keep_tmp}, indent=2),
+        json.dumps({**outcome.__dict__, **limits, "tmp_dir": str(tmp), "kept": keep_tmp}, indent=2),
         encoding="utf-8",
     )
     return outcome

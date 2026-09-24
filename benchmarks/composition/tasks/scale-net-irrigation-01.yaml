@@ -1,0 +1,247 @@
+id: scale-net-irrigation-01
+title: Five-zone campus irrigation network, all zones running
+level: 4
+category: operating_point
+domain: distribution
+prompt: |
+  A campus irrigation system runs all five of its zones at the same time. Find its steady
+  operating point.
+
+  Supply. One pump lifts water from a reservoir whose water surface stays 2.0 m above the
+  pump. The pump, its suction node S and its discharge node M0 are at elevation 0.0 m. The
+  suction pipe from the reservoir to S is 15 m long with inner diameter 150 mm, roughness 0.05
+  mm and K = 1.5 in total (entry and fittings). Pump head at its fixed speed: 70 m at 0 m3/h,
+  65.5 m at 30 m3/h, 52 m at 60 m3/h and 29.5 m at 90 m3/h (the points lie exactly on H = 70 -
+  Q^2/200, Q in m3/h).
+
+  Mainline. From M0 the mainline runs uphill through M1 to M5 (roughness 0.05 mm, no minor
+  losses):
+
+  | Pipe | From | To | Length (m) | Inner diameter (mm) | Elevation of To (m) |
+  |---|---|---|---:|---:|---:|
+  | main 1 | M0 | M1 | 150 | 125 | 3.0 |
+  | main 2 | M1 | M2 | 120 | 125 | 6.0 |
+  | main 3 | M2 | M3 | 140 | 100 | 9.0 |
+  | main 4 | M3 | M4 | 110 | 100 | 12.0 |
+  | main 5 | M4 | M5 | 160 | 80 | 16.0 |
+
+  Zones. Each zone is fed from one mainline node through a fully open zone valve that leads to
+  the zone's head node, at the same elevation as its feed node. A valve acts as a Kv element:
+  its pressure drop is 0.9982 x (Q/Kv)^2 bar with Q in m3/h. From the head node a lateral
+  (roughness 0.02 mm, no minor losses) runs through the zone's sprinkler nodes in series, and
+  every sprinkler node carries one sprinkler.
+
+  | Zone | Feed node | Head node | Valve Kv (m3/h) | Lateral inner diameter (mm) | Nozzle diameter (mm) | Sprinkler nodes |
+  |---|---|---|---:|---:|---:|---|
+  | A | M1 | A0 | 20 | 40 | 6.0 | A1 to A4 |
+  | B | M2 | B0 | 25 | 50 | 6.5 | B1 to B5 |
+  | C | M3 | C0 | 20 | 40 | 6.0 | C1 to C4 |
+  | D | M4 | D0 | 25 | 50 | 6.5 | D1 to D5 |
+  | E | M5 | E0 | 25 | 40 | 7.0 | E1 to E4 |
+
+  Lateral segments:
+
+  | Segment | From | To | Length (m) | Elevation of To (m) |
+  |---|---|---|---:|---:|
+  | A1 | A0 | A1 | 20 | 2.5 |
+  | A2 | A1 | A2 | 30 | 2.0 |
+  | A3 | A2 | A3 | 30 | 1.5 |
+  | A4 | A3 | A4 | 30 | 1.0 |
+  | B1 | B0 | B1 | 20 | 6.5 |
+  | B2 | B1 | B2 | 30 | 7.0 |
+  | B3 | B2 | B3 | 30 | 7.0 |
+  | B4 | B3 | B4 | 30 | 7.5 |
+  | B5 | B4 | B5 | 30 | 8.0 |
+  | C1 | C0 | C1 | 20 | 9.0 |
+  | C2 | C1 | C2 | 30 | 8.5 |
+  | C3 | C2 | C3 | 30 | 8.0 |
+  | C4 | C3 | C4 | 30 | 8.0 |
+  | D1 | D0 | D1 | 20 | 12.5 |
+  | D2 | D1 | D2 | 30 | 13.0 |
+  | D3 | D2 | D3 | 30 | 13.5 |
+  | D4 | D3 | D4 | 30 | 14.0 |
+  | D5 | D4 | D5 | 30 | 14.5 |
+  | E1 | E0 | E1 | 20 | 17.0 |
+  | E2 | E1 | E2 | 30 | 18.0 |
+  | E3 | E2 | E3 | 30 | 19.0 |
+  | E4 | E3 | E4 | 30 | 20.0 |
+
+  Sprinklers. Each sprinkler discharges to atmosphere as an orifice with its zone's nozzle
+  diameter d and a discharge coefficient of 0.95: Q = 0.95 x A x sqrt(2 p / rho), with A = pi
+  d^2 / 4 and p the gauge pressure at its node (a pressure-driven outlet, not a fixed demand).
+
+  Water: density 998.2 kg/m3, dynamic viscosity 1.002e-3 Pa s; g = 9.80665 m/s2. Pipe
+  diameters are inner diameters; pipe friction is Darcy-Weisbach with the Colebrook-White
+  friction factor (or an equivalent explicit formula). Pressures are gauge pressures, 1 bar =
+  100 kPa. The pressure at a node is rho g times the difference between its piezometric head
+  and its elevation; velocity heads are neglected, as in EPANET.
+
+  Find the pump flow, the gauge pressure at M0, the flow into zone E, the lowest gauge
+  pressure at any sprinkler and the zone in which that sprinkler is.
+answers:
+  - key: pump_flow
+    description: Flow delivered by the pump
+    unit: m3/h
+    rel_tol: 0.03
+  - key: discharge_pressure
+    description: Gauge pressure at the pump discharge node M0
+    unit: bar
+    rel_tol: 0.03
+  - key: zone_e_flow
+    description: Flow into zone E through its zone valve
+    unit: m3/h
+    rel_tol: 0.03
+  - key: lowest_sprinkler_pressure
+    description: Lowest gauge pressure at any sprinkler node
+    unit: bar
+    rel_tol: 0.03
+  - key: lowest_pressure_zone
+    description: Zone of the sprinkler with the lowest pressure
+    kind: choice
+    choices: [zone_a, zone_b, zone_c, zone_d, zone_e]
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: campus irrigation
+    components:
+      - {name: R, type: supply, parameters: {pressure: 0, temperature: 15}}
+      - {name: suction, type: pipe, parameters: {length: 15, diameter: 150, roughness: 0.05, height_difference: -2, minor_loss: 1.5}}
+      - {name: pump, type: centrifugal_pump, parameters: {head_curve: [[0, 70], [30, 65.5], [60, 52], [90, 29.5]], power_curve: [[0, 5], [30, 8.5], [60, 12], [90, 14.5]], npsh_curve: [[30, 2], [60, 3], [90, 5]], motor_power: 15}}
+      - {name: main_m0_m1, type: pipe, parameters: {length: 150, diameter: 125, roughness: 0.05, height_difference: 3}}
+      - {name: main_m1_m2, type: pipe, parameters: {length: 120, diameter: 125, roughness: 0.05, height_difference: 3}}
+      - {name: main_m2_m3, type: pipe, parameters: {length: 140, diameter: 100, roughness: 0.05, height_difference: 3}}
+      - {name: main_m3_m4, type: pipe, parameters: {length: 110, diameter: 100, roughness: 0.05, height_difference: 3}}
+      - {name: main_m4_m5, type: pipe, parameters: {length: 160, diameter: 80, roughness: 0.05, height_difference: 4}}
+      - {name: valve_a, type: valve, parameters: {kv: 20}}
+      - {name: lat_a1, type: pipe, parameters: {length: 20, diameter: 40, roughness: 0.02, height_difference: -0.5}}
+      - {name: lat_a2, type: pipe, parameters: {length: 30, diameter: 40, roughness: 0.02, height_difference: -0.5}}
+      - {name: lat_a3, type: pipe, parameters: {length: 30, diameter: 40, roughness: 0.02, height_difference: -0.5}}
+      - {name: lat_a4, type: pipe, parameters: {length: 30, diameter: 40, roughness: 0.02, height_difference: -0.5}}
+      - {name: valve_b, type: valve, parameters: {kv: 25}}
+      - {name: lat_b1, type: pipe, parameters: {length: 20, diameter: 50, roughness: 0.02, height_difference: 0.5}}
+      - {name: lat_b2, type: pipe, parameters: {length: 30, diameter: 50, roughness: 0.02, height_difference: 0.5}}
+      - {name: lat_b3, type: pipe, parameters: {length: 30, diameter: 50, roughness: 0.02}}
+      - {name: lat_b4, type: pipe, parameters: {length: 30, diameter: 50, roughness: 0.02, height_difference: 0.5}}
+      - {name: lat_b5, type: pipe, parameters: {length: 30, diameter: 50, roughness: 0.02, height_difference: 0.5}}
+      - {name: valve_c, type: valve, parameters: {kv: 20}}
+      - {name: lat_c1, type: pipe, parameters: {length: 20, diameter: 40, roughness: 0.02}}
+      - {name: lat_c2, type: pipe, parameters: {length: 30, diameter: 40, roughness: 0.02, height_difference: -0.5}}
+      - {name: lat_c3, type: pipe, parameters: {length: 30, diameter: 40, roughness: 0.02, height_difference: -0.5}}
+      - {name: lat_c4, type: pipe, parameters: {length: 30, diameter: 40, roughness: 0.02}}
+      - {name: valve_d, type: valve, parameters: {kv: 25}}
+      - {name: lat_d1, type: pipe, parameters: {length: 20, diameter: 50, roughness: 0.02, height_difference: 0.5}}
+      - {name: lat_d2, type: pipe, parameters: {length: 30, diameter: 50, roughness: 0.02, height_difference: 0.5}}
+      - {name: lat_d3, type: pipe, parameters: {length: 30, diameter: 50, roughness: 0.02, height_difference: 0.5}}
+      - {name: lat_d4, type: pipe, parameters: {length: 30, diameter: 50, roughness: 0.02, height_difference: 0.5}}
+      - {name: lat_d5, type: pipe, parameters: {length: 30, diameter: 50, roughness: 0.02, height_difference: 0.5}}
+      - {name: valve_e, type: valve, parameters: {kv: 25}}
+      - {name: lat_e1, type: pipe, parameters: {length: 20, diameter: 40, roughness: 0.02, height_difference: 1}}
+      - {name: lat_e2, type: pipe, parameters: {length: 30, diameter: 40, roughness: 0.02, height_difference: 1}}
+      - {name: lat_e3, type: pipe, parameters: {length: 30, diameter: 40, roughness: 0.02, height_difference: 1}}
+      - {name: lat_e4, type: pipe, parameters: {length: 30, diameter: 40, roughness: 0.02, height_difference: 1}}
+      - {name: spr_a1, type: leak, parameters: {diameter: 6, discharge_coefficient: 0.95}}
+      - {name: spr_a2, type: leak, parameters: {diameter: 6, discharge_coefficient: 0.95}}
+      - {name: spr_a3, type: leak, parameters: {diameter: 6, discharge_coefficient: 0.95}}
+      - {name: spr_a4, type: leak, parameters: {diameter: 6, discharge_coefficient: 0.95}}
+      - {name: spr_b1, type: leak, parameters: {diameter: 6.5, discharge_coefficient: 0.95}}
+      - {name: spr_b2, type: leak, parameters: {diameter: 6.5, discharge_coefficient: 0.95}}
+      - {name: spr_b3, type: leak, parameters: {diameter: 6.5, discharge_coefficient: 0.95}}
+      - {name: spr_b4, type: leak, parameters: {diameter: 6.5, discharge_coefficient: 0.95}}
+      - {name: spr_b5, type: leak, parameters: {diameter: 6.5, discharge_coefficient: 0.95}}
+      - {name: spr_c1, type: leak, parameters: {diameter: 6, discharge_coefficient: 0.95}}
+      - {name: spr_c2, type: leak, parameters: {diameter: 6, discharge_coefficient: 0.95}}
+      - {name: spr_c3, type: leak, parameters: {diameter: 6, discharge_coefficient: 0.95}}
+      - {name: spr_c4, type: leak, parameters: {diameter: 6, discharge_coefficient: 0.95}}
+      - {name: spr_d1, type: leak, parameters: {diameter: 6.5, discharge_coefficient: 0.95}}
+      - {name: spr_d2, type: leak, parameters: {diameter: 6.5, discharge_coefficient: 0.95}}
+      - {name: spr_d3, type: leak, parameters: {diameter: 6.5, discharge_coefficient: 0.95}}
+      - {name: spr_d4, type: leak, parameters: {diameter: 6.5, discharge_coefficient: 0.95}}
+      - {name: spr_d5, type: leak, parameters: {diameter: 6.5, discharge_coefficient: 0.95}}
+      - {name: spr_e1, type: leak, parameters: {diameter: 7, discharge_coefficient: 0.95}}
+      - {name: spr_e2, type: leak, parameters: {diameter: 7, discharge_coefficient: 0.95}}
+      - {name: spr_e3, type: leak, parameters: {diameter: 7, discharge_coefficient: 0.95}}
+      - {name: spr_e4, type: leak, parameters: {diameter: 7, discharge_coefficient: 0.95}}
+    connections:
+      - [R.port, suction.port_a]
+      - [suction.port_b, pump.inlet]
+      - [pump.outlet, main_m0_m1.port_a]
+      - [main_m0_m1.port_b, main_m1_m2.port_a]
+      - [main_m0_m1.port_b, valve_a.port_a]
+      - [main_m1_m2.port_b, main_m2_m3.port_a]
+      - [main_m1_m2.port_b, valve_b.port_a]
+      - [main_m2_m3.port_b, main_m3_m4.port_a]
+      - [main_m2_m3.port_b, valve_c.port_a]
+      - [main_m3_m4.port_b, main_m4_m5.port_a]
+      - [main_m3_m4.port_b, valve_d.port_a]
+      - [main_m4_m5.port_b, valve_e.port_a]
+      - [valve_a.port_b, lat_a1.port_a]
+      - [lat_a1.port_b, lat_a2.port_a]
+      - [lat_a1.port_b, spr_a1.port]
+      - [lat_a2.port_b, lat_a3.port_a]
+      - [lat_a2.port_b, spr_a2.port]
+      - [lat_a3.port_b, lat_a4.port_a]
+      - [lat_a3.port_b, spr_a3.port]
+      - [lat_a4.port_b, spr_a4.port]
+      - [valve_b.port_b, lat_b1.port_a]
+      - [lat_b1.port_b, lat_b2.port_a]
+      - [lat_b1.port_b, spr_b1.port]
+      - [lat_b2.port_b, lat_b3.port_a]
+      - [lat_b2.port_b, spr_b2.port]
+      - [lat_b3.port_b, lat_b4.port_a]
+      - [lat_b3.port_b, spr_b3.port]
+      - [lat_b4.port_b, lat_b5.port_a]
+      - [lat_b4.port_b, spr_b4.port]
+      - [lat_b5.port_b, spr_b5.port]
+      - [valve_c.port_b, lat_c1.port_a]
+      - [lat_c1.port_b, lat_c2.port_a]
+      - [lat_c1.port_b, spr_c1.port]
+      - [lat_c2.port_b, lat_c3.port_a]
+      - [lat_c2.port_b, spr_c2.port]
+      - [lat_c3.port_b, lat_c4.port_a]
+      - [lat_c3.port_b, spr_c3.port]
+      - [lat_c4.port_b, spr_c4.port]
+      - [valve_d.port_b, lat_d1.port_a]
+      - [lat_d1.port_b, lat_d2.port_a]
+      - [lat_d1.port_b, spr_d1.port]
+      - [lat_d2.port_b, lat_d3.port_a]
+      - [lat_d2.port_b, spr_d2.port]
+      - [lat_d3.port_b, lat_d4.port_a]
+      - [lat_d3.port_b, spr_d3.port]
+      - [lat_d4.port_b, lat_d5.port_a]
+      - [lat_d4.port_b, spr_d4.port]
+      - [lat_d5.port_b, spr_d5.port]
+      - [valve_e.port_b, lat_e1.port_a]
+      - [lat_e1.port_b, lat_e2.port_a]
+      - [lat_e1.port_b, spr_e1.port]
+      - [lat_e2.port_b, lat_e3.port_a]
+      - [lat_e2.port_b, spr_e2.port]
+      - [lat_e3.port_b, lat_e4.port_a]
+      - [lat_e3.port_b, spr_e3.port]
+      - [lat_e4.port_b, spr_e4.port]
+  steps:
+    - op: solve
+      read: {pump_flow: pump.volume_flow, discharge_pressure: pump.outlet.p, zone_e_flow: valve_e.volume_flow, lowest_sprinkler_pressure: spr_e4.pressure}
+    - op: answer
+      values: {lowest_pressure_zone: zone_e}
+  expected: {pump_flow: 59.87736597, discharge_pressure: 5.278159422, zone_e_flow: 10.70898166, lowest_sprinkler_pressure: 1.78932421, lowest_pressure_zone: zone_e}
+notes: |
+  Outline: the pump curve is exactly H = 70 - Q^2/200. With all 22 sprinklers open the pump
+  delivers 59.9 m3/h at 52.1 m, so M0 is at 5.28 bar (2 m of suction head less a small suction
+  loss). Zone flows: A 11.0, B 15.0, C 9.8, D 13.3, E 10.7 m3/h (their sum is the pump flow);
+  mainline velocities 0.6 to 1.4 m/s. Zone E hangs off the highest main node (M5, 16 m) behind
+  the smallest main (80 mm) and its lateral climbs to 20 m, so its last sprinkler, E4, has the
+  lowest pressure, 1.79 bar. The lowest sprinkler of any other zone is D5 at 2.56 bar, 43 %
+  higher, so the zone answer is clear-cut.
+
+  Independent check without worldparts: WNTR 1.5.0 EpanetSimulator (EPANET 2.2) built from the
+  prompt tables: Darcy-Weisbach headloss (EPANET's Swamee-Jain friction factor), relative
+  viscosity 0.9823 (1.0038e-6 m2/s), accuracy 1e-7; the reservoir a fixed head of 2.0 m; every
+  sprinkler an emitter of coefficient 0.95 A sqrt(2 g) (exponent 0.5); every zone valve a TCV
+  whose loss coefficient reproduces 0.9982 (Q/Kv)^2 bar; the pump a three-point curve through
+  (0, 70), (60, 52) and (90, 29.5). EPANET against the reference: pump flow 59.88 against
+  59.88 m3/h (+0.01 %), M0 5.278 against 5.278 bar (-0.005 %), zone E 10.71 against 10.71 m3/h
+  (+0.02 %), lowest sprinkler 1.790 against 1.789 bar (+0.05 %), at E4 in zone E. All within
+  0.05 %, against tolerances of 3 %.
+
+  Reference timing (worldparts, warm catalogue): load 0.02 s, steady solve 0.015 s for the 57
+  components.

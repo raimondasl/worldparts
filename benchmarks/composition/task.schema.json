@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/raimondasl/worldparts/benchmarks/composition/task.schema.json",
   "title": "worldparts composition benchmark task",
-  "description": "One task of the v0.2 composition benchmark: a fully specified prompt, the answers the agent must return and the reference steps that produce them on a worldparts system. Cross-field rules (every answer key produced exactly once, expected equal to what the steps produce, level matching the component count) are checked by the harness loader.",
+  "description": "One task of the v0.2 composition benchmark: a fully specified prompt, the answers the agent must return and the reference steps that produce them on a worldparts system. Cross-field rules (every answer key produced exactly once, expected equal to what the steps produce, level matching the component count, prompt length and tables) are checked by the harness loader.",
   "type": "object",
   "additionalProperties": false,
   "required": ["id", "title", "level", "category", "domain", "prompt", "answers", "reference"],
@@ -15,8 +15,8 @@
     "title": {"type": "string", "minLength": 1},
     "level": {
       "type": "integer",
-      "enum": [1, 2, 3],
-      "description": "1: 2-4 components, 2: 5-7 components, 3: 8 or more (in the reference system)."
+      "enum": [1, 2, 3, 4],
+      "description": "1: 2-4 components, 2: 5-7 components, 3: 8-19, 4: 20 or more (in the reference system). Level 4 is the scale level: its prompt may have up to 1,200 words and may contain markdown tables; the harness loader enforces both."
     },
     "category": {
       "type": "string",
@@ -121,6 +121,18 @@
       "propertyNames": {"$ref": "#/$defs/key"},
       "additionalProperties": {"$ref": "#/$defs/path"}
     },
+    "totals": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "#/$defs/key"},
+      "description": "Time integrals over a simulation: answer key -> a path or a list of paths whose integrals are added (e.g. a flow for a pumped volume, a power for an energy). Each sample's value holds until the next sample (the step it drives), so a flow's total is exactly the volume the tanks see.",
+      "additionalProperties": {
+        "oneOf": [
+          {"$ref": "#/$defs/path"},
+          {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/path"}}
+        ]
+      }
+    },
     "event": {
       "type": "object",
       "additionalProperties": false,
@@ -194,6 +206,7 @@
               "read_final": {"$ref": "#/$defs/reads"},
               "read_min": {"$ref": "#/$defs/reads"},
               "read_max": {"$ref": "#/$defs/reads"},
+              "read_total": {"$ref": "#/$defs/totals"},
               "read_first_warning": {
                 "type": "object",
                 "minProperties": 1,

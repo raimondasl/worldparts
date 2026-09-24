@@ -1,0 +1,213 @@
+id: scale-net-tower-01
+title: Tower filled on a level switch over a 24 h demand schedule
+level: 4
+category: transient
+domain: storage
+prompt: |
+  A pumping station fills an elevated water tower that also feeds a small looped network. The
+  pump is switched by the tower level. Follow the system through one day, 0 h to 24 h.
+
+  Station. The pump draws from a clear-water reservoir, an open vertical cylinder of 32 m
+  inner diameter and 6.0 m height with 5.5 m of water at 0 h and no inflow during the day. The
+  reservoir floor, the pump and the station nodes S, P and D are at elevation 0 m. A suction
+  pipe (20 m, 250 mm, K = 1.0) joins the reservoir's bottom outlet to S; the pump runs from S
+  to P at a fixed speed when it runs, and a non-return valve with negligible loss joins P to
+  D. A stopped pump passes no flow. Pump head: 80 m at 0 m3/h, 76 m at 80 m3/h, 64 m at 160
+  m3/h, 55 m at 200 m3/h (exactly H = 80 - Q^2/1600, Q in m3/h).
+
+  Tower. An open vertical cylinder of 10 m inner diameter and 7.0 m height, its floor at
+  elevation 58.0 m, with 4.5 m of water at 0 h. Pipe T1 joins its floor to node N3.
+
+  | Pipe | From | To | Length (m) | Inner diameter (mm) |
+  |---|---|---|---:|---:|
+  | rising main 1 | D | N1 | 900 | 250 |
+  | rising main 2 | N1 | N2 | 600 | 250 |
+  | T1 | tower floor | N3 | 300 | 250 |
+  | N2-N3 | N2 | N3 | 500 | 200 |
+  | N2-N4 | N2 | N4 | 450 | 200 |
+  | N3-N5 | N3 | N5 | 400 | 150 |
+  | N4-N5 | N4 | N5 | 500 | 150 |
+  | N4-N6 | N4 | N6 | 400 | 150 |
+  | N5-N7 | N5 | N7 | 450 | 150 |
+  | N6-N7 | N6 | N7 | 500 | 100 |
+  | N6-N8 | N6 | N8 | 350 | 100 |
+  | N7-N9 | N7 | N9 | 400 | 100 |
+  | N8-N9 | N8 | N9 | 450 | 100 |
+
+  | Node | Elevation (m) | Outlet orifice diameter (mm) |
+  |---|---:|---:|
+  | N1 | 18.0 | none |
+  | N2 | 22.0 | 24 |
+  | N3 | 26.0 | 21 |
+  | N4 | 20.0 | 26 |
+  | N5 | 24.0 | 24 |
+  | N6 | 17.0 | 26 |
+  | N7 | 21.0 | 24 |
+  | N8 | 15.0 | 21 |
+  | N9 | 19.0 | 24 |
+
+  All pipes have a roughness of 0.1 mm and no minor losses except the suction pipe's K. Tank
+  connections are lossless: the pressure at a tank floor is rho g times its water depth.
+  Demand is pressure-driven: the consumers at each node with an outlet act as one orifice
+  discharging to atmosphere at the node's elevation, Q = 0.6 x f x A x sqrt(2 p / rho), with A
+  = pi d^2 / 4 from the table, p the node's gauge pressure and f the open fraction of the
+  outlets. All outlets share one schedule of f, which changes in steps (each value holds from
+  its From hour, inclusive, up to its To hour):
+
+  | From (h) | To (h) | Open fraction |
+  |---:|---:|---:|
+  | 0 | 5 | 0.25 |
+  | 5 | 7 | 0.60 |
+  | 7 | 10 | 1.00 |
+  | 10 | 17 | 0.65 |
+  | 17 | 21 | 0.95 |
+  | 21 | 24 | 0.40 |
+
+  Level switch. The pump is stopped at 0 h. The tower level is checked every 60 s: when it is
+  below 3.0 m the pump runs, when it is above 6.0 m the pump stops, and in between the pump
+  keeps its state.
+
+  Time stepping. Use a 60 s step from 0 h to 24 h. At each step (including 0 h) apply the open
+  fraction for that time, solve the network as quasi-steady for the current tank levels and
+  pump state, then check the level switch; if it changes the pump state, solve again. That
+  final solution is the state at that time; its tank flows are held for the next 60 s to
+  update both tank levels (explicit Euler). Minima and maxima are taken over these states at
+  every step from 0 h to 24 h.
+
+  Water: density 998.2 kg/m3, dynamic viscosity 1.002e-3 Pa s; g = 9.80665 m/s2. Pipe
+  diameters are inner diameters; pipe friction is Darcy-Weisbach with the Colebrook-White
+  friction factor (or an equivalent explicit formula). Pressures are gauge pressures, 1 bar =
+  100 kPa. The pressure at a node is rho g times the difference between its piezometric head
+  and its elevation; velocity heads are neglected, as in EPANET.
+
+  Find the lowest tower level during the day, the tower level at 24 h, the depth of water in
+  the reservoir at 24 h, the lowest gauge pressure at any outlet during the day and the
+  highest pump flow.
+answers:
+  - key: min_tower_level
+    description: Lowest water depth in the tower during the 24 h
+    unit: m
+    rel_tol: 0.05
+  - key: tower_level_24h
+    description: Water depth in the tower at 24 h
+    unit: m
+    rel_tol: 0.05
+  - key: reservoir_level_24h
+    description: Water depth in the clear-water reservoir at 24 h (it sets the pumped volume)
+    unit: m
+    abs_tol: 0.2
+  - key: min_outlet_pressure
+    description: Lowest gauge pressure at any outlet node during the 24 h
+    unit: bar
+    rel_tol: 0.03
+  - key: max_pump_flow
+    description: Highest pump flow during the 24 h
+    unit: m3/h
+    rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: tower on a level switch
+    components:
+      - {name: reservoir, type: tank, parameters: {diameter: 32, height: 6, initial_level: 5.5, initial_temperature: 15, port_kv: 1000000}}
+      - {name: tower, type: tank, parameters: {diameter: 10, height: 7, initial_level: 4.5, initial_temperature: 15, port_kv: 1000000}}
+      - {name: suction, type: pipe, parameters: {length: 20, diameter: 250, roughness: 0.1, minor_loss: 1}}
+      - {name: rm1, type: pipe, parameters: {length: 900, diameter: 250, roughness: 0.1, height_difference: 18}}
+      - {name: rm2, type: pipe, parameters: {length: 600, diameter: 250, roughness: 0.1, height_difference: 4}}
+      - {name: tower_main, type: pipe, parameters: {length: 300, diameter: 250, roughness: 0.1, height_difference: -32}}
+      - {name: n2_n3, type: pipe, parameters: {length: 500, diameter: 200, roughness: 0.1, height_difference: 4}}
+      - {name: n2_n4, type: pipe, parameters: {length: 450, diameter: 200, roughness: 0.1, height_difference: -2}}
+      - {name: n3_n5, type: pipe, parameters: {length: 400, diameter: 150, roughness: 0.1, height_difference: -2}}
+      - {name: n4_n5, type: pipe, parameters: {length: 500, diameter: 150, roughness: 0.1, height_difference: 4}}
+      - {name: n4_n6, type: pipe, parameters: {length: 400, diameter: 150, roughness: 0.1, height_difference: -3}}
+      - {name: n5_n7, type: pipe, parameters: {length: 450, diameter: 150, roughness: 0.1, height_difference: -3}}
+      - {name: n6_n7, type: pipe, parameters: {length: 500, diameter: 100, roughness: 0.1, height_difference: 4}}
+      - {name: n6_n8, type: pipe, parameters: {length: 350, diameter: 100, roughness: 0.1, height_difference: -2}}
+      - {name: n7_n9, type: pipe, parameters: {length: 400, diameter: 100, roughness: 0.1, height_difference: -2}}
+      - {name: n8_n9, type: pipe, parameters: {length: 450, diameter: 100, roughness: 0.1, height_difference: 4}}
+      - {name: pump, type: centrifugal_pump, parameters: {head_curve: [[0, 80], [80, 76], [160, 64], [200, 55]], power_curve: [[0, 18], [80, 28], [160, 40], [200, 45]], npsh_curve: [[80, 2.5], [160, 4], [200, 5.5]], motor_power: 55}, inputs: {speed: 0}}
+      - {name: nrv, type: check_valve, parameters: {kv: 100000, leakage: 1.0e-09}}
+      - {name: out_n2, type: leak, parameters: {diameter: 24, discharge_coefficient: 0.6}, inputs: {opening: 0.25}}
+      - {name: out_n3, type: leak, parameters: {diameter: 21, discharge_coefficient: 0.6}, inputs: {opening: 0.25}}
+      - {name: out_n4, type: leak, parameters: {diameter: 26, discharge_coefficient: 0.6}, inputs: {opening: 0.25}}
+      - {name: out_n5, type: leak, parameters: {diameter: 24, discharge_coefficient: 0.6}, inputs: {opening: 0.25}}
+      - {name: out_n6, type: leak, parameters: {diameter: 26, discharge_coefficient: 0.6}, inputs: {opening: 0.25}}
+      - {name: out_n7, type: leak, parameters: {diameter: 24, discharge_coefficient: 0.6}, inputs: {opening: 0.25}}
+      - {name: out_n8, type: leak, parameters: {diameter: 21, discharge_coefficient: 0.6}, inputs: {opening: 0.25}}
+      - {name: out_n9, type: leak, parameters: {diameter: 24, discharge_coefficient: 0.6}, inputs: {opening: 0.25}}
+    connections:
+      - [reservoir.outlet, suction.port_a]
+      - [tower.outlet, tower_main.port_a]
+      - [suction.port_b, pump.inlet]
+      - [rm1.port_a, nrv.port_b]
+      - [rm1.port_b, rm2.port_a]
+      - [rm2.port_b, n2_n3.port_a]
+      - [rm2.port_b, n2_n4.port_a]
+      - [rm2.port_b, out_n2.port]
+      - [tower_main.port_b, n2_n3.port_b]
+      - [tower_main.port_b, n3_n5.port_a]
+      - [tower_main.port_b, out_n3.port]
+      - [n2_n4.port_b, n4_n5.port_a]
+      - [n2_n4.port_b, n4_n6.port_a]
+      - [n2_n4.port_b, out_n4.port]
+      - [n3_n5.port_b, n4_n5.port_b]
+      - [n3_n5.port_b, n5_n7.port_a]
+      - [n3_n5.port_b, out_n5.port]
+      - [n4_n6.port_b, n6_n7.port_a]
+      - [n4_n6.port_b, n6_n8.port_a]
+      - [n4_n6.port_b, out_n6.port]
+      - [n5_n7.port_b, n6_n7.port_b]
+      - [n5_n7.port_b, n7_n9.port_a]
+      - [n5_n7.port_b, out_n7.port]
+      - [n6_n8.port_b, n8_n9.port_a]
+      - [n6_n8.port_b, out_n8.port]
+      - [n7_n9.port_b, n8_n9.port_b]
+      - [n7_n9.port_b, out_n9.port]
+      - [pump.outlet, nrv.port_a]
+    controls:
+      - {name: tower_switch, type: hysteresis, measure: tower.level, actuate: pump.speed, on_below: 3, off_above: 6, on_value: 1, off_value: 0, initial: off}
+  steps:
+    - op: simulate
+      duration: 24 h
+      step: 60 s
+      events:
+        - {at: 5 h, set: {out_n2.opening: 0.6, out_n3.opening: 0.6, out_n4.opening: 0.6, out_n5.opening: 0.6, out_n6.opening: 0.6, out_n7.opening: 0.6, out_n8.opening: 0.6, out_n9.opening: 0.6}}
+        - {at: 7 h, set: {out_n2.opening: 1, out_n3.opening: 1, out_n4.opening: 1, out_n5.opening: 1, out_n6.opening: 1, out_n7.opening: 1, out_n8.opening: 1, out_n9.opening: 1}}
+        - {at: 10 h, set: {out_n2.opening: 0.65, out_n3.opening: 0.65, out_n4.opening: 0.65, out_n5.opening: 0.65, out_n6.opening: 0.65, out_n7.opening: 0.65, out_n8.opening: 0.65, out_n9.opening: 0.65}}
+        - {at: 17 h, set: {out_n2.opening: 0.95, out_n3.opening: 0.95, out_n4.opening: 0.95, out_n5.opening: 0.95, out_n6.opening: 0.95, out_n7.opening: 0.95, out_n8.opening: 0.95, out_n9.opening: 0.95}}
+        - {at: 21 h, set: {out_n2.opening: 0.4, out_n3.opening: 0.4, out_n4.opening: 0.4, out_n5.opening: 0.4, out_n6.opening: 0.4, out_n7.opening: 0.4, out_n8.opening: 0.4, out_n9.opening: 0.4}}
+      read_min: {min_tower_level: tower.level, min_outlet_pressure: out_n3.pressure}
+      read_final: {tower_level_24h: tower.level, reservoir_level_24h: reservoir.level}
+      read_max: {max_pump_flow: pump.volume_flow}
+  expected: {min_tower_level: 1.844677336, tower_level_24h: 4.661421418, reservoir_level_24h: 1.51863438, min_outlet_pressure: 3.309141024, max_pump_flow: 173.2169451}
+notes: |
+  Outline: the pump (exactly H = 80 - Q^2/1600) delivers 148 to 173 m3/h into the network and
+  tower; the outlets draw about 55 m3/h at night, 128 at f = 0.60, 197 to 207 in the peaks and
+  139 during the day. The tower (78.5 m2) falls from 4.5 m to the switch-on level of 3.0 m at
+  2.17 h; the pump refills it to 6.0 m and stops at 4.43 h; the 5-7 h demand drains it to 3.0
+  m again at 6.60 h, and from then on the pump runs to the end of the day. In the 7-10 h peak
+  the demand exceeds the pump flow by about 33 m3/h, so the level keeps falling to its
+  minimum, 1.84 m at 10 h, 1.2 m below the switch-on level (the evening peak only takes it
+  down to 2.15 m). The tower ends the day at 4.66 m; the reservoir (804 m2) falls from 5.5 m
+  to 1.52 m, a pumped volume of about 3200 m3 (the 0.2 m tolerance on its final depth is 5 %
+  of the 3.98 m drawdown). The lowest outlet pressure, 3.31 bar at N3 (the highest outlet
+  node, 26 m), and the highest pump flow, 173.2 m3/h, both occur at the end of the morning
+  peak, when the tower is lowest. No switch falls within 0.3 h of a demand step, the tower
+  never overflows and no answer sits at a threshold.
+
+  Independent check without worldparts: WNTR 1.5.0 EpanetSimulator (EPANET 2.2) built from the
+  prompt tables and run period by period (the emitter coefficients change at each step of the
+  schedule; tank levels and the pump status are carried over): Darcy-Weisbach headloss
+  (Swamee-Jain), relative viscosity 0.9823, accuracy 1e-7, hydraulic and report step 60 s,
+  both tanks as EPANET tanks, every outlet an emitter of coefficient 0.6 f A sqrt(2 g), the
+  pump a three-point curve through (0, 80), (160, 64) and (200, 55), and EPANET tank-level
+  controls (open below 3.0 m, closed above 6.0 m), which switch at the exact crossing time
+  rather than at the next 60 s check. EPANET switches at 2.167, 4.433 and 6.600 h, as the
+  reference does. EPANET against the reference: lowest tower level 1.856 against 1.845 m (+0.6
+  %: the switch-on near 6.6 h comes up to one step earlier), tower at 24 h 4.669 against 4.661
+  m (+0.2 %), reservoir at 24 h 1.517 against 1.519 m (-0.001 m), lowest outlet pressure 3.310
+  against 3.309 bar (+0.01 %), highest pump flow 173.22 against 173.22 m3/h. All within
+  tolerance (5 % for the tower levels, 0.2 m for the reservoir, 3 % for pressure and flow).
+
+  Reference timing (worldparts, warm catalogue): load 0.012 s, 24 h simulation at 60 s (1441
+  samples) 2.9 to 3.1 s for the 26 components and one control.

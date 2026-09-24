@@ -1,0 +1,162 @@
+id: scale-plant-steady-01
+title: Three-train treatment plant operating point
+level: 4
+category: operating_point
+domain: treatment
+prompt: |
+  A water treatment plant has three parallel treatment trains, A, B and C, between an open
+  raw-water tank and an open clearwell. Raw water leaves the bottom outlet of the raw-water
+  tank through a suction main to a suction header S. From S each train runs, in flow order:
+  a branch pipe, a centrifugal pump, a non-return valve, a pressure media filter, a UV
+  reactor and an outlet valve, which discharges into a collector header C. From C a
+  collector main rises to the bottom inlet of the clearwell.
+
+  The raw-tank floor, S, C and all train equipment are at one elevation, the datum; the
+  clearwell floor is 5.0 m above it. The raw-water tank holds 3.0 m of water and the
+  clearwell 2.8 m; treat both depths as constant (this is a steady operating point). Tank
+  connections add no loss beyond the pipes' K values.
+
+  | Pipe | From | To | Length (m) | Inner diameter (mm) | Rise (m) | K |
+  |---|---|---|---:|---:|---:|---:|
+  | Suction main | raw-tank outlet | S | 25 | 300 | 0 | 1.0 |
+  | Branch A, B, C (each) | S | pump of its train | 12 | 150 | 0 | 1.5 |
+  | Collector main | C | clearwell inlet | 120 | 300 | 5.0 | 3.0 |
+
+  All pipes have an absolute roughness of 0.1 mm. The collector main's K includes the exit
+  loss into the clearwell. Every pump runs at rated speed. The equipment is the same in
+  every train:
+
+  | Item | Data |
+  |---|---|
+  | Pump | head 24.0 m at 0 m3/h, 22.08 m at 40 m3/h, 16.32 m at 80 m3/h and 6.72 m at 120 m3/h at rated speed (an exact quadratic) |
+  | Non-return valve | Kv 300 m3/h for forward flow; it blocks reverse flow |
+  | Media filter | clean pressure drop 0.25 bar at 100 m3/h: 70 % of it is a media loss proportional to the flow, 30 % a housing loss proportional to the flow squared |
+  | UV reactor | pressure drop 0.12 bar at 100 m3/h, proportional to the flow squared; irradiated volume 60 L; average fluence rate 25 mW/cm2 at full lamp output |
+  | Outlet valve | Kv 250 m3/h, fully open unless stated |
+
+  The trains differ in three ways. Train A: its UV lamp delivers only 80 % of the nominal
+  fluence rate. Train B: its filter bed is partly loaded, so its media loss (the part
+  proportional to the flow) is 1.8 times the clean value at any flow; its housing loss is
+  unchanged. Train C: its outlet valve is partly closed, with an effective Kv of 70 m3/h.
+
+  Conventions: water density 998.2 kg/m3, dynamic viscosity 1.002e-3 Pa s, g = 9.80665
+  m/s2. Pipes follow Darcy-Weisbach with the Colebrook friction factor (or an equivalent
+  explicit formula); a pipe's minor-loss coefficient K acts on its own velocity head. A Kv
+  element passes Q (m3/h) with a pressure drop of 0.9982 (Q/Kv)^2 bar. Velocity heads at
+  junctions are neglected (as in EPANET), so a node pressure is the static pressure there.
+  Pressures are gauge. The UV dose is the fluence rate actually delivered times the irradiated
+  volume divided by the flow (mW/cm2 x s = mJ/cm2).
+
+  Find the flow through each train, the UV dose in each train, the total flow into the
+  clearwell and the gauge pressure in the collector header C.
+answers:
+  - key: flow_a
+    description: Flow through train A
+    unit: "m3/h"
+    rel_tol: 0.03
+  - key: flow_b
+    description: Flow through train B
+    unit: "m3/h"
+    rel_tol: 0.03
+  - key: flow_c
+    description: Flow through train C
+    unit: "m3/h"
+    rel_tol: 0.03
+  - key: dose_a
+    description: UV dose in train A
+    unit: "mJ/cm2"
+    rel_tol: 0.03
+  - key: dose_b
+    description: UV dose in train B
+    unit: "mJ/cm2"
+    rel_tol: 0.03
+  - key: dose_c
+    description: UV dose in train C
+    unit: "mJ/cm2"
+    rel_tol: 0.03
+  - key: total_flow
+    description: Total flow into the clearwell
+    unit: "m3/h"
+    rel_tol: 0.03
+  - key: header_pressure
+    description: Gauge pressure in the collector header C
+    unit: "bar"
+    rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: three-train plant
+    components:
+      - {name: raw, type: tank, parameters: {diameter: 20, height: 5, initial_level: 3.0, port_kv: 1000000}}
+      - {name: suction, type: pipe, parameters: {length: 25, diameter: 300, roughness: 0.1, minor_loss: 1.0}}
+      - {name: branch_a, type: pipe, parameters: {length: 12, diameter: 150, roughness: 0.1, minor_loss: 1.5}}
+      - {name: pump_a, type: centrifugal_pump, parameters: {head_curve: [[0, 24.0], [40, 22.08], [80, 16.32], [120, 6.72]], power_curve: [[0, 1.5], [60, 4.38], [120, 5.82]], npsh_curve: [[40, 2.0], [80, 2.8], [120, 4.4]], motor_power: 7.5}}
+      - {name: nrv_a, type: check_valve, parameters: {kv: 300}}
+      - {name: filter_a, type: media_filter, parameters: {rated_flow: 100, clean_pressure_drop: 0.25, housing_fraction: 0.3, change_pressure_drop: 0.6}}
+      - {name: uv_a, type: uv_reactor, parameters: {rated_flow: 100, rated_pressure_drop: 0.12, volume: 60, fluence_rate: 25, required_dose: 40}, inputs: {lamp_output: 0.8}}
+      - {name: valve_a, type: valve, parameters: {kv: 250, leakage: 1.0e-08}}
+      - {name: branch_b, type: pipe, parameters: {length: 12, diameter: 150, roughness: 0.1, minor_loss: 1.5}}
+      - {name: pump_b, type: centrifugal_pump, parameters: {head_curve: [[0, 24.0], [40, 22.08], [80, 16.32], [120, 6.72]], power_curve: [[0, 1.5], [60, 4.38], [120, 5.82]], npsh_curve: [[40, 2.0], [80, 2.8], [120, 4.4]], motor_power: 7.5}}
+      - {name: nrv_b, type: check_valve, parameters: {kv: 300}}
+      - {name: filter_b, type: media_filter, parameters: {rated_flow: 100, clean_pressure_drop: 0.25, housing_fraction: 0.3, change_pressure_drop: 0.6}, inputs: {clogging: 0.4444444444444444}}
+      - {name: uv_b, type: uv_reactor, parameters: {rated_flow: 100, rated_pressure_drop: 0.12, volume: 60, fluence_rate: 25, required_dose: 40}}
+      - {name: valve_b, type: valve, parameters: {kv: 250, leakage: 1.0e-08}}
+      - {name: branch_c, type: pipe, parameters: {length: 12, diameter: 150, roughness: 0.1, minor_loss: 1.5}}
+      - {name: pump_c, type: centrifugal_pump, parameters: {head_curve: [[0, 24.0], [40, 22.08], [80, 16.32], [120, 6.72]], power_curve: [[0, 1.5], [60, 4.38], [120, 5.82]], npsh_curve: [[40, 2.0], [80, 2.8], [120, 4.4]], motor_power: 7.5}}
+      - {name: nrv_c, type: check_valve, parameters: {kv: 300}}
+      - {name: filter_c, type: media_filter, parameters: {rated_flow: 100, clean_pressure_drop: 0.25, housing_fraction: 0.3, change_pressure_drop: 0.6}}
+      - {name: uv_c, type: uv_reactor, parameters: {rated_flow: 100, rated_pressure_drop: 0.12, volume: 60, fluence_rate: 25, required_dose: 40}}
+      - {name: valve_c, type: valve, parameters: {kv: 250, leakage: 1.0e-08}, inputs: {opening: 0.28}}
+      - {name: collector, type: pipe, parameters: {length: 120, diameter: 300, roughness: 0.1, height_difference: 5.0, minor_loss: 3.0}}
+      - {name: clearwell, type: tank, parameters: {diameter: 25, height: 5, initial_level: 2.8, port_kv: 1000000}}
+    connections:
+      - [raw.outlet, suction.port_a]
+      - [suction.port_b, branch_a.port_a]
+      - [branch_a.port_b, pump_a.inlet]
+      - [pump_a.outlet, nrv_a.port_a]
+      - [nrv_a.port_b, filter_a.inlet]
+      - [filter_a.outlet, uv_a.inlet]
+      - [uv_a.outlet, valve_a.port_a]
+      - [valve_a.port_b, collector.port_a]
+      - [suction.port_b, branch_b.port_a]
+      - [branch_b.port_b, pump_b.inlet]
+      - [pump_b.outlet, nrv_b.port_a]
+      - [nrv_b.port_b, filter_b.inlet]
+      - [filter_b.outlet, uv_b.inlet]
+      - [uv_b.outlet, valve_b.port_a]
+      - [valve_b.port_b, collector.port_a]
+      - [suction.port_b, branch_c.port_a]
+      - [branch_c.port_b, pump_c.inlet]
+      - [pump_c.outlet, nrv_c.port_a]
+      - [nrv_c.port_b, filter_c.inlet]
+      - [filter_c.outlet, uv_c.inlet]
+      - [uv_c.outlet, valve_c.port_a]
+      - [valve_c.port_b, collector.port_a]
+      - [collector.port_b, clearwell.inlet]
+  steps:
+    - {op: solve, read: {flow_a: pump_a.volume_flow, flow_b: pump_b.volume_flow, flow_c: pump_c.volume_flow, dose_a: uv_a.dose, dose_b: uv_b.dose, dose_c: uv_c.dose, total_flow: collector.volume_flow, header_pressure: collector.port_a.p}}
+  expected: {flow_a: 98.87333504, flow_b: 94.99294162, flow_c: 68.99606239, dose_a: 43.69226544, dose_b: 56.84632887, dose_c: 78.26533591, total_flow: 262.8623391, header_pressure: 0.8162632326}
+notes: |
+  Scale task (22 components). Every pump curve is an exact quadratic, H = 24 - 0.0012 Q^2,
+  so curve-fitting choices cannot move the answer. Hand check of the result: the collector
+  header C is at 8.34 m of head (0.816 bar gauge): the clearwell head 5.0 + 2.8 = 7.8 m plus
+  0.54 m in the collector main at 262.9 m3/h. Train C at 69.0 m3/h: pump head 18.29 m; its
+  valve alone takes (69.0/70)^2 x 0.9982 = 0.970 bar = 9.9 m. Doses: 25 x 0.8 x 0.060 /
+  (98.87/3600) = 43.7, 25 x 0.060 / (94.99/3600) = 56.8 and 25 x 0.060 / (69.00/3600) =
+  78.3 mJ/cm2.
+
+  Independent checks without worldparts (answers in this order: flows A, B, C in m3/h;
+  doses A, B, C in mJ/cm2; total in m3/h; header pressure in bar):
+  - reference (worldparts, Churchill friction): 98.87, 94.99, 69.00; 43.69, 56.85, 78.27;
+    262.86; 0.8163.
+  - own Python (scipy.optimize.root on node heads and link flows, Colebrook friction):
+    98.89, 95.01, 69.01; 43.68, 56.84, 78.25; 262.91; 0.8161.
+  - the same with Swamee-Jain friction: 98.88, 95.00, 69.00; 43.69, 56.84, 78.26; 262.88;
+    0.8163.
+  - WNTR 1.5.0 EpanetSimulator (EPANET 2.2, D-W with Swamee-Jain; pumps as exact three-point
+    curves, non-return valves as CV pipes with the Kv loss, UV reactors and valves as TCVs,
+    filters as GPVs with a head-loss curve from the linear-plus-quadratic law, the tanks as
+    fixed-head reservoirs): 98.88, 95.00, 69.00; 43.69, 56.84, 78.26; 262.89; 0.8162.
+  Largest difference 0.02 %, so 3 % leaves room for other friction formulas and small
+  conversion errors. Timing: load 0.07 s, solve 16 ms (MCP load_system 0.03 s, solve
+  0.03 s).

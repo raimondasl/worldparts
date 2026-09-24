@@ -5,7 +5,10 @@ A task is one YAML file in ``benchmarks/composition/tasks/<id>.yaml`` validated 
 
 - the id equals the file name, answer keys are unique, every answer unit parses;
 - the level matches the number of components in the reference system
-  (1: 2-4, 2: 5-7, 3: 8 or more);
+  (1: 2-4, 2: 5-7, 3: 8-19, 4: 20 or more; level 4 is the scale level);
+- a level-4 prompt has at most :data:`SCALE_PROMPT_WORDS` words (table markup is not
+  counted, see :func:`prompt_word_count`) and may contain markdown tables; prompts of
+  levels 1-3 contain no table. Every table is well formed (see :func:`table_problems`);
 - every answer key is produced by exactly one read or ``answer`` op, and no op produces a
   key that is not an answer;
 - ``answer`` ops give a valid choice for choice answers and a boolean for boolean answers;
@@ -17,8 +20,8 @@ A task is one YAML file in ``benchmarks/composition/tasks/<id>.yaml`` validated 
 - a ``judgement`` task has exactly two answers, ``acceptable`` (boolean) and
   ``primary_problem`` (choice among exactly :data:`JUDGEMENT_CHOICES`, in that order), both
   given by the last step, an ``answer`` op; ``acceptable`` is true exactly when
-  ``primary_problem`` is ``none``; its prompt has 100-250 words and names none of the
-  problems (see :func:`judgement_problems`).
+  ``primary_problem`` is ``none``; its prompt has 100-250 words (100-1,200 at level 4)
+  and names none of the problems (see :func:`judgement_problems`).
 
 Whether ``expected`` equals what the steps produce is checked by running them
 (:mod:`benchmarks.composition.harness.reference`).
@@ -45,8 +48,15 @@ SCHEMA_PATH = COMPOSITION_DIR / "task.schema.json"
 RESULTS_DIR = COMPOSITION_DIR / "results"
 REPO_ROOT = COMPOSITION_DIR.parents[1]
 
-#: Level by component count in the reference system.
-LEVEL_BOUNDS = {1: (2, 4), 2: (5, 7), 3: (8, 10**9)}
+#: Level by component count in the reference system (inclusive bounds).
+LEVEL_BOUNDS = {1: (2, 4), 2: (5, 7), 3: (8, 19), 4: (20, 10**9)}
+
+#: The scale level: large networks (20 or more components), tanks, controls and long
+#: simulations. Its prompts may be longer and may give data in markdown tables.
+SCALE_LEVEL = 4
+
+#: Most words a scale-level prompt may have (table markup is not counted).
+SCALE_PROMPT_WORDS = 1200
 
 #: Task categories (the schema's enum).
 CATEGORIES = ("operating_point", "sizing", "what_if", "transient", "diagnosis", "judgement")
@@ -68,7 +78,8 @@ JUDGEMENT_CHOICES = (
     "insufficient_delivery_pressure",
 )
 
-#: Words a judgement prompt may have (inclusive).
+#: Words a judgement prompt may have (inclusive) at levels 1-3; at the scale level the upper
+#: bound is :data:`SCALE_PROMPT_WORDS` (see :func:`judgement_word_bounds`).
 JUDGEMENT_WORDS = (100, 250)
 
 #: Phrases that would name or hint at a judgement task's problem (matched case-insensitively
@@ -174,6 +185,132 @@ def build_prompt_text(prompt: str, answers: list[Answer]) -> str:
     return prompt.rstrip() + "\n\n" + answer_format_instruction(answers)
 
 
+def level_label(level: int | str) -> str:
+    """The level with its component range, e.g. '3 (8-19 components)'."""
+    try:
+        lo, hi = LEVEL_BOUNDS[int(level)]
+    except (KeyError, ValueError):
+        return str(level)
+    return f"{level} ({lo}+ components)" if hi >= 10**9 else f"{level} ({lo}-{hi} components)"
+
+
+def judgement_word_bounds(level: int) -> tuple[int, int]:
+    """(fewest, most) words of a judgement prompt at ``level``."""
+    lo, hi = JUDGEMENT_WORDS
+    return (lo, SCALE_PROMPT_WORDS) if level == SCALE_LEVEL else (lo, hi)
+
+
+_TABLE_DELIMITER_CELL = re.compile(r"^:?-{3,}:?$")
+
+
+def _is_table_line(line: str) -> bool:
+    return line.lstrip().startswith("|")
+
+
+def _table_cells(line: str) -> list[str]:
+    inner = line.strip()
+    inner = inner[1:] if inner.startswith("|") else inner
+    inner = inner[:-1] if inner.endswith("|") else inner
+    return [c.strip() for c in inner.split("|")]
+
+
+def _is_delimiter_row(line: str) -> bool:
+    return all(_TABLE_DELIMITER_CELL.match(c) for c in _table_cells(line))
+
+
+def markdown_tables(text: str) -> list[tuple[int, list[str]]]:
+    """The markdown tables in ``text``: (1-based line number of the first row, its rows).
+
+    A table is a run of consecutive lines that start with ``|`` (after indentation).
+    """
+    tables: list[tuple[int, list[str]]] = []
+    rows: list[str] = []
+    start = 0
+    for i, line in enumerate(text.splitlines(), start=1):
+        if _is_table_line(line):
+            if not rows:
+                start = i
+            rows.append(line)
+        elif rows:
+            tables.append((start, rows))
+            rows = []
+    if rows:
+        tables.append((start, rows))
+    return tables
+
+
+def table_problems(text: str) -> list[str]:
+    """Problems with the markdown tables in ``text`` (empty when all are well formed).
+
+    Every table has a header row, a delimiter row (``|---|---:|``) and at least one body
+    row; every row starts and ends with ``|`` and has as many cells as the header; no cell
+    is empty (an empty cell is an unstated value, and a task must be fully specified).
+    """
+    problems: list[str] = []
+    for start, rows in markdown_tables(text):
+        where = f"the table at prompt line {start}"
+        if len(rows) < 3:
+            problems.append(f"{where} needs a header row, a delimiter row and a body row")
+            continue
+        if not _is_delimiter_row(rows[1]):
+            problems.append(f"{where}: its second row must be a delimiter row such as |---|---|")
+            continue
+        width = len(_table_cells(rows[0]))
+        for j, row in enumerate(rows):
+            line = start + j
+            if not row.rstrip().endswith("|"):
+                problems.append(f"{where}: the row at line {line} must start and end with |")
+            cells = _table_cells(row)
+            if len(cells) != width:
+                problems.append(
+                    f"{where}: the row at line {line} has {len(cells)} cells, the header {width}"
+                )
+            elif any(not c for c in cells):
+                problems.append(f"{where}: the row at line {line} has an empty cell")
+    return problems
+
+
+def prompt_word_count(text: str) -> int:
+    """Words in a prompt: whitespace-separated tokens, not counting table markup.
+
+    Table delimiter rows are skipped and the ``|`` of table rows only separate cells, so a
+    table counts the words in its cells. Without tables this is ``len(text.split())``.
+    """
+    words = 0
+    for line in text.splitlines():
+        if _is_table_line(line):
+            if _is_delimiter_row(line):
+                continue
+            line = line.replace("|", " ")
+        words += len(line.split())
+    return words
+
+
+def prompt_size_problems(prompt: str, level: int) -> list[str]:
+    """The length and table rules of a prompt at ``level``.
+
+    A scale-level prompt has at most :data:`SCALE_PROMPT_WORDS` words and may contain
+    well-formed markdown tables (nodes, pipes, outlets, pumps, schedules). A prompt of
+    levels 1-3 contains no table; its word limits, if any, are those of its category.
+    """
+    problems: list[str] = []
+    tables = markdown_tables(prompt)
+    if level == SCALE_LEVEL:
+        words = prompt_word_count(prompt)
+        if words > SCALE_PROMPT_WORDS:
+            problems.append(
+                f"the prompt has {words} words (a level-{SCALE_LEVEL} prompt may have at "
+                f"most {SCALE_PROMPT_WORDS})"
+            )
+        problems.extend(table_problems(prompt))
+    elif tables:
+        problems.append(
+            f"the prompt contains a markdown table (line {tables[0][0]}); tables are allowed "
+            f"only in level-{SCALE_LEVEL} prompts"
+        )
+    return problems
+
+
 def forbidden_terms_in(text: str) -> list[str]:
     """The worldparts identifiers named in ``text`` (sorted)."""
     low = text.lower()
@@ -255,6 +392,16 @@ def _forbidden_prompt_terms() -> frozenset[str]:
     return frozenset(t for t in terms if "_" in t or t == "worldparts")
 
 
+#: Step fields that read answers from a result (``read_total`` integrates over a simulation).
+READ_FIELDS = (
+    "read",
+    "read_final",
+    "read_min",
+    "read_max",
+    "read_total",
+    "read_first_warning",
+)
+
 _ANSWER_FORMAT_HINTS = re.compile(r"```|\bjson\b", re.IGNORECASE)
 
 
@@ -262,7 +409,7 @@ def _produced_keys(steps: list[dict[str, Any]]) -> list[tuple[int, str, Any]]:
     """(step index, key, source) for every key a step produces."""
     out: list[tuple[int, str, Any]] = []
     for i, step in enumerate(steps):
-        for field_name in ("read", "read_final", "read_min", "read_max", "read_first_warning"):
+        for field_name in READ_FIELDS:
             for key, src in (step.get(field_name) or {}).items():
                 out.append((i, key, src))
         if step.get("op") == "answer":
@@ -298,9 +445,9 @@ def check_task(data: dict[str, Any], path: Path | None = None) -> list[str]:
     n = len(ref["system"].get("components", []))
     lo, hi = LEVEL_BOUNDS[data["level"]]
     if not lo <= n <= hi:
+        need = f"{lo}-{hi}" if hi < 10**9 else f"{lo} or more"
         problems.append(
-            f"level {data['level']} needs {lo}-{hi if hi < 10**9 else 'any'} components, the "
-            f"reference system has {n}"
+            f"level {data['level']} needs {need} components, the reference system has {n}"
         )
 
     produced = _produced_keys(ref["steps"])
@@ -364,6 +511,7 @@ def check_task(data: dict[str, Any], path: Path | None = None) -> list[str]:
                 problems.append(f"answer key '{a.key}' contains the worldparts identifier '{term}'")
     if _ANSWER_FORMAT_HINTS.search(prompt):
         problems.append("prompt describes an answer format (JSON); the harness appends it")
+    problems.extend(prompt_size_problems(prompt, data["level"]))
     if data["category"] == "judgement":
         problems.extend(judgement_problems(data))
     return problems
@@ -378,8 +526,9 @@ def judgement_problems(data: dict[str, Any]) -> list[str]:
       not read from a variable);
     - ``acceptable`` is true exactly when ``primary_problem`` is ``none``, in that op and
       in ``expected``;
-    - the prompt has :data:`JUDGEMENT_WORDS` words and contains no choice (underscores read
-      as spaces) and none of :data:`JUDGEMENT_HINTS`: the question is open.
+    - the prompt has :data:`JUDGEMENT_WORDS` words (up to :data:`SCALE_PROMPT_WORDS` at the
+      scale level, see :func:`judgement_word_bounds`) and contains no choice (underscores
+      read as spaces) and none of :data:`JUDGEMENT_HINTS`: the question is open.
     """
     problems: list[str] = []
     answers = {a["key"]: a for a in data["answers"]}
@@ -427,8 +576,8 @@ def judgement_problems(data: dict[str, Any]) -> list[str]:
             )
 
     prompt = data["prompt"]
-    words = len(prompt.split())
-    lo, hi = JUDGEMENT_WORDS
+    words = prompt_word_count(prompt)
+    lo, hi = judgement_word_bounds(data["level"])
     if not lo <= words <= hi:
         problems.append(f"judgement: the prompt has {words} words (must be {lo}-{hi})")
     low = " ".join(prompt.lower().split())

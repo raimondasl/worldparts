@@ -28,7 +28,7 @@ TASKS_DIR = Path(__file__).resolve().parents[1] / "benchmarks" / "composition" /
 TASK_FILES = sorted(TASKS_DIR.glob("pump-*.yaml"))
 #: Relative agreement required between the executed and the frozen reference values.
 REL = 1e-6
-LEVEL_RANGES = {1: (2, 4), 2: (5, 7), 3: (8, 10_000)}
+LEVEL_RANGES = {1: (2, 4), 2: (5, 7), 3: (8, 19), 4: (20, 10_000)}
 CATEGORIES = {"operating_point", "sizing", "what_if", "transient", "diagnosis"}
 DOMAINS = {"pumping", "storage"}
 FORBIDDEN_IN_PROMPT = ("worldparts", "centrifugal_pump", "solve_for", "port_kv", "npsh_margin")

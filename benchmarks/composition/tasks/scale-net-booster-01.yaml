@@ -1,0 +1,236 @@
+id: scale-net-booster-01
+title: Three-pump booster staged by header pressure over 24 h
+level: 4
+category: transient
+domain: pumping
+prompt: |
+  A booster station with three identical pumps supplies a looped network. Pump 1 runs all day;
+  pumps 2 and 3 are staged on and off by the header pressure. Follow the system through one
+  day, 0 h to 24 h.
+
+  Station. The pumps draw from a clear-water reservoir, an open vertical cylinder of 60 m
+  inner diameter and 5.0 m height with 4.5 m of water at 0 h and no inflow during the day. The
+  reservoir floor, the pumps, the suction manifold S and the discharge header HDR are at
+  elevation 0 m. A suction pipe (30 m, 300 mm, K = 1.0) joins the reservoir's bottom outlet to
+  S. Each pump runs from S through its own non-return valve (negligible loss) into HDR; a
+  stopped pump passes no flow. Each pump, at its fixed speed: head 66 m at 0 m3/h, 61 m at 50
+  m3/h, 46 m at 100 m3/h and 26.8 m at 140 m3/h (exactly H = 66 - Q^2/500, Q in m3/h per
+  pump). The header pressure is the gauge pressure at HDR.
+
+  | Pipe | From | To | Length (m) | Inner diameter (mm) |
+  |---|---|---|---:|---:|
+  | trunk | HDR | N1 | 800 | 300 |
+  | N1-N2 | N1 | N2 | 450 | 250 |
+  | N2-N3 | N2 | N3 | 500 | 150 |
+  | N1-N4 | N1 | N4 | 400 | 200 |
+  | N2-N5 | N2 | N5 | 420 | 200 |
+  | N3-N6 | N3 | N6 | 400 | 150 |
+  | N4-N5 | N4 | N5 | 480 | 150 |
+  | N5-N6 | N5 | N6 | 450 | 150 |
+  | N4-N7 | N4 | N7 | 380 | 150 |
+  | N5-N8 | N5 | N8 | 400 | 150 |
+  | N6-N9 | N6 | N9 | 420 | 100 |
+  | N7-N8 | N7 | N8 | 460 | 100 |
+  | N8-N9 | N8 | N9 | 440 | 100 |
+
+  | Node | Elevation (m) | Outlet orifice diameter (mm) |
+  |---|---:|---:|
+  | N1 | 4.0 | 33 |
+  | N2 | 8.0 | 39 |
+  | N3 | 12.0 | 33 |
+  | N4 | 6.0 | 36 |
+  | N5 | 10.0 | 39 |
+  | N6 | 15.0 | 33 |
+  | N7 | 9.0 | 36 |
+  | N8 | 13.0 | 36 |
+  | N9 | 18.0 | 30 |
+
+  All pipes have a roughness of 0.1 mm and no minor losses except the suction pipe's K. The
+  reservoir connection is lossless: the pressure at its floor is rho g times its water depth.
+  Demand is pressure-driven: the consumers at each network node act as one orifice discharging
+  to atmosphere at the node's elevation, Q = 0.6 x f x A x sqrt(2 p / rho), with A = pi d^2 /
+  4 from the table, p the node's gauge pressure and f the open fraction of the outlets. All
+  outlets share one schedule of f, which varies linearly in time between these points:
+
+  | Time (h) | Open fraction |
+  |---:|---:|
+  | 0 | 0.20 |
+  | 3 | 0.05 |
+  | 5 | 0.05 |
+  | 8 | 1.00 |
+  | 10 | 1.00 |
+  | 13 | 0.50 |
+  | 17 | 0.50 |
+  | 19 | 0.80 |
+  | 21 | 0.80 |
+  | 24 | 0.20 |
+
+  Staging. Pumps 2 and 3 are stopped at 0 h. The header pressure is checked every 60 s, and
+  both pumps are switched from the same reading: pump 2 starts when the header pressure is
+  below 4.25 bar and stops when it is above 6.50 bar; pump 3 starts when the header pressure
+  is below 4.05 bar and stops when it is above 5.80 bar; otherwise each keeps its state.
+
+  Time stepping. Use a 60 s step from 0 h to 24 h. At each step (including 0 h) apply the open
+  fraction for that time, solve the network as quasi-steady for the current reservoir level
+  and pump states, then check the staging; if a pump changes state, solve again. That final
+  solution is the state at that time; its outflow is held for the next 60 s to update the
+  reservoir level (explicit Euler). Minima and maxima are taken over these states at every
+  step from 0 h to 24 h.
+
+  Water: density 998.2 kg/m3, dynamic viscosity 1.002e-3 Pa s; g = 9.80665 m/s2. Pipe
+  diameters are inner diameters; pipe friction is Darcy-Weisbach with the Colebrook-White
+  friction factor (or an equivalent explicit formula). Pressures are gauge pressures, 1 bar =
+  100 kPa. The pressure at a node is rho g times the difference between its piezometric head
+  and its elevation; velocity heads are neglected, as in EPANET.
+
+  Find the highest and the lowest header pressure during the day, the lowest gauge pressure at
+  N9 during the day, the highest total station flow and the depth of water in the reservoir at
+  24 h.
+answers:
+  - key: max_header_pressure
+    description: Highest header pressure during the 24 h
+    unit: bar
+    rel_tol: 0.03
+  - key: min_header_pressure
+    description: Lowest header pressure during the 24 h
+    unit: bar
+    rel_tol: 0.03
+  - key: min_pressure_n9
+    description: Lowest gauge pressure at node N9 during the 24 h
+    unit: bar
+    rel_tol: 0.03
+  - key: max_station_flow
+    description: Highest total flow of the three pumps during the 24 h
+    unit: m3/h
+    rel_tol: 0.03
+  - key: reservoir_level_24h
+    description: Water depth in the clear-water reservoir at 24 h (it sets the delivered volume)
+    unit: m
+    abs_tol: 0.1
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: three-pump booster
+    components:
+      - {name: reservoir, type: tank, parameters: {diameter: 60, height: 5, initial_level: 4.5, initial_temperature: 15, port_kv: 1000000}}
+      - {name: suction, type: pipe, parameters: {length: 30, diameter: 300, roughness: 0.1, minor_loss: 1}}
+      - {name: trunk, type: pipe, parameters: {length: 800, diameter: 300, roughness: 0.1, height_difference: 4}}
+      - {name: n1_n2, type: pipe, parameters: {length: 450, diameter: 250, roughness: 0.1, height_difference: 4}}
+      - {name: n2_n3, type: pipe, parameters: {length: 500, diameter: 150, roughness: 0.1, height_difference: 4}}
+      - {name: n1_n4, type: pipe, parameters: {length: 400, diameter: 200, roughness: 0.1, height_difference: 2}}
+      - {name: n2_n5, type: pipe, parameters: {length: 420, diameter: 200, roughness: 0.1, height_difference: 2}}
+      - {name: n3_n6, type: pipe, parameters: {length: 400, diameter: 150, roughness: 0.1, height_difference: 3}}
+      - {name: n4_n5, type: pipe, parameters: {length: 480, diameter: 150, roughness: 0.1, height_difference: 4}}
+      - {name: n5_n6, type: pipe, parameters: {length: 450, diameter: 150, roughness: 0.1, height_difference: 5}}
+      - {name: n4_n7, type: pipe, parameters: {length: 380, diameter: 150, roughness: 0.1, height_difference: 3}}
+      - {name: n5_n8, type: pipe, parameters: {length: 400, diameter: 150, roughness: 0.1, height_difference: 3}}
+      - {name: n6_n9, type: pipe, parameters: {length: 420, diameter: 100, roughness: 0.1, height_difference: 3}}
+      - {name: n7_n8, type: pipe, parameters: {length: 460, diameter: 100, roughness: 0.1, height_difference: 4}}
+      - {name: n8_n9, type: pipe, parameters: {length: 440, diameter: 100, roughness: 0.1, height_difference: 5}}
+      - {name: pump1, type: centrifugal_pump, parameters: {head_curve: [[0, 66], [50, 61], [100, 46], [140, 26.8]], power_curve: [[0, 9], [60, 15], [120, 22], [180, 27]], npsh_curve: [[60, 2], [120, 3.2], [180, 5]], motor_power: 30}}
+      - {name: nrv1, type: check_valve, parameters: {kv: 100000, leakage: 1.0e-09}}
+      - {name: pump2, type: centrifugal_pump, parameters: {head_curve: [[0, 66], [50, 61], [100, 46], [140, 26.8]], power_curve: [[0, 9], [60, 15], [120, 22], [180, 27]], npsh_curve: [[60, 2], [120, 3.2], [180, 5]], motor_power: 30}, inputs: {speed: 0}}
+      - {name: nrv2, type: check_valve, parameters: {kv: 100000, leakage: 1.0e-09}}
+      - {name: pump3, type: centrifugal_pump, parameters: {head_curve: [[0, 66], [50, 61], [100, 46], [140, 26.8]], power_curve: [[0, 9], [60, 15], [120, 22], [180, 27]], npsh_curve: [[60, 2], [120, 3.2], [180, 5]], motor_power: 30}, inputs: {speed: 0}}
+      - {name: nrv3, type: check_valve, parameters: {kv: 100000, leakage: 1.0e-09}}
+      - {name: out_n1, type: leak, parameters: {diameter: 33, discharge_coefficient: 0.6}, inputs: {opening: 0.2}}
+      - {name: out_n2, type: leak, parameters: {diameter: 39, discharge_coefficient: 0.6}, inputs: {opening: 0.2}}
+      - {name: out_n3, type: leak, parameters: {diameter: 33, discharge_coefficient: 0.6}, inputs: {opening: 0.2}}
+      - {name: out_n4, type: leak, parameters: {diameter: 36, discharge_coefficient: 0.6}, inputs: {opening: 0.2}}
+      - {name: out_n5, type: leak, parameters: {diameter: 39, discharge_coefficient: 0.6}, inputs: {opening: 0.2}}
+      - {name: out_n6, type: leak, parameters: {diameter: 33, discharge_coefficient: 0.6}, inputs: {opening: 0.2}}
+      - {name: out_n7, type: leak, parameters: {diameter: 36, discharge_coefficient: 0.6}, inputs: {opening: 0.2}}
+      - {name: out_n8, type: leak, parameters: {diameter: 36, discharge_coefficient: 0.6}, inputs: {opening: 0.2}}
+      - {name: out_n9, type: leak, parameters: {diameter: 30, discharge_coefficient: 0.6}, inputs: {opening: 0.2}}
+    connections:
+      - [reservoir.outlet, suction.port_a]
+      - [suction.port_b, pump1.inlet]
+      - [suction.port_b, pump2.inlet]
+      - [suction.port_b, pump3.inlet]
+      - [trunk.port_a, nrv1.port_b]
+      - [trunk.port_a, nrv2.port_b]
+      - [trunk.port_a, nrv3.port_b]
+      - [trunk.port_b, n1_n2.port_a]
+      - [trunk.port_b, n1_n4.port_a]
+      - [trunk.port_b, out_n1.port]
+      - [n1_n2.port_b, n2_n3.port_a]
+      - [n1_n2.port_b, n2_n5.port_a]
+      - [n1_n2.port_b, out_n2.port]
+      - [n2_n3.port_b, n3_n6.port_a]
+      - [n2_n3.port_b, out_n3.port]
+      - [n1_n4.port_b, n4_n5.port_a]
+      - [n1_n4.port_b, n4_n7.port_a]
+      - [n1_n4.port_b, out_n4.port]
+      - [n2_n5.port_b, n4_n5.port_b]
+      - [n2_n5.port_b, n5_n6.port_a]
+      - [n2_n5.port_b, n5_n8.port_a]
+      - [n2_n5.port_b, out_n5.port]
+      - [n3_n6.port_b, n5_n6.port_b]
+      - [n3_n6.port_b, n6_n9.port_a]
+      - [n3_n6.port_b, out_n6.port]
+      - [n4_n7.port_b, n7_n8.port_a]
+      - [n4_n7.port_b, out_n7.port]
+      - [n5_n8.port_b, n7_n8.port_b]
+      - [n5_n8.port_b, n8_n9.port_a]
+      - [n5_n8.port_b, out_n8.port]
+      - [n6_n9.port_b, n8_n9.port_b]
+      - [n6_n9.port_b, out_n9.port]
+      - [pump1.outlet, nrv1.port_a]
+      - [pump2.outlet, nrv2.port_a]
+      - [pump3.outlet, nrv3.port_a]
+    controls:
+      - {name: stage2, type: hysteresis, measure: nrv1.port_b.p, actuate: pump2.speed, on_below: 4.25, off_above: 6.5, on_value: 1, off_value: 0, initial: off}
+      - {name: stage3, type: hysteresis, measure: nrv1.port_b.p, actuate: pump3.speed, on_below: 4.05, off_above: 5.8, on_value: 1, off_value: 0, initial: off}
+  steps:
+    - op: simulate
+      duration: 24 h
+      step: 60 s
+      events:
+        - {at: 0 h, ramp: {out_n1.opening: [0.2, 0.05], out_n2.opening: [0.2, 0.05], out_n3.opening: [0.2, 0.05], out_n4.opening: [0.2, 0.05], out_n5.opening: [0.2, 0.05], out_n6.opening: [0.2, 0.05], out_n7.opening: [0.2, 0.05], out_n8.opening: [0.2, 0.05], out_n9.opening: [0.2, 0.05]}, over: 3 h}
+        - {at: 5 h, ramp: {out_n1.opening: [0.05, 1], out_n2.opening: [0.05, 1], out_n3.opening: [0.05, 1], out_n4.opening: [0.05, 1], out_n5.opening: [0.05, 1], out_n6.opening: [0.05, 1], out_n7.opening: [0.05, 1], out_n8.opening: [0.05, 1], out_n9.opening: [0.05, 1]}, over: 3 h}
+        - {at: 10 h, ramp: {out_n1.opening: [1, 0.5], out_n2.opening: [1, 0.5], out_n3.opening: [1, 0.5], out_n4.opening: [1, 0.5], out_n5.opening: [1, 0.5], out_n6.opening: [1, 0.5], out_n7.opening: [1, 0.5], out_n8.opening: [1, 0.5], out_n9.opening: [1, 0.5]}, over: 3 h}
+        - {at: 17 h, ramp: {out_n1.opening: [0.5, 0.8], out_n2.opening: [0.5, 0.8], out_n3.opening: [0.5, 0.8], out_n4.opening: [0.5, 0.8], out_n5.opening: [0.5, 0.8], out_n6.opening: [0.5, 0.8], out_n7.opening: [0.5, 0.8], out_n8.opening: [0.5, 0.8], out_n9.opening: [0.5, 0.8]}, over: 2 h}
+        - {at: 21 h, ramp: {out_n1.opening: [0.8, 0.2], out_n2.opening: [0.8, 0.2], out_n3.opening: [0.8, 0.2], out_n4.opening: [0.8, 0.2], out_n5.opening: [0.8, 0.2], out_n6.opening: [0.8, 0.2], out_n7.opening: [0.8, 0.2], out_n8.opening: [0.8, 0.2], out_n9.opening: [0.8, 0.2]}, over: 3 h}
+      read_max: {max_header_pressure: nrv1.port_b.p, max_station_flow: trunk.volume_flow}
+      read_min: {min_header_pressure: nrv1.port_b.p, min_pressure_n9: out_n9.pressure}
+      read_final: {reservoir_level_24h: reservoir.level}
+  expected: {max_header_pressure: 6.696124382, min_header_pressure: 3.794190131, min_pressure_n9: 1.037678889, max_station_flow: 373.3060428, reservoir_level_24h: 2.452959814}
+notes: |
+  Outline: each pump follows exactly H = 66 - Q^2/500. The open fraction falls from 0.20 to
+  0.05 by 3 h: one pump, and the header rises to 6.70 bar, the day's maximum, 0.2 bar above
+  pump 2's stop point. It ramps up to 1.0 between 5 and 8 h: pump 2 starts at 5.63 h when the
+  header falls below 4.25 bar (the header jumps to 5.86 bar), and pump 3 starts at 6.58 h
+  below 4.05 bar (the header jumps to 5.15 bar). At 1.0, until 10 h, the three pumps deliver
+  373 m3/h and the header falls to its minimum, 3.79 bar, 0.26 bar below pump 3's start point,
+  while N9, the highest node at 18 m, falls to 1.04 bar. The fraction then eases to 0.5
+  (header 5.3 bar, three pumps) and 0.8 (header 4.2 bar) and ramps down to 0.2 between 21 and
+  24 h; pump 3 stops at 23.22 h above 5.80 bar (the header drops to 5.02 bar). Pump 2 runs
+  from 5.63 h to the end. Every switch changes one pump, and the state after it lies inside
+  every dead band by 0.15 bar or more, so a controller that cascades within a step (EPANET)
+  gives the same states as one pass per step. The extremes are plateaus, not switching points:
+  the pressures just before a start (4.25 and 4.05 bar) lie above the peak minimum and those
+  just before a stop (5.80 bar) below the night maximum. The reservoir (2827 m2) falls from
+  4.5 m to 2.45 m, about 5800 m3 delivered (the 0.1 m tolerance on its final depth is 5 % of
+  the drawdown).
+
+  Independent check without worldparts: WNTR 1.5.0 EpanetSimulator (EPANET 2.2) built from the
+  prompt tables, one EPANET run per 60 s step (the emitter coefficients follow the linear
+  schedule): Darcy-Weisbach headloss (Swamee-Jain), relative viscosity 0.9823, accuracy 1e-7,
+  the reservoir an EPANET tank whose level is carried from step to step, every outlet an
+  emitter of coefficient 0.6 f A sqrt(2 g), each pump a three-point curve through (0, 66),
+  (100, 46) and (140, 26.8). The staging was applied in Python at each step as the prompt
+  states (a snapshot gives the header pressure, both pumps are switched from it, then the 60 s
+  run with the new states is recorded), because WNTR's junction-pressure controls did not act
+  in this EPANET build. EPANET stages at 5.633, 6.583 and 23.217 h, as the reference does.
+  EPANET against the reference: highest header pressure 6.696 against 6.696 bar (+0.001 %),
+  lowest 3.794 against 3.794 bar (-0.005 %), lowest at N9 1.038 against 1.038 bar (+0.04 %),
+  highest station flow 373.34 against 373.31 m3/h (+0.01 %), reservoir at 24 h 2.453 against
+  2.453 m (-0.0003 m). All within 0.05 %.
+
+  Energy is not asked: the worldparts tools report the minimum, maximum and final value of
+  each simulated variable but no time integral, so an agent without code could not total the
+  pumps' energy; the reservoir's final depth carries the delivered volume instead.
+
+  Reference timing (worldparts, warm catalogue): load 0.014 s, 24 h simulation at 60 s (1441
+  samples, the ramps expanded to one change per step) 3.3 to 3.6 s for the 30 components and
+  two controls.

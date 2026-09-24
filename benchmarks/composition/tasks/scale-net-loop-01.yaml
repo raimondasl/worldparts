@@ -1,0 +1,214 @@
+id: scale-net-loop-01
+title: Looped grid fed by two reservoirs at different levels
+level: 4
+category: operating_point
+domain: distribution
+prompt: |
+  A looped distribution zone is fed by gravity from two service reservoirs whose water levels
+  stay constant: the west reservoir at elevation 72.0 m and the east reservoir at 66.0 m (all
+  elevations above one datum). The west reservoir feeds junction J11 through a transmission
+  main 1800 m long with inner diameter 250 mm; the east reservoir feeds junction J44 through a
+  main 1200 m long with inner diameter 200 mm. Each main has K = 2.0 in total (entry and
+  fittings). The 16 junctions form a 4 x 4 grid, Jrc with row r = 1 (north) to 4 and column c
+  = 1 (west) to 4:
+
+  | Junction | Elevation (m) | Outlet orifice diameter (mm) |
+  |---|---:|---:|
+  | J11 | 22.0 | none |
+  | J12 | 24.0 | 22 |
+  | J13 | 27.0 | 20 |
+  | J14 | 30.0 | 18 |
+  | J21 | 20.0 | 22 |
+  | J22 | 23.0 | 24 |
+  | J23 | 26.0 | none |
+  | J24 | 28.0 | 20 |
+  | J31 | 18.0 | 20 |
+  | J32 | 21.0 | 24 |
+  | J33 | 25.0 | 22 |
+  | J34 | 27.0 | 18 |
+  | J41 | 17.0 | 20 |
+  | J42 | 19.0 | 22 |
+  | J43 | 23.0 | none |
+  | J44 | 26.0 | none |
+
+  Grid pipes (no minor losses):
+
+  | Pipe | From | To | Length (m) | Inner diameter (mm) |
+  |---|---|---|---:|---:|
+  | J11-J12 | J11 | J12 | 400 | 200 |
+  | J12-J13 | J12 | J13 | 450 | 150 |
+  | J13-J14 | J13 | J14 | 400 | 100 |
+  | J21-J22 | J21 | J22 | 420 | 150 |
+  | J22-J23 | J22 | J23 | 380 | 150 |
+  | J23-J24 | J23 | J24 | 400 | 100 |
+  | J31-J32 | J31 | J32 | 400 | 150 |
+  | J32-J33 | J32 | J33 | 430 | 100 |
+  | J33-J34 | J33 | J34 | 380 | 150 |
+  | J41-J42 | J41 | J42 | 450 | 100 |
+  | J42-J43 | J42 | J43 | 400 | 150 |
+  | J43-J44 | J43 | J44 | 420 | 200 |
+  | J11-J21 | J11 | J21 | 350 | 200 |
+  | J21-J31 | J21 | J31 | 360 | 150 |
+  | J31-J41 | J31 | J41 | 340 | 100 |
+  | J12-J22 | J12 | J22 | 350 | 100 |
+  | J22-J32 | J22 | J32 | 360 | 150 |
+  | J32-J42 | J32 | J42 | 340 | 100 |
+  | J13-J23 | J13 | J23 | 350 | 150 |
+  | J23-J33 | J23 | J33 | 360 | 100 |
+  | J33-J43 | J33 | J43 | 340 | 150 |
+  | J14-J24 | J14 | J24 | 350 | 100 |
+  | J24-J34 | J24 | J34 | 360 | 150 |
+  | J34-J44 | J34 | J44 | 340 | 200 |
+
+  Every pipe, the two mains included, has a roughness of 0.1 mm. Demand is pressure-driven:
+  the customers at each junction with an outlet act as one orifice discharging to atmosphere
+  at the junction's elevation, Q = 0.6 x A x sqrt(2 p / rho), with A = pi d^2 / 4 from the
+  diameter in the table and p the junction's gauge pressure. Junctions marked none draw
+  nothing.
+
+  Water: density 998.2 kg/m3, dynamic viscosity 1.002e-3 Pa s; g = 9.80665 m/s2. Pipe
+  diameters are inner diameters; pipe friction is Darcy-Weisbach with the Colebrook-White
+  friction factor (or an equivalent explicit formula). Pressures are gauge pressures, 1 bar =
+  100 kPa. The pressure at a node is rho g times the difference between its piezometric head
+  and its elevation; velocity heads are neglected, as in EPANET.
+
+  Find the steady flow supplied by each reservoir, the gauge pressures at J14 and J41, and the
+  flow in pipe J11-J21 (from J11 towards J21).
+answers:
+  - key: west_supply_flow
+    description: Flow supplied by the west reservoir
+    unit: m3/h
+    rel_tol: 0.03
+  - key: east_supply_flow
+    description: Flow supplied by the east reservoir
+    unit: m3/h
+    rel_tol: 0.03
+  - key: pressure_j14
+    description: Gauge pressure at junction J14
+    unit: bar
+    rel_tol: 0.03
+  - key: pressure_j41
+    description: Gauge pressure at junction J41
+    unit: bar
+    rel_tol: 0.03
+  - key: flow_j11_j21
+    description: Flow in pipe J11-J21 from J11 towards J21
+    unit: m3/h
+    rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: looped zone with two reservoirs
+    components:
+      - {name: R1, type: supply, parameters: {pressure: 0, temperature: 15}}
+      - {name: R2, type: supply, parameters: {pressure: 0, temperature: 15}}
+      - {name: main_west, type: pipe, parameters: {length: 1800, diameter: 250, roughness: 0.1, height_difference: -50, minor_loss: 2}}
+      - {name: main_east, type: pipe, parameters: {length: 1200, diameter: 200, roughness: 0.1, height_difference: -40, minor_loss: 2}}
+      - {name: p11_12, type: pipe, parameters: {length: 400, diameter: 200, roughness: 0.1, height_difference: 2}}
+      - {name: p12_13, type: pipe, parameters: {length: 450, diameter: 150, roughness: 0.1, height_difference: 3}}
+      - {name: p13_14, type: pipe, parameters: {length: 400, diameter: 100, roughness: 0.1, height_difference: 3}}
+      - {name: p21_22, type: pipe, parameters: {length: 420, diameter: 150, roughness: 0.1, height_difference: 3}}
+      - {name: p22_23, type: pipe, parameters: {length: 380, diameter: 150, roughness: 0.1, height_difference: 3}}
+      - {name: p23_24, type: pipe, parameters: {length: 400, diameter: 100, roughness: 0.1, height_difference: 2}}
+      - {name: p31_32, type: pipe, parameters: {length: 400, diameter: 150, roughness: 0.1, height_difference: 3}}
+      - {name: p32_33, type: pipe, parameters: {length: 430, diameter: 100, roughness: 0.1, height_difference: 4}}
+      - {name: p33_34, type: pipe, parameters: {length: 380, diameter: 150, roughness: 0.1, height_difference: 2}}
+      - {name: p41_42, type: pipe, parameters: {length: 450, diameter: 100, roughness: 0.1, height_difference: 2}}
+      - {name: p42_43, type: pipe, parameters: {length: 400, diameter: 150, roughness: 0.1, height_difference: 4}}
+      - {name: p43_44, type: pipe, parameters: {length: 420, diameter: 200, roughness: 0.1, height_difference: 3}}
+      - {name: p11_21, type: pipe, parameters: {length: 350, diameter: 200, roughness: 0.1, height_difference: -2}}
+      - {name: p21_31, type: pipe, parameters: {length: 360, diameter: 150, roughness: 0.1, height_difference: -2}}
+      - {name: p31_41, type: pipe, parameters: {length: 340, diameter: 100, roughness: 0.1, height_difference: -1}}
+      - {name: p12_22, type: pipe, parameters: {length: 350, diameter: 100, roughness: 0.1, height_difference: -1}}
+      - {name: p22_32, type: pipe, parameters: {length: 360, diameter: 150, roughness: 0.1, height_difference: -2}}
+      - {name: p32_42, type: pipe, parameters: {length: 340, diameter: 100, roughness: 0.1, height_difference: -2}}
+      - {name: p13_23, type: pipe, parameters: {length: 350, diameter: 150, roughness: 0.1, height_difference: -1}}
+      - {name: p23_33, type: pipe, parameters: {length: 360, diameter: 100, roughness: 0.1, height_difference: -1}}
+      - {name: p33_43, type: pipe, parameters: {length: 340, diameter: 150, roughness: 0.1, height_difference: -2}}
+      - {name: p14_24, type: pipe, parameters: {length: 350, diameter: 100, roughness: 0.1, height_difference: -2}}
+      - {name: p24_34, type: pipe, parameters: {length: 360, diameter: 150, roughness: 0.1, height_difference: -1}}
+      - {name: p34_44, type: pipe, parameters: {length: 340, diameter: 200, roughness: 0.1, height_difference: -1}}
+      - {name: out12, type: leak, parameters: {diameter: 22, discharge_coefficient: 0.6}}
+      - {name: out13, type: leak, parameters: {diameter: 20, discharge_coefficient: 0.6}}
+      - {name: out14, type: leak, parameters: {diameter: 18, discharge_coefficient: 0.6}}
+      - {name: out21, type: leak, parameters: {diameter: 22, discharge_coefficient: 0.6}}
+      - {name: out22, type: leak, parameters: {diameter: 24, discharge_coefficient: 0.6}}
+      - {name: out24, type: leak, parameters: {diameter: 20, discharge_coefficient: 0.6}}
+      - {name: out31, type: leak, parameters: {diameter: 20, discharge_coefficient: 0.6}}
+      - {name: out32, type: leak, parameters: {diameter: 24, discharge_coefficient: 0.6}}
+      - {name: out33, type: leak, parameters: {diameter: 22, discharge_coefficient: 0.6}}
+      - {name: out34, type: leak, parameters: {diameter: 18, discharge_coefficient: 0.6}}
+      - {name: out41, type: leak, parameters: {diameter: 20, discharge_coefficient: 0.6}}
+      - {name: out42, type: leak, parameters: {diameter: 22, discharge_coefficient: 0.6}}
+    connections:
+      - [R1.port, main_west.port_a]
+      - [R2.port, main_east.port_a]
+      - [main_west.port_b, p11_12.port_a]
+      - [main_west.port_b, p11_21.port_a]
+      - [main_east.port_b, p43_44.port_b]
+      - [main_east.port_b, p34_44.port_b]
+      - [p11_12.port_b, p12_13.port_a]
+      - [p11_12.port_b, p12_22.port_a]
+      - [p11_12.port_b, out12.port]
+      - [p12_13.port_b, p13_14.port_a]
+      - [p12_13.port_b, p13_23.port_a]
+      - [p12_13.port_b, out13.port]
+      - [p13_14.port_b, p14_24.port_a]
+      - [p13_14.port_b, out14.port]
+      - [p21_22.port_a, p11_21.port_b]
+      - [p21_22.port_a, p21_31.port_a]
+      - [p21_22.port_a, out21.port]
+      - [p21_22.port_b, p22_23.port_a]
+      - [p21_22.port_b, p12_22.port_b]
+      - [p21_22.port_b, p22_32.port_a]
+      - [p21_22.port_b, out22.port]
+      - [p22_23.port_b, p23_24.port_a]
+      - [p22_23.port_b, p13_23.port_b]
+      - [p22_23.port_b, p23_33.port_a]
+      - [p23_24.port_b, p14_24.port_b]
+      - [p23_24.port_b, p24_34.port_a]
+      - [p23_24.port_b, out24.port]
+      - [p31_32.port_a, p21_31.port_b]
+      - [p31_32.port_a, p31_41.port_a]
+      - [p31_32.port_a, out31.port]
+      - [p31_32.port_b, p32_33.port_a]
+      - [p31_32.port_b, p22_32.port_b]
+      - [p31_32.port_b, p32_42.port_a]
+      - [p31_32.port_b, out32.port]
+      - [p32_33.port_b, p33_34.port_a]
+      - [p32_33.port_b, p23_33.port_b]
+      - [p32_33.port_b, p33_43.port_a]
+      - [p32_33.port_b, out33.port]
+      - [p33_34.port_b, p24_34.port_b]
+      - [p33_34.port_b, p34_44.port_a]
+      - [p33_34.port_b, out34.port]
+      - [p41_42.port_a, p31_41.port_b]
+      - [p41_42.port_a, out41.port]
+      - [p41_42.port_b, p42_43.port_a]
+      - [p41_42.port_b, p32_42.port_b]
+      - [p41_42.port_b, out42.port]
+      - [p42_43.port_b, p43_44.port_a]
+      - [p42_43.port_b, p33_43.port_b]
+  steps:
+    - op: solve
+      read: {west_supply_flow: main_west.volume_flow, east_supply_flow: main_east.volume_flow, pressure_j14: out14.pressure, pressure_j41: out41.pressure, flow_j11_j21: p11_21.volume_flow}
+  expected: {west_supply_flow: 176.8874915, east_supply_flow: 76.58206339, pressure_j14: 3.192317102, pressure_j41: 4.405798957, flow_j11_j21: 99.89665172}
+notes: |
+  Outline: the west reservoir (72 m) supplies 176.9 m3/h and the east reservoir (66 m) 76.6
+  m3/h of the 253.5 m3/h drawn by the 12 outlets. Pressures range from 3.19 bar at J14 (the
+  high north-east corner, 30 m, far from both mains) to 4.41 bar at J41 (the low south-west
+  corner, 17 m). The loops carry flow both ways: from J44 the east supply reaches J14 along
+  the east column and J41 along the south row, and J33 and J32 inside the grid; the west
+  supply feeds the rest. Pipe J11-J21 carries 99.9 m3/h south. Velocities stay below 0.9 m/s.
+
+  Independent check without worldparts: WNTR 1.5.0 EpanetSimulator (EPANET 2.2) built from the
+  prompt tables: reservoirs at fixed heads of 72.0 and 66.0 m, Darcy-Weisbach headloss
+  (Swamee-Jain), relative viscosity 0.9823 (1.0038e-6 m2/s), accuracy 1e-7, the two mains with
+  a minor-loss coefficient of 2.0, every outlet an emitter of coefficient 0.6 A sqrt(2 g)
+  (exponent 0.5). EPANET against the reference: west 176.92 against 176.89 m3/h (+0.02 %),
+  east 76.56 against 76.58 m3/h (-0.02 %), J14 3.193 against 3.192 bar (+0.02 %), J41 4.406
+  against 4.406 bar (+0.01 %), J11-J21 99.91 against 99.90 m3/h (+0.02 %). All within 0.03 %,
+  against tolerances of 3 %.
+
+  Reference timing (worldparts, warm catalogue): load 0.016 s, steady solve 0.007 s for the 40
+  components (26 pipes, 12 outlets, 2 supplies).
