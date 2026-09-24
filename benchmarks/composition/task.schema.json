@@ -20,7 +20,8 @@
     },
     "category": {
       "type": "string",
-      "enum": ["operating_point", "sizing", "what_if", "transient", "diagnosis"]
+      "enum": ["operating_point", "sizing", "what_if", "transient", "diagnosis", "judgement"],
+      "description": "judgement: an open design review with the two answers acceptable (boolean) and primary_problem (a fixed choice list); the loader enforces the rules."
     },
     "domain": {
       "type": "string",

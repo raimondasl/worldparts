@@ -15,8 +15,9 @@ simulation fidelity in a 2026 fluid-systems benchmark. It also found that **no b
 measures an agent composing pre-built components**. This benchmark does.
 
 Each task is a water-engineering question (an operating point, a sizing, a what-if, a
-transient or a fault diagnosis) stated completely in numbers. The same prompt runs in two
-conditions, and the answers are graded against a reference computed with worldparts.
+transient, a fault diagnosis or an open design review, see [Judgement tasks](#judgement-tasks))
+stated completely in numbers. The same prompt runs in two conditions, and the answers are
+graded against a reference computed with worldparts.
 
 **Decision gate** (report, section "What to do next"): if tool-based composition does not
 clear **80 %** on level-1 tasks with a frontier model, the packaging thesis needs rethinking.
@@ -46,7 +47,7 @@ One YAML file per task in `composition/tasks/<id>.yaml`, validated against
 id: pump-lift-01              # kebab-case, equals the file name
 title: Rooftop lift operating point
 level: 1                      # 1: 2-4 components, 2: 5-7, 3: 8 or more (reference system)
-category: operating_point     # operating_point | sizing | what_if | transient | diagnosis
+category: operating_point     # operating_point | sizing | what_if | transient | diagnosis | judgement
 domain: pumping               # pumping | storage | treatment | distribution
 prompt: |
   Fully specified task text: every number with units, every non-standard convention.
@@ -84,6 +85,61 @@ notes: Hand calculation and the reason for any loose tolerance.
   answer-format line (answer keys, descriptions, choices) names a worldparts identifier. An
   answer key may not even contain one as a part (`npsh_available_20c` is rejected), so keys
   are plain engineering names such as `pump_power`, `pump_speed`, `npshr`.
+- A `judgement` task has its own rules, listed in the next section.
+
+### Judgement tasks
+
+A pilot run showed that on fully specified calculations a frontier model writing Python
+from scratch is as accurate as an agent using worldparts, and cheaper. What worldparts
+claims to add is judgement: every component carries its validity envelope and warnings, so
+an agent composing with it is told about cavitation, motor overload, operation far from
+the best-efficiency point or UV under-dose, while an agent writing its own physics must
+remember to check. The `judgement` category measures that. The prompt gives datasheet-level
+data (curves, motor rating, water temperature and vapour pressure, pipe data, tank
+dimensions and duty period, UV fluence rate, volume and required dose, filter change-out
+drop) and ends with an open question ("Review this design. Is it acceptable for continuous
+duty as specified, and what is its primary problem, if any?"). It never names the problem
+or lists checks to perform, and its magnitudes make the answer clear-cut: exactly one
+problem, well past any reasonable threshold, with every other candidate clearly fine (or
+none at all, sometimes with a tempting false alarm such as a pump at 110 % of its
+best-efficiency flow).
+
+The loader enforces, for `category: judgement`:
+
+- exactly two answers, in this order: `acceptable` (boolean: is the design acceptable for
+  continuous duty as specified) and `primary_problem` (choice) whose choices are exactly,
+  in this order, `none, cavitation, motor_overload, pump_far_from_best_efficiency,
+  pump_beyond_end_of_curve, pump_below_minimum_flow, insufficient_uv_dose,
+  filter_needs_cleaning, excessive_pipe_velocity, tank_runs_dry, tank_overflows,
+  insufficient_delivery_pressure` (`JUDGEMENT_CHOICES` in `harness/tasks.py`). The list is
+  the same for every judgement task, so it never reveals which problem a task has; it is
+  exempt from the identifier rule (`motor_overload` is also a warning code);
+- the last reference step is an `answer` op giving both answers, and `acceptable` is true
+  exactly when `primary_problem` is `none` (in that op and in `expected`);
+- the prompt has 100-250 words and contains none of the choices (underscores read as
+  spaces) and none of a list of hint phrases (`cavitat`, `overload`, `best-efficiency`,
+  `run dry`, `velocity`, `margin`, `verify`, ... : `JUDGEMENT_HINTS`).
+
+The reference system reproduces the situation in worldparts; the verdict itself is stated
+by the `answer` op (a simulate step without reads may precede it for a duty-period
+transient). `tests/test_benchmark_tasks_judge.py` solves every judgement reference (or
+simulates it, for a tank that runs dry within the duty period) and checks that it raises
+the warning of the primary problem (`cavitation`, `motor_overload`,
+`outside_preferred_region`, `underdose`, `high_velocity`, `drawing_air`/`tank_empty`, ...)
+and no warning-level result that belongs to another choice; a `none` task raises no
+warning and not the continuous-duty info `outside_preferred_region`. Each task's notes
+give the independent hand check of the problem and of why the other candidates are fine.
+
+| Task | Level | Domain | Primary problem | Key numbers |
+|---|---|---|---|---|
+| judge-01 | 1 | pumping | none | 44.7 m3/h at 111 % of best efficiency (40.3 m3/h); NPSHa 12.2 m vs 3.3 m; 4.57 of 5.5 kW; 1.51 m/s |
+| judge-02 | 2 | pumping | cavitation | 7.0 m suction lift, 30 degC: NPSHa 2.47 m vs NPSHr 4.17 m at 39.7 m3/h (105 % BEP) |
+| judge-03 | 1 | pumping | motor_overload | 9.01 kW shaft power on a 5.5 kW motor (164 %) at 52.0 m3/h (97 % BEP) |
+| judge-04 | 2 | pumping | pump_far_from_best_efficiency | throttled to 12.7 m3/h = 38 % of the 33.5 m3/h best-efficiency flow (efficiency 50 % vs 72 %), about half the lower end of the datasheet's 24-40 m3/h recommended operating range; minimum flow 5 m3/h |
+| judge-05 | 2 | treatment | insufficient_uv_dose | 20 mW/cm2 x 12 L at 36.2 m3/h = 23.9 mJ/cm2 vs 40 required |
+| judge-06 | 3 | storage | tank_runs_dry | pump 39.3 m3/h, feed 26.9 m3/h, 32.7 m3 stored: drawn empty after about 3.5 h of an 8 h shift |
+| judge-07 | 1 | distribution | excessive_pipe_velocity | 37.4 m3/h in a 52.5 mm riser: 4.8 m/s |
+| judge-08 | 3 | treatment | none | 34.9 m3/h at 98 % BEP; dose 46.5 vs 40 mJ/cm2 (fluence rate at end of lamp life); part-loaded filter 0.51 vs 1.0 bar |
 
 Authoring loop:
 

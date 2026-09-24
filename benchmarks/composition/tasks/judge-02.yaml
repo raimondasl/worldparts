@@ -1,0 +1,80 @@
+id: judge-02
+title: Sump pump suction lift review
+level: 2
+category: judgement
+domain: pumping
+prompt: |
+  A surface-mounted pump lifts water from an open sump to a free discharge into a header
+  tank. The pump inlet is 7.0 m above the sump water surface, whose level is held
+  constant. The suction line is 10 m of steel pipe, inner diameter 102.3 mm, absolute
+  roughness 0.05 mm, with K = 3 for the foot valve, strainer and bends. The discharge
+  line is 80 m of the same pipe, rising a further 16.8 m from the pump to the free outlet,
+  with K = 5 including the exit.
+
+  Pump datasheet at 2900 rpm: head 34 m at 0 m3/h, 32 m at 20 m3/h, 26 m at 40 m3/h and
+  16 m at 60 m3/h; shaft power 2.0 kW at 0 m3/h, 3.03 kW at 20 m3/h, 4.02 kW at 40 m3/h
+  and 4.97 kW at 60 m3/h; NPSH required 2.6 m at 20 m3/h, 4.2 m at 40 m3/h and 6.8 m at
+  60 m3/h; minimum continuous flow 8 m3/h. Fit quadratics through the points. Motor
+  rating 5.5 kW.
+
+  Water at 30 degC: density 998.2 kg/m3, viscosity 1.002e-3 Pa s (use these at this
+  temperature), vapour pressure 4.25 kPa; atmospheric pressure 101.325 kPa; g = 9.80665
+  m/s2. Pipes: Darcy-Weisbach.
+
+  The pump runs continuously at full speed. Review this design. Is it acceptable for
+  continuous duty as specified, and what is its primary problem, if any?
+answers:
+  - key: acceptable
+    description: Whether the design is acceptable for continuous duty as specified
+    kind: boolean
+  - key: primary_problem
+    description: The primary problem of the design, or none
+    kind: choice
+    choices: [none, cavitation, motor_overload, pump_far_from_best_efficiency, pump_beyond_end_of_curve, pump_below_minimum_flow, insufficient_uv_dose, filter_needs_cleaning, excessive_pipe_velocity, tank_runs_dry, tank_overflows, insufficient_delivery_pressure]
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: sump suction lift
+    components:
+      - name: sump
+        type: supply
+        parameters: {pressure: 0, temperature: 30}
+      - name: suction
+        type: pipe
+        parameters: {length: 10, diameter: 102.3, roughness: 0.05, height_difference: 7.0, minor_loss: 3}
+      - name: pump
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 34], [20, 32], [40, 26], [60, 16]]
+          power_curve: [[0, 2.0], [20, 3.03], [40, 4.02], [60, 4.97]]
+          npsh_curve: [[20, 2.6], [40, 4.2], [60, 6.8]]
+          min_flow_fraction: 0.212
+          motor_power: 5.5
+      - name: discharge
+        type: pipe
+        parameters: {length: 80, diameter: 102.3, roughness: 0.05, height_difference: 16.8, minor_loss: 5}
+      - name: header
+        type: drain
+    connections:
+      - [sump.port, suction.port_a]
+      - [suction.port_b, pump.inlet]
+      - [pump.outlet, discharge.port_a]
+      - [discharge.port_b, header.port]
+  steps:
+    - op: answer
+      values: {acceptable: false, primary_problem: cavitation}
+  expected: {acceptable: false, primary_problem: cavitation}
+notes: |
+  Primary problem: cavitation. Independent hand check (numpy fits, Colebrook, brentq; no
+  worldparts): H = 34 - 0.005 Q^2, P = 2.0 + 0.0525 Q - 0.00005 Q^2, NPSHr fitted through
+  (20, 2.6), (40, 4.2), (60, 6.8). Static 7.0 + 16.8 = 23.8 m; both pipes v = 1.34 m/s,
+  f = 0.0195; operating point 39.7 m3/h at 26.1 m. NPSH available = (101.325 - 4.25
+  kPa)/(rho g) - 7.0 m lift - 0.45 m suction losses = 9.92 - 7.45 = 2.47 m, below the
+  4.17 m required at 39.7 m3/h even before any margin (the usual 0.5 m or 10-50 % margin
+  makes it worse). The inlet is at 27.5 kPa absolute, above the vapour pressure, so the
+  suction column holds; the impeller cavitates. Other candidates clearly fine: 105 % of
+  the best-efficiency flow (37.7 m3/h, 70.5 %); 4.01 kW against a 5.5 kW motor (maximum
+  4.97 kW); inside the 60 m3/h curve end and above the 8 m3/h minimum; velocity 1.34 m/s;
+  no treatment units or tanks (constant sump level, free discharge), no delivery pressure
+  required. worldparts: NPSH available 2.47 m, required 4.17 m, the pump raises
+  cavitation and nothing else.

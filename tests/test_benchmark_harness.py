@@ -33,6 +33,8 @@ from benchmarks.composition.harness.reference import (  # noqa: E402
     same_value,
 )
 from benchmarks.composition.harness.tasks import (  # noqa: E402
+    CATEGORIES,
+    JUDGEMENT_CHOICES,
     TASKS_DIR,
     Answer,
     TaskError,
@@ -152,6 +154,166 @@ def test_loader_accepts_the_fixture_and_missing_expected() -> None:
     with pytest.raises(TaskError) as err:
         task_from_dict({**data, "level": 3}, FIXTURE)
     assert "level 3" in str(err.value)
+
+
+# ----------------------------------------------------------------------------------------
+# judgement tasks
+# ----------------------------------------------------------------------------------------
+JUDGE_PROMPT = (
+    "A pump draws water from the bottom outlet of an open cylindrical ground tank (2.0 m "
+    "diameter, 3.0 m high, water 1.5 m deep; outlet nozzle Kv 200 m3/h) and lifts it "
+    "through 60 m of steel pipe (inner diameter 50 mm, roughness 0.045 mm) to a free "
+    "discharge 25 m above the tank bottom. The pipe's minor losses total K = 1 (the exit "
+    "loss). Pump head at rated speed: 44 m at 0 m3/h, 43 m at 6 m3/h, 40 m at 12 m3/h, 35 m "
+    "at 18 m3/h and 28 m at 24 m3/h; fit a quadratic head-flow curve through these points. "
+    "Water: density 998.2 kg/m3, viscosity 1.002e-3 Pa s. The pump runs for 30 minutes "
+    "whenever the tank is full. Review this design. Is it acceptable for continuous duty as "
+    "specified, and what is its primary problem, if any?"
+)
+
+
+def judgement_data() -> dict[str, Any]:
+    """The harness fixture turned into a valid judgement task."""
+    d = fixture_data()
+    d["category"] = "judgement"
+    d["prompt"] = JUDGE_PROMPT
+    d["answers"] = [
+        {"key": "acceptable", "description": "Whether the design is acceptable", "kind": "boolean"},
+        {
+            "key": "primary_problem",
+            "description": "The primary problem, or none",
+            "kind": "choice",
+            "choices": list(JUDGEMENT_CHOICES),
+        },
+    ]
+    d["reference"]["steps"] = [
+        {"op": "simulate", "duration": "30 min", "step": "10 s"},
+        {"op": "answer", "values": {"acceptable": False, "primary_problem": "tank_runs_dry"}},
+    ]
+    d["reference"]["expected"] = {"acceptable": False, "primary_problem": "tank_runs_dry"}
+    return d
+
+
+def _judgement_problems(mutate: Any) -> list[str]:
+    data = judgement_data()
+    mutate(data)
+    return check_task(data, FIXTURE)
+
+
+def test_judgement_category_is_in_the_schema_and_the_fixture_is_valid() -> None:
+    assert tuple(task_schema()["properties"]["category"]["enum"]) == CATEGORIES
+    assert "judgement" in CATEGORIES
+    assert 100 <= len(JUDGE_PROMPT.split()) <= 250
+    assert check_task(judgement_data(), FIXTURE) == []
+    assert len(JUDGEMENT_CHOICES) == len(set(JUDGEMENT_CHOICES)) == 12
+    assert JUDGEMENT_CHOICES[0] == "none"
+    # The fixed choices name one warning code (motor_overload): allowed for judgement only.
+    data = judgement_data()
+    data["category"] = "what_if"
+    assert any("'motor_overload'" in p for p in check_task(data, FIXTURE))
+
+
+def _set_choices(d: dict[str, Any], choices: list[str]) -> None:
+    d["answers"][1]["choices"] = choices
+
+
+def _answer_kind_boolean(d: dict[str, Any]) -> None:
+    d["answers"][1].pop("choices")
+    d["answers"][1]["kind"] = "boolean"
+
+
+def _split_answer_op(d: dict[str, Any]) -> None:
+    d["reference"]["steps"][1]["values"].pop("acceptable")
+    d["reference"]["steps"].insert(0, {"op": "answer", "values": {"acceptable": False}})
+
+
+def _none_but_unacceptable(d: dict[str, Any]) -> None:
+    for values in (d["reference"]["steps"][1]["values"], d["reference"]["expected"]):
+        values.update(acceptable=False, primary_problem="none")
+
+
+@pytest.mark.parametrize(
+    ("mutate", "needle"),
+    [
+        (lambda d: _set_choices(d, list(reversed(JUDGEMENT_CHOICES))), "must be exactly"),
+        (lambda d: _set_choices(d, list(JUDGEMENT_CHOICES[:-1])), "must be exactly"),
+        (
+            lambda d: _set_choices(d, ["none", "tank_runs_dry"]),
+            "choices of 'primary_problem' must be exactly",
+        ),
+        (
+            lambda d: d["answers"].append(
+                {"key": "flow", "description": "Pump flow", "unit": "m3/h", "rel_tol": 0.03}
+            ),
+            "answers must be exactly 'acceptable' and 'primary_problem'",
+        ),
+        (lambda d: d["answers"].reverse(), "(in that order)"),
+        (
+            lambda d: d["answers"][0].update(kind="choice", choices=["yes", "no"]),
+            "'acceptable' must be a boolean answer",
+        ),
+        (_answer_kind_boolean, "'primary_problem' must be a choice answer"),
+        (
+            lambda d: d["reference"]["steps"][1]["values"].update(acceptable=True),
+            "in the answer op, acceptable is True but primary_problem is 'tank_runs_dry'",
+        ),
+        (_none_but_unacceptable, "acceptable must be true exactly when primary_problem is none"),
+        (
+            lambda d: d["reference"]["expected"].update(acceptable=True),
+            "in expected, acceptable is True",
+        ),
+        (lambda d: d["reference"]["steps"].reverse(), "the last step must be an answer op"),
+        (
+            _split_answer_op,
+            "the last step must be an answer op giving exactly acceptable and primary_problem",
+        ),
+        (lambda d: d.update(prompt=" ".join(JUDGE_PROMPT.split()[:60]) + "?"), "60 words"),
+        (lambda d: d.update(prompt=JUDGE_PROMPT + " More words." * 80), "must be 100-250"),
+        (lambda d: d.update(prompt=JUDGE_PROMPT + " Watch for cavitation."), "('cavitat')"),
+        (lambda d: d.update(prompt=JUDGE_PROMPT + " It may run dry."), "('run dry')"),
+        (lambda d: d.update(prompt=JUDGE_PROMPT + " Mind the Tank Runs\nDry case."), "runs dry"),
+        (lambda d: d.update(prompt=JUDGE_PROMPT + " Is the motor overloaded?"), "('overload')"),
+        (
+            lambda d: d.update(prompt=JUDGE_PROMPT + " Compare with the best-efficiency flow."),
+            "('best-efficiency')",
+        ),
+        (lambda d: d.update(prompt=JUDGE_PROMPT + " Check the pipe velocity."), "('velocity')"),
+        (lambda d: d.update(prompt=JUDGE_PROMPT + " Verify the NPSH margin."), "('margin')"),
+        (
+            lambda d: d.update(prompt=JUDGE_PROMPT + " Is the UV dose insufficient?"),
+            "('insufficient')",
+        ),
+        (
+            lambda d: d.update(prompt=JUDGE_PROMPT + " Check whether the filter needs cleaning."),
+            "('filter needs cleaning')",
+        ),
+    ],
+)  # fmt: skip
+def test_loader_enforces_the_judgement_rules(mutate: Any, needle: str) -> None:
+    problems = _judgement_problems(mutate)
+    assert any(needle in p for p in problems), problems
+
+
+def test_judgement_rules_apply_only_to_judgement_tasks() -> None:
+    # The fixture (a what_if task) has other answers and a prompt that says "run dry".
+    assert check_task(fixture_data(), FIXTURE) == []
+    data = fixture_data()
+    data["category"] = "judgement"
+    problems = check_task(data, FIXTURE)
+    assert any("answers must be exactly" in p for p in problems), problems
+    assert any("('run dry')" in p for p in problems), problems
+
+
+def test_judgement_tasks_score_on_both_answers() -> None:
+    t = task_from_dict(judgement_data(), FIXTURE)
+    assert grading.grade(t, cli.oracle_reply(t.expected)).passed
+    corrupted = cli.corrupt_expected(t)
+    assert corrupted == {"acceptable": True, "primary_problem": "tank_overflows"}
+    bad = grading.grade(t, cli.oracle_reply(corrupted))
+    assert not any(a.passed for a in bad.answers)
+    # The right verdict with the wrong problem still fails the task.
+    half = grading.grade(t, cli.oracle_reply({"acceptable": False, "primary_problem": "none"}))
+    assert not half.passed and half.n_passed == 1
 
 
 def test_answer_format_instruction(task: Any) -> None:

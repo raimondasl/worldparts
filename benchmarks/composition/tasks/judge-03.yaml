@@ -1,0 +1,73 @@
+id: judge-03
+title: Hilltop lift design review
+level: 1
+category: judgement
+domain: pumping
+prompt: |
+  A pump draws from a ground reservoir and lifts water to a hilltop storage tank, where
+  the line discharges freely above the water surface. The pump has a flooded suction: the
+  reservoir surface is held 1.5 m above the pump inlet and suction losses are negligible.
+  The rising main is 260 m of ductile iron pipe, inner diameter 102.3 mm, absolute
+  roughness 0.1 mm, rising 40 m from the pump to the outlet, with minor losses totalling
+  K = 10 including the exit.
+
+  Pump datasheet at 2900 rpm: head 62 m at 0 m3/h, 60 m at 20 m3/h, 54 m at 40 m3/h and
+  44 m at 60 m3/h; shaft power 5.0 kW at 0 m3/h, 6.64 kW at 20 m3/h, 8.16 kW at 40 m3/h
+  and 9.56 kW at 60 m3/h; NPSH required 2.2 m at 20 m3/h, 3.2 m at 40 m3/h and 4.8 m at
+  60 m3/h; minimum continuous flow 9 m3/h. Fit quadratics through the points. The pump
+  is supplied with a 5.5 kW motor.
+
+  Water at 20 degC: density 998.2 kg/m3, viscosity 1.002e-3 Pa s, vapour pressure 2.34
+  kPa; atmospheric pressure 101.325 kPa; g = 9.80665 m/s2. Pipes: Darcy-Weisbach.
+
+  The pump runs continuously at full speed. Review this design. Is it acceptable for
+  continuous duty as specified, and what is its primary problem, if any?
+answers:
+  - key: acceptable
+    description: Whether the design is acceptable for continuous duty as specified
+    kind: boolean
+  - key: primary_problem
+    description: The primary problem of the design, or none
+    kind: choice
+    choices: [none, cavitation, motor_overload, pump_far_from_best_efficiency, pump_beyond_end_of_curve, pump_below_minimum_flow, insufficient_uv_dose, filter_needs_cleaning, excessive_pipe_velocity, tank_runs_dry, tank_overflows, insufficient_delivery_pressure]
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: hilltop lift
+    components:
+      - name: reservoir
+        type: supply
+        parameters: {pressure: 0.1468421, temperature: 20}
+      - name: pump
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 62], [20, 60], [40, 54], [60, 44]]
+          power_curve: [[0, 5.0], [20, 6.64], [40, 8.16], [60, 9.56]]
+          npsh_curve: [[20, 2.2], [40, 3.2], [60, 4.8]]
+          min_flow_fraction: 0.1687
+          motor_power: 5.5
+      - name: main
+        type: pipe
+        parameters: {length: 260, diameter: 102.3, roughness: 0.1, height_difference: 40, minor_loss: 10}
+      - name: tank
+        type: drain
+    connections:
+      - [reservoir.port, pump.inlet]
+      - [pump.outlet, main.port_a]
+      - [main.port_b, tank.port]
+  steps:
+    - op: answer
+      values: {acceptable: false, primary_problem: motor_overload}
+  expected: {acceptable: false, primary_problem: motor_overload}
+notes: |
+  Primary problem: motor_overload. Independent hand check (numpy fits, Colebrook, brentq;
+  no worldparts): H = 62 - 0.005 Q^2 and P = 5.0 + 0.085 Q - 0.00015 Q^2 exactly. Static
+  40 - 1.5 = 38.5 m; main v = 1.76 m/s, f = 0.0211 (0.1 mm in 102.3 mm), loss 10.0 m;
+  operating point 52.0 m3/h at 48.5 m. Shaft power 5.0 + 4.42 - 0.41 = 9.01 kW against a
+  5.5 kW motor: 164 % of its rating, far beyond any service factor (1.15), and even the
+  shut-off power (5.0 kW) nearly fills the motor. Other candidates clearly fine: 97 % of
+  the best-efficiency flow (53.4 m3/h, 76.1 %); NPSH available 10.1 + 1.5 = 11.6 m
+  against 4.1 m required; inside the 60 m3/h curve end and above the 9 m3/h minimum;
+  velocity 1.76 m/s; no treatment units or tanks (constant-level reservoir, free
+  discharge above the tank surface), no delivery pressure required. worldparts: 51.89
+  m3/h, 9.01 kW, only motor_overload.

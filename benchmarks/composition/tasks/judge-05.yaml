@@ -1,0 +1,85 @@
+id: judge-05
+title: Filtration and UV skid review
+level: 2
+category: judgement
+domain: treatment
+prompt: |
+  A packaged skid treats spring water for a village supply. The pump draws from a
+  collection chamber whose surface is held 1.5 m above the pump inlet (suction losses
+  negligible) and pushes the water through a sand filter and a UV reactor into a pipe
+  that discharges freely into the supply reservoir.
+
+  Pump datasheet at 2900 rpm: head 44 m at 0 m3/h, 42 m at 15 m3/h, 36 m at 30 m3/h and
+  26 m at 45 m3/h; shaft power 1.8, 2.91, 3.84 and 4.59 kW at the same flows; NPSH
+  required 1.8 m at 15 m3/h, 2.7 m at 30 m3/h and 4.1 m at 45 m3/h; minimum continuous
+  flow 5 m3/h. Fit quadratics through the points. Motor 5.5 kW.
+
+  Sand filter: rated 40 m3/h, clean drop 0.35 bar at rated flow (70 % linear in flow, 30
+  % proportional to flow squared); backwash at 1.0 bar. UV reactor: 0.15 bar at 40 m3/h,
+  proportional to flow squared; irradiated volume 12 L; fluence rate 20 mW/cm2 at end of
+  lamp life; required dose 40 mJ/cm2; dose = fluence rate x volume / flow.
+
+  Outlet pipe: 90 m, inner diameter 80.8 mm, roughness 0.05 mm, rising 24 m, K = 6
+  including the exit. Water at 10 degC: density 998.2 kg/m3, viscosity 1.002e-3 Pa s,
+  vapour pressure 1.23 kPa; g = 9.80665 m/s2. Pipes: Darcy-Weisbach.
+
+  The skid runs continuously. Review this design. Is it acceptable for continuous duty as
+  specified, and what is its primary problem, if any?
+answers:
+  - key: acceptable
+    description: Whether the design is acceptable for continuous duty as specified
+    kind: boolean
+  - key: primary_problem
+    description: The primary problem of the design, or none
+    kind: choice
+    choices: [none, cavitation, motor_overload, pump_far_from_best_efficiency, pump_beyond_end_of_curve, pump_below_minimum_flow, insufficient_uv_dose, filter_needs_cleaning, excessive_pipe_velocity, tank_runs_dry, tank_overflows, insufficient_delivery_pressure]
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: spring water skid
+    components:
+      - name: chamber
+        type: supply
+        parameters: {pressure: 0.1468421, temperature: 10}
+      - name: pump
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 44], [15, 42], [30, 36], [45, 26]]
+          power_curve: [[0, 1.8], [15, 2.91], [30, 3.84], [45, 4.59]]
+          npsh_curve: [[15, 1.8], [30, 2.7], [45, 4.1]]
+          min_flow_fraction: 0.1521
+          motor_power: 5.5
+      - name: filter
+        type: media_filter
+        parameters: {rated_flow: 40, clean_pressure_drop: 0.35, housing_fraction: 0.3, change_pressure_drop: 1.0}
+      - name: uv
+        type: uv_reactor
+        parameters: {rated_flow: 40, rated_pressure_drop: 0.15, volume: 12, fluence_rate: 20, required_dose: 40}
+      - name: outlet
+        type: pipe
+        parameters: {length: 90, diameter: 80.8, roughness: 0.05, height_difference: 24, minor_loss: 6}
+      - name: reservoir
+        type: drain
+    connections:
+      - [chamber.port, pump.inlet]
+      - [pump.outlet, filter.inlet]
+      - [filter.outlet, uv.inlet]
+      - [uv.outlet, outlet.port_a]
+      - [outlet.port_b, reservoir.port]
+  steps:
+    - op: answer
+      values: {acceptable: false, primary_problem: insufficient_uv_dose}
+  expected: {acceptable: false, primary_problem: insufficient_uv_dose}
+notes: |
+  Primary problem: insufficient_uv_dose. Independent hand check (numpy fits, Colebrook,
+  brentq; no worldparts): H = 44 - 0.008889 Q^2 and P = 1.8 + 0.08 Q - 0.0004 Q^2
+  exactly. System: static 24 - 1.5 = 22.5 m, filter 0.35 (0.7 x + 0.3 x^2) bar with x =
+  Q/40, UV 0.15 (Q/40)^2 bar, pipe v = 1.96 m/s. Operating point 36.2 m3/h at 32.4 m.
+  Dose = 20 mW/cm2 x 12 L / (36.2/3600 m3/s) = 20 x 0.012 / 0.01004 = 23.9 mJ/cm2, 60 %
+  of the required 40 mJ/cm2 (the dose needs Q below 21.6 m3/h). Other candidates clearly
+  fine: 110 % of the best-efficiency flow (32.9 m3/h, 76.9 %); NPSH available 11.7 m
+  against 3.2 m; 4.17 kW against 5.5 kW (maximum 4.59 kW); inside the 45 m3/h curve end,
+  above the 5 m3/h minimum; filter 0.31 bar against a 1.0 bar backwash point and at 90 %
+  of its rated flow; velocity 1.96 m/s; no tanks in the model (constant chamber level,
+  free discharge), no delivery pressure required. worldparts: dose 23.9 mJ/cm2, only
+  underdose.

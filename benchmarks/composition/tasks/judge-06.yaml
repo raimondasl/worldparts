@@ -1,0 +1,104 @@
+id: judge-06
+title: Break tank shift review
+level: 3
+category: judgement
+domain: storage
+prompt: |
+  A break tank separates a process transfer pump from a town main during an 8-hour
+  production shift. The main holds 2.0 bar gauge at tank-bottom level whatever the flow
+  and feeds the tank bottom through 80 m of pipe, inner diameter 80.8 mm, K = 4, and a
+  float valve that stays fully open below the top water level (Kv 22 m3/h). The tank is
+  an open vertical cylinder 4.0 m in diameter and 3.0 m high, holding 2.6 m of water at
+  the start.
+
+  The pump sits at the tank-bottom level and draws from the tank directly (connection
+  losses negligible). It delivers through a check valve (Kv 150 m3/h) and 120 m of pipe,
+  inner diameter 102.3 mm, rising 33 m to a free discharge into a process vessel, K = 6
+  including the exit. Pipe roughness 0.05 mm, Darcy-Weisbach. A Kv element drops
+  (Q/Kv)^2 x 0.9982 bar.
+
+  Pump: head 44, 42.5, 38 and 30.5 m at 0, 15, 30 and 45 m3/h; shaft power 1.9, 2.98,
+  3.97 and 4.87 kW at the same flows; NPSH required 1.8, 2.6 and 3.9 m at 15, 30 and 45
+  m3/h; minimum continuous flow 5 m3/h; fit quadratics. Motor 5.5 kW.
+
+  Water at 20 degC: density 998.2 kg/m3, viscosity 1.002e-3 Pa s, vapour pressure 2.34
+  kPa; atmosphere 101.325 kPa; g = 9.80665 m/s2.
+
+  The pump runs at full speed for the whole shift. Review this design. Is it acceptable
+  for continuous duty as specified, and what is its primary problem, if any?
+answers:
+  - key: acceptable
+    description: Whether the design is acceptable for continuous duty as specified
+    kind: boolean
+  - key: primary_problem
+    description: The primary problem of the design, or none
+    kind: choice
+    choices: [none, cavitation, motor_overload, pump_far_from_best_efficiency, pump_beyond_end_of_curve, pump_below_minimum_flow, insufficient_uv_dose, filter_needs_cleaning, excessive_pipe_velocity, tank_runs_dry, tank_overflows, insufficient_delivery_pressure]
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: break tank
+    components:
+      - name: main
+        type: supply
+        parameters: {pressure: 2.0, temperature: 20}
+      - name: feed
+        type: pipe
+        parameters: {length: 80, diameter: 80.8, roughness: 0.05, height_difference: 0, minor_loss: 4}
+      - name: float_valve
+        type: valve
+        parameters: {kv: 22}
+      - name: break_tank
+        type: tank
+        parameters: {diameter: 4.0, height: 3.0, initial_level: 2.6, initial_temperature: 20, port_kv: 1000000}
+      - name: pump
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 44], [15, 42.5], [30, 38], [45, 30.5]]
+          power_curve: [[0, 1.9], [15, 2.98], [30, 3.97], [45, 4.87]]
+          npsh_curve: [[15, 1.8], [30, 2.6], [45, 3.9]]
+          min_flow_fraction: 0.138
+          motor_power: 5.5
+      - name: check
+        type: check_valve
+        parameters: {kv: 150}
+      - name: delivery
+        type: pipe
+        parameters: {length: 120, diameter: 102.3, roughness: 0.05, height_difference: 33, minor_loss: 6}
+      - name: vessel
+        type: drain
+    connections:
+      - [main.port, feed.port_a]
+      - [feed.port_b, float_valve.port_a]
+      - [float_valve.port_b, break_tank.inlet]
+      - [break_tank.outlet, pump.inlet]
+      - [pump.outlet, check.port_a]
+      - [check.port_b, delivery.port_a]
+      - [delivery.port_b, vessel.port]
+  steps:
+    - op: simulate
+      duration: 8 h
+      step: 20 s
+    - op: answer
+      values: {acceptable: false, primary_problem: tank_runs_dry}
+  expected: {acceptable: false, primary_problem: tank_runs_dry}
+notes: |
+  Primary problem: tank_runs_dry. Independent hand check (numpy fits, Colebrook, brentq,
+  a 30 s mass-balance march; no worldparts): H = 44 - 0.006667 Q^2, P = 1.9 + 0.075 Q -
+  0.0002 Q^2 exactly. At the start (2.6 m of water) the pump delivers 39.3 m3/h (static
+  33 - 2.6 m, check valve, delivery v = 1.33 m/s) and the feed gives 26.9 m3/h (20.4 m of
+  main pressure minus 2.6 m of level, 1.49 bar in the Kv 22 valve, 0.26 bar of pipe
+  friction at 1.46 m/s): a net draw of 12.4 m3/h on 32.7 m3 of storage. A constant-rate
+  estimate empties the tank in 2.6 h; with the flows following the falling level (pump
+  39.3 to 35.3 m3/h, feed 26.9 to 28.8 m3/h) it is drawn empty after 3.6 h, both far
+  inside the 8-hour shift; for the rest of the shift the pump would run on a starved,
+  air-drawing suction. Other candidates clearly fine while water lasts: 108 % of the
+  best-efficiency flow (36.2 m3/h, 79.7 %) falling to 97 %; NPSH available at least 10.1
+  m against 3.35 m; 4.54 kW against 5.5 kW (maximum 4.87 kW); inside the 45 m3/h curve
+  end, above the 5 m3/h minimum; velocities 1.46 and 1.33 m/s; the tank only falls, so
+  it cannot overflow; no treatment units, no delivery pressure required. worldparts
+  (8 h, 20 s steps): the steady start point is clean; the tank reports low level after
+  3.0 h and drawing_air (drawn empty with the pump still pulling) after 3.49 h, and no
+  pump, pipe or valve warning follows. The level then hovers a few centimetres above the
+  outlet (the model keeps the suction full), so tank_empty itself (1 mm) is not reached;
+  drawing_air is the tank's run-dry signal here.

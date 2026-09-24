@@ -1,0 +1,84 @@
+id: judge-04
+title: Process feed pump review
+level: 2
+category: judgement
+domain: pumping
+prompt: |
+  A pump feeds a process line from a large reservoir and discharges freely into an open
+  mixing basin. The pump has a flooded suction: the reservoir surface is held 1.5 m above
+  the pump inlet and suction losses are negligible. The process requires 12 m3/h, so a
+  globe valve after the pump is set to Kv 8.0 m3/h and left there (its drop is (Q/Kv)^2 x
+  0.9982 bar, Q in m3/h). After the valve, 60 m of steel pipe, inner diameter 68.8 mm,
+  absolute roughness 0.05 mm, rises 18 m to the free outlet, with minor losses totalling
+  K = 6 including the exit.
+
+  Pump datasheet at 2900 rpm: head 45 m at 0 m3/h, 43 m at 15 m3/h, 37 m at 30 m3/h and
+  27 m at 45 m3/h; shaft power 2.0 kW at 0 m3/h, 3.2 kW at 15 m3/h, 4.2 kW at 30 m3/h and
+  5.0 kW at 45 m3/h; NPSH required 1.8 m at 15 m3/h, 2.6 m at 30 m3/h and 3.9 m at 45
+  m3/h; minimum continuous flow 5 m3/h; recommended operating range 24 to 40 m3/h. Fit
+  quadratics through the points. Motor rating 5.5 kW.
+
+  Water at 20 degC: density 998.2 kg/m3, viscosity 1.002e-3 Pa s, vapour pressure 2.34
+  kPa; atmospheric pressure 101.325 kPa; g = 9.80665 m/s2. Pipes: Darcy-Weisbach.
+
+  The pump runs continuously at full speed. Review this design. Is it acceptable for
+  continuous duty as specified, and what is its primary problem, if any?
+answers:
+  - key: acceptable
+    description: Whether the design is acceptable for continuous duty as specified
+    kind: boolean
+  - key: primary_problem
+    description: The primary problem of the design, or none
+    kind: choice
+    choices: [none, cavitation, motor_overload, pump_far_from_best_efficiency, pump_beyond_end_of_curve, pump_below_minimum_flow, insufficient_uv_dose, filter_needs_cleaning, excessive_pipe_velocity, tank_runs_dry, tank_overflows, insufficient_delivery_pressure]
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: throttled feed
+    components:
+      - name: reservoir
+        type: supply
+        parameters: {pressure: 0.1468421, temperature: 20}
+      - name: pump
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 45], [15, 43], [30, 37], [45, 27]]
+          power_curve: [[0, 2.0], [15, 3.2], [30, 4.2], [45, 5.0]]
+          npsh_curve: [[15, 1.8], [30, 2.6], [45, 3.9]]
+          min_flow_fraction: 0.1495
+          motor_power: 5.5
+      - name: globe
+        type: valve
+        parameters: {kv: 8.0}
+      - name: line
+        type: pipe
+        parameters: {length: 60, diameter: 68.8, roughness: 0.05, height_difference: 18, minor_loss: 6}
+      - name: basin
+        type: drain
+    connections:
+      - [reservoir.port, pump.inlet]
+      - [pump.outlet, globe.port_a]
+      - [globe.port_b, line.port_a]
+      - [line.port_b, basin.port]
+  steps:
+    - op: answer
+      values: {acceptable: false, primary_problem: pump_far_from_best_efficiency}
+  expected: {acceptable: false, primary_problem: pump_far_from_best_efficiency}
+notes: |
+  Primary problem: pump_far_from_best_efficiency. Independent hand check (numpy fits,
+  Colebrook, brentq; no worldparts): H = 45 - 0.008889 Q^2 and P = 2.0 + 0.08667 Q -
+  0.000444 Q^2 exactly. System: static 18 - 1.5 = 16.5 m, valve (Q/8)^2 x 0.9982 bar,
+  pipe v = 0.95 m/s. Operating point 12.7 m3/h at 43.6 m (the 12 m3/h requirement is
+  met); the valve burns 2.53 bar. Efficiency rho g Q H / P peaks at 33.5 m3/h (72.4 %);
+  at 12.7 m3/h it is 49.8 %, so the pump runs at 38 % of its best-efficiency flow, far
+  below any preferred region (70 % in ANSI/HI 9.6.3; 60-65 % at the most lenient), in
+  continuous duty: recirculation, radial load, vibration and wasted energy. The
+  datasheet's recommended operating range, 24 to 40 m3/h (72-120 % of the
+  best-efficiency flow, the default preferred region), puts the duty point at about half
+  its lower end; the 5 m3/h minimum continuous flow is only the protection limit, 2.5
+  times below the duty, so it does not make the part-load duty acceptable. Other
+  candidates clearly fine: NPSH available 11.6 m against 1.7 m; 3.03 kW against 5.5 kW (maximum 5.0 kW);
+  far from the 45 m3/h curve end; velocity 0.95 m/s; the valve drop stays below 3 bar;
+  no treatment units or tanks, no delivery pressure required. worldparts: 38.1 % of the
+  best-efficiency flow, only outside_preferred_region (an info, the component's
+  continuous-duty flag).

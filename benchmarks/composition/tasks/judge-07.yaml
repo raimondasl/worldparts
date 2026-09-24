@@ -1,0 +1,74 @@
+id: judge-07
+title: Building booster riser review
+level: 1
+category: judgement
+domain: distribution
+prompt: |
+  A booster pump takes water from a street main and fills the roof tank of an office
+  building. The main holds 2.0 bar gauge at the pump inlet whatever the flow. From the
+  pump a riser of 32 m of steel pipe, inner diameter 52.5 mm, absolute roughness 0.05
+  mm, rises 34 m to an inlet that discharges freely above the roof-tank water surface,
+  with minor losses totalling K = 4 including the exit.
+
+  Pump datasheet at 2900 rpm: head 40 m at 0 m3/h, 38 m at 20 m3/h, 32 m at 40 m3/h and
+  22 m at 60 m3/h; shaft power 2.3 kW at 0 m3/h, 3.46 kW at 20 m3/h, 4.54 kW at 40 m3/h
+  and 5.54 kW at 60 m3/h; NPSH required 2.0 m at 20 m3/h, 3.0 m at 40 m3/h and 4.6 m at
+  60 m3/h; minimum continuous flow 8 m3/h. Fit quadratics through the points. Motor
+  rating 7.5 kW.
+
+  Water at 12 degC: density 998.2 kg/m3, viscosity 1.002e-3 Pa s, vapour pressure 1.40
+  kPa; atmospheric pressure 101.325 kPa; g = 9.80665 m/s2. Pipes: Darcy-Weisbach.
+
+  The pump runs at full speed while the tank fills; a level switch stops it when the
+  tank is full. Review this design. Is it acceptable for continuous duty as specified,
+  and what is its primary problem, if any?
+answers:
+  - key: acceptable
+    description: Whether the design is acceptable for continuous duty as specified
+    kind: boolean
+  - key: primary_problem
+    description: The primary problem of the design, or none
+    kind: choice
+    choices: [none, cavitation, motor_overload, pump_far_from_best_efficiency, pump_beyond_end_of_curve, pump_below_minimum_flow, insufficient_uv_dose, filter_needs_cleaning, excessive_pipe_velocity, tank_runs_dry, tank_overflows, insufficient_delivery_pressure]
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: building booster
+    components:
+      - name: main
+        type: supply
+        parameters: {pressure: 2.0, temperature: 12}
+      - name: pump
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 40], [20, 38], [40, 32], [60, 22]]
+          power_curve: [[0, 2.3], [20, 3.46], [40, 4.54], [60, 5.54]]
+          npsh_curve: [[20, 2.0], [40, 3.0], [60, 4.6]]
+          min_flow_fraction: 0.1944
+          motor_power: 7.5
+      - name: riser
+        type: pipe
+        parameters: {length: 32, diameter: 52.5, roughness: 0.05, height_difference: 34, minor_loss: 4}
+      - name: roof_tank
+        type: drain
+    connections:
+      - [main.port, pump.inlet]
+      - [pump.outlet, riser.port_a]
+      - [riser.port_b, roof_tank.port]
+  steps:
+    - op: answer
+      values: {acceptable: false, primary_problem: excessive_pipe_velocity}
+  expected: {acceptable: false, primary_problem: excessive_pipe_velocity}
+notes: |
+  Primary problem: excessive_pipe_velocity. Independent hand check (numpy fits,
+  Colebrook, brentq; no worldparts): H = 40 - 0.005 Q^2 and P = 2.3 + 0.06 Q - 0.0001 Q^2
+  exactly. System head 34 m - 20.43 m of main pressure + riser loss; operating point 37.4
+  m3/h at 33.0 m, where the 52.5 mm riser runs at v = 4.80 m/s (Re 2.5e5, f = 0.0206,
+  loss 19.4 m, more than half the pump head): 60 % above the usual 3 m/s ceiling for
+  pumped lines (1.5-3 m/s design range), with noise, erosion and surge on pump stop.
+  Other candidates clearly fine: 91 % of the best-efficiency flow (41.2 m3/h, 76.7 %);
+  NPSH available 10.2 + 20.4 = 30.6 m against 2.8 m; 4.40 kW against 7.5 kW (maximum
+  5.54 kW); inside the 60 m3/h curve end and above the 8 m3/h minimum; no treatment
+  units; the roof tank is filled on a level switch (no tank data, not modelled: free
+  discharge), and no delivery pressure is required. worldparts: 4.79 m/s, only
+  high_velocity.

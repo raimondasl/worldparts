@@ -13,7 +13,12 @@ A task is one YAML file in ``benchmarks/composition/tasks/<id>.yaml`` validated 
 - the prompt the agent sees (the task prompt plus the appended answer-format instruction,
   i.e. including the answer keys and descriptions) does not name worldparts, its component
   types, multi-word parameter, input or observable names or warning codes; the task prompt
-  itself does not describe the answer format (the harness appends that).
+  itself does not describe the answer format (the harness appends that);
+- a ``judgement`` task has exactly two answers, ``acceptable`` (boolean) and
+  ``primary_problem`` (choice among exactly :data:`JUDGEMENT_CHOICES`, in that order), both
+  given by the last step, an ``answer`` op; ``acceptable`` is true exactly when
+  ``primary_problem`` is ``none``; its prompt has 100-250 words and names none of the
+  problems (see :func:`judgement_problems`).
 
 Whether ``expected`` equals what the steps produce is checked by running them
 (:mod:`benchmarks.composition.harness.reference`).
@@ -42,6 +47,65 @@ REPO_ROOT = COMPOSITION_DIR.parents[1]
 
 #: Level by component count in the reference system.
 LEVEL_BOUNDS = {1: (2, 4), 2: (5, 7), 3: (8, 10**9)}
+
+#: Task categories (the schema's enum).
+CATEGORIES = ("operating_point", "sizing", "what_if", "transient", "diagnosis", "judgement")
+
+#: The fixed choices of a judgement task's ``primary_problem`` answer, shared by every
+#: judgement task (in this order) so that the choices never reveal which problem a task has.
+JUDGEMENT_CHOICES = (
+    "none",
+    "cavitation",
+    "motor_overload",
+    "pump_far_from_best_efficiency",
+    "pump_beyond_end_of_curve",
+    "pump_below_minimum_flow",
+    "insufficient_uv_dose",
+    "filter_needs_cleaning",
+    "excessive_pipe_velocity",
+    "tank_runs_dry",
+    "tank_overflows",
+    "insufficient_delivery_pressure",
+)
+
+#: Words a judgement prompt may have (inclusive).
+JUDGEMENT_WORDS = (100, 250)
+
+#: Phrases that would name or hint at a judgement task's problem (matched case-insensitively
+#: at the start of a word): every choice with its underscores read as spaces, plus common
+#: names of the same problems. A judgement prompt gives datasheet data, never these.
+JUDGEMENT_HINTS = (
+    "cavitat",
+    "overload",
+    "best efficiency",
+    "best-efficiency",
+    "bep",
+    "preferred operating",
+    "operating region",
+    "end of curve",
+    "end of the curve",
+    "end-of-curve",
+    "runout",
+    "run-out",
+    "underdos",
+    "under-dos",
+    "run dry",
+    "runs dry",
+    "running dry",
+    "run empty",
+    "runs empty",
+    "overflow",
+    "insufficient",
+    "excessive",
+    "velocity",
+    "erosion",
+    "npsh available",
+    "npsha",
+    "margin",
+    "check whether",
+    "check that",
+    "verify",
+)
 
 #: Default relative tolerance when an answer gives only abs_tol (and vice versa, 0).
 DEFAULT_REL_TOL = 0.0
@@ -284,8 +348,11 @@ def check_task(data: dict[str, Any], path: Path | None = None) -> list[str]:
     for term in sorted(in_prompt):
         problems.append(f"prompt names the worldparts identifier '{term}'")
     # The answer keys and descriptions reach the agent through the appended format line.
+    # The fixed judgement choices are exempt: they are the same for every judgement task
+    # (one of them, motor_overload, is also a warning code).
+    exempt = set(JUDGEMENT_CHOICES) if data["category"] == "judgement" else set()
     for term in forbidden_terms_in(answer_format_instruction(answers)):
-        if term not in in_prompt:
+        if term not in in_prompt and term not in exempt:
             problems.append(
                 f"an answer key or description names the worldparts identifier '{term}' "
                 "(the agent sees it in the appended answer format)"
@@ -297,6 +364,78 @@ def check_task(data: dict[str, Any], path: Path | None = None) -> list[str]:
                 problems.append(f"answer key '{a.key}' contains the worldparts identifier '{term}'")
     if _ANSWER_FORMAT_HINTS.search(prompt):
         problems.append("prompt describes an answer format (JSON); the harness appends it")
+    if data["category"] == "judgement":
+        problems.extend(judgement_problems(data))
+    return problems
+
+
+def judgement_problems(data: dict[str, Any]) -> list[str]:
+    """The rules of a ``judgement`` task (the document is already schema-valid).
+
+    - exactly two answers: ``acceptable`` (boolean) and ``primary_problem`` (choice whose
+      choices are exactly :data:`JUDGEMENT_CHOICES`, in that order);
+    - the last reference step is an ``answer`` op giving both (so the verdict is stated,
+      not read from a variable);
+    - ``acceptable`` is true exactly when ``primary_problem`` is ``none``, in that op and
+      in ``expected``;
+    - the prompt has :data:`JUDGEMENT_WORDS` words and contains no choice (underscores read
+      as spaces) and none of :data:`JUDGEMENT_HINTS`: the question is open.
+    """
+    problems: list[str] = []
+    answers = {a["key"]: a for a in data["answers"]}
+    if [a["key"] for a in data["answers"]] != ["acceptable", "primary_problem"]:
+        problems.append(
+            "judgement: the answers must be exactly 'acceptable' and 'primary_problem' "
+            f"(in that order), not {[a['key'] for a in data['answers']]}"
+        )
+    acc = answers.get("acceptable")
+    if acc is not None and acc.get("kind") != "boolean":
+        problems.append("judgement: 'acceptable' must be a boolean answer")
+    prim = answers.get("primary_problem")
+    if prim is not None:
+        if prim.get("kind") != "choice":
+            problems.append("judgement: 'primary_problem' must be a choice answer")
+        elif tuple(prim.get("choices", ())) != JUDGEMENT_CHOICES:
+            problems.append(
+                "judgement: the choices of 'primary_problem' must be exactly "
+                f"{list(JUDGEMENT_CHOICES)}"
+            )
+
+    steps = data["reference"]["steps"]
+    last = steps[-1]
+    if last.get("op") != "answer" or set(last.get("values") or {}) != {
+        "acceptable",
+        "primary_problem",
+    }:
+        problems.append(
+            "judgement: the last step must be an answer op giving exactly acceptable and "
+            "primary_problem"
+        )
+    sources = [("the answer op", last.get("values") or {})]
+    if data["reference"].get("expected"):
+        sources.append(("expected", data["reference"]["expected"]))
+    for where, values in sources:
+        if (
+            "acceptable" in values
+            and "primary_problem" in values
+            and values["acceptable"] is not (values["primary_problem"] == "none")
+        ):
+            problems.append(
+                f"judgement: in {where}, acceptable is {values['acceptable']!r} but "
+                f"primary_problem is {values['primary_problem']!r} (acceptable must be "
+                "true exactly when primary_problem is none)"
+            )
+
+    prompt = data["prompt"]
+    words = len(prompt.split())
+    lo, hi = JUDGEMENT_WORDS
+    if not lo <= words <= hi:
+        problems.append(f"judgement: the prompt has {words} words (must be {lo}-{hi})")
+    low = " ".join(prompt.lower().split())
+    phrases = [c.replace("_", " ") for c in JUDGEMENT_CHOICES if c != "none"]
+    for phrase in [*phrases, *JUDGEMENT_HINTS]:
+        if re.search(rf"(?<![a-z0-9]){re.escape(phrase)}", low):
+            problems.append(f"judgement: the prompt names or hints at a problem ('{phrase}')")
     return problems
 
 

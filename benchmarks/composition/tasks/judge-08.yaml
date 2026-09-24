@@ -1,0 +1,99 @@
+id: judge-08
+title: Treatment train design review
+level: 3
+category: judgement
+domain: treatment
+prompt: |
+  A works pumps river water from a reservoir through a sand filter and UV reactor into a
+  clearwell (free discharge). Reservoir surface: 1.2 m above the pump inlet, constant.
+  In flow order: suction pipe 6 m, inner diameter 102.3 mm, K = 1.5; pump; check
+  valve Kv 120 m3/h; filter; UV reactor; delivery pipe 150 m, inner diameter 80.8 mm,
+  rising 17 m, K = 8 including the exit. Pipe roughness 0.05 mm, Darcy-Weisbach; a Kv
+  element drops (Q/Kv)^2 x 0.9982 bar.
+
+  Pump: head 40, 38.5, 34 and 26.5 m at 0, 15, 30 and 45 m3/h; shaft power 1.7, 2.625,
+  3.45 and 4.175 kW at the same flows; NPSH required 1.8, 2.8 and 4.3 m at 15, 30 and 45
+  m3/h; minimum continuous flow 5 m3/h; fit quadratics. Motor 5.5 kW.
+
+  Filter: clean drop 0.30 bar at its rated 40 m3/h, 70 % linear and 30 % quadratic in
+  flow; solids load raises only the linear part. It is now part-loaded, dropping 0.60
+  bar at 40 m3/h; backwash at 1.0 bar. UV reactor: rated 40 m3/h at 0.213 bar,
+  quadratic in flow; volume 18 L; end-of-lamp-life fluence rate 25 mW/cm2; required
+  dose 40 mJ/cm2; dose = fluence rate x volume / flow.
+
+  Water at 12 degC: density 998.2 kg/m3, viscosity 1.002e-3 Pa s, vapour pressure 1.40
+  kPa; atmosphere 101.325 kPa; g = 9.80665 m/s2.
+
+  The train runs continuously. Review this design. Is it acceptable for continuous duty
+  as specified, and what is its primary problem, if any?
+answers:
+  - key: acceptable
+    description: Whether the design is acceptable for continuous duty as specified
+    kind: boolean
+  - key: primary_problem
+    description: The primary problem of the design, or none
+    kind: choice
+    choices: [none, cavitation, motor_overload, pump_far_from_best_efficiency, pump_beyond_end_of_curve, pump_below_minimum_flow, insufficient_uv_dose, filter_needs_cleaning, excessive_pipe_velocity, tank_runs_dry, tank_overflows, insufficient_delivery_pressure]
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: treatment train
+    components:
+      - name: reservoir
+        type: supply
+        parameters: {pressure: 0.1174737, temperature: 12}
+      - name: suction
+        type: pipe
+        parameters: {length: 6, diameter: 102.3, roughness: 0.05, height_difference: 0, minor_loss: 1.5}
+      - name: pump
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 40], [15, 38.5], [30, 34], [45, 26.5]]
+          power_curve: [[0, 1.7], [15, 2.625], [30, 3.45], [45, 4.175]]
+          npsh_curve: [[15, 1.8], [30, 2.8], [45, 4.3]]
+          min_flow_fraction: 0.1409
+          motor_power: 5.5
+      - name: check
+        type: check_valve
+        parameters: {kv: 120}
+      - name: filter
+        type: media_filter
+        parameters: {rated_flow: 40, clean_pressure_drop: 0.3, housing_fraction: 0.3, change_pressure_drop: 1.0}
+        inputs: {clogging: 0.5882353}
+      - name: uv
+        type: uv_reactor
+        parameters: {rated_flow: 40, rated_pressure_drop: 0.213, volume: 18, fluence_rate: 25, required_dose: 40}
+      - name: delivery
+        type: pipe
+        parameters: {length: 150, diameter: 80.8, roughness: 0.05, height_difference: 17, minor_loss: 8}
+      - name: clearwell
+        type: drain
+    connections:
+      - [reservoir.port, suction.port_a]
+      - [suction.port_b, pump.inlet]
+      - [pump.outlet, check.port_a]
+      - [check.port_b, filter.inlet]
+      - [filter.outlet, uv.inlet]
+      - [uv.outlet, delivery.port_a]
+      - [delivery.port_b, clearwell.port]
+  steps:
+    - op: answer
+      values: {acceptable: true, primary_problem: none}
+  expected: {acceptable: true, primary_problem: none}
+notes: |
+  Sound design; false alarms are the part-loaded filter and a dose only 16 % above the
+  requirement. Independent hand check (numpy fits, Colebrook, brentq; no worldparts): H
+  = 40 - 0.006667 Q^2 and P = 1.7 + 0.065 Q - 0.000222 Q^2 exactly. The loaded filter
+  drops 0.51 bar linear plus 0.09 bar quadratic at 40 m3/h (clogging 1 - 0.21/0.51 =
+  0.588 in the reference). System: static 17 - 1.2 m, suction and delivery pipes, check
+  valve, filter and UV; operating point 34.9 m3/h at 31.9 m. Dose 25 x 0.018 /
+  (34.9/3600) = 46.5 mJ/cm2 (required 40), with the fluence rate stated at end of lamp
+  life, so no further ageing or fouling derating applies; UV reactor 0.162 bar at 87 %
+  of its rated 40 m3/h; filter 0.51 bar (backwash 1.0 bar, flow 87 %
+  of rated); 98 % of the best-efficiency flow (35.5 m3/h, 81.8 %); NPSH available 11.2 m
+  against 3.2 m; 3.70 kW against 5.5 kW (maximum 4.18 kW); inside the 45 m3/h curve end,
+  above the 5 m3/h minimum; velocities 1.18 and 1.89 m/s; no tanks in the model
+  (constant reservoir level, free discharge into the clearwell), no delivery pressure
+  required. The design stays sound through the filter cycle: just before backwash (1.0
+  bar) the flow falls to 29.9 m3/h, 84 % of best efficiency, with a dose of 54 mJ/cm2.
+  worldparts: 34.82 m3/h, dose 46.5 mJ/cm2, filter 0.51 bar, no warning or info.

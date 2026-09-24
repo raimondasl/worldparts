@@ -1,0 +1,75 @@
+id: judge-01
+title: Transfer pump design review
+level: 1
+category: judgement
+domain: pumping
+prompt: |
+  A transfer pump lifts water from a large reservoir to an open process basin. The pump
+  has a flooded suction: the reservoir surface is held 2.0 m above the pump inlet and the
+  suction losses are negligible. The discharge main is 140 m of steel pipe, inner diameter
+  102.3 mm, absolute roughness 0.05 mm, rising 26 m from the pump to a free discharge,
+  with minor losses totalling K = 8 including the exit.
+
+  Pump datasheet at 2900 rpm: head 38 m at 0 m3/h, 36 m at 20 m3/h, 30 m at 40 m3/h and
+  20 m at 60 m3/h; shaft power 2.2 kW at 0 m3/h, 3.31 kW at 20 m3/h, 4.34 kW at 40 m3/h
+  and 5.29 kW at 60 m3/h; NPSH required 2.0 m at 20 m3/h, 3.0 m at 40 m3/h and 4.6 m at
+  60 m3/h; minimum continuous flow 8 m3/h. Fit quadratics through the points. Motor
+  rating 5.5 kW.
+
+  Water at 15 degC: density 998.2 kg/m3, viscosity 1.002e-3 Pa s, vapour pressure 1.70
+  kPa; atmospheric pressure 101.325 kPa; g = 9.80665 m/s2. Pipes: Darcy-Weisbach.
+
+  The pump runs continuously at full speed. Review this design. Is it acceptable for
+  continuous duty as specified, and what is its primary problem, if any?
+answers:
+  - key: acceptable
+    description: Whether the design is acceptable for continuous duty as specified
+    kind: boolean
+  - key: primary_problem
+    description: The primary problem of the design, or none
+    kind: choice
+    choices: [none, cavitation, motor_overload, pump_far_from_best_efficiency, pump_beyond_end_of_curve, pump_below_minimum_flow, insufficient_uv_dose, filter_needs_cleaning, excessive_pipe_velocity, tank_runs_dry, tank_overflows, insufficient_delivery_pressure]
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: transfer pump
+    components:
+      - name: reservoir
+        type: supply
+        parameters: {pressure: 0.1957895, temperature: 15}
+      - name: pump
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 38], [20, 36], [40, 30], [60, 20]]
+          power_curve: [[0, 2.2], [20, 3.31], [40, 4.34], [60, 5.29]]
+          npsh_curve: [[20, 2.0], [40, 3.0], [60, 4.6]]
+          min_flow_fraction: 0.1987
+          motor_power: 5.5
+      - name: main
+        type: pipe
+        parameters: {length: 140, diameter: 102.3, roughness: 0.05, height_difference: 26, minor_loss: 8}
+      - name: basin
+        type: drain
+    connections:
+      - [reservoir.port, pump.inlet]
+      - [pump.outlet, main.port_a]
+      - [main.port_b, basin.port]
+  steps:
+    - op: answer
+      values: {acceptable: true, primary_problem: none}
+  expected: {acceptable: true, primary_problem: none}
+notes: |
+  Sound design; the false alarm is the duty point at 111 % of the best-efficiency flow.
+  Independent hand check (numpy fits, Colebrook, brentq; no worldparts): the points lie
+  exactly on H = 38 - 0.005 Q^2 and P = 2.2 + 0.0575 Q - 0.0001 Q^2 (Q in m3/h). System
+  head 26 - 2.0 = 24 m static plus the main (v = 1.51 m/s, f = 0.0193, 4.00 m): the
+  operating point is 44.7 m3/h at 28.0 m, 4.57 kW, efficiency 74.5 %. Efficiency
+  rho g Q H / P peaks at 40.3 m3/h (75.2 %), so the pump runs at 111 % of its
+  best-efficiency flow, inside any preferred operating region (70-120 % in ANSI/HI 9.6.3)
+  and losing under 1 point of efficiency. Every other candidate is clearly fine: NPSH
+  available (101.325 - 1.70 kPa)/(rho g) + 2.0 = 12.2 m against 3.3 m required; shaft
+  power 4.57 kW against a 5.5 kW motor (the curve maximum, 5.29 kW at 60 m3/h, is also
+  below it); 44.7 m3/h is well inside the 60 m3/h curve end and far above the 8 m3/h
+  minimum; velocity 1.51 m/s; no UV reactor, filter or tank (constant-level reservoir,
+  free discharge) and no delivery pressure is required. worldparts: 44.69 m3/h, 111 % of
+  best efficiency, no warning or info.
