@@ -1,0 +1,429 @@
+{
+  "run_id": "pilot-sonnet5",
+  "models": [
+    "claude-sonnet-5"
+  ],
+  "runs": 6,
+  "tasks": 3,
+  "conditions": {
+    "code": {
+      "runs": 3,
+      "passed": 3,
+      "pass_rate": 1.0,
+      "ci95": [
+        0.4385,
+        1.0
+      ]
+    },
+    "mcp": {
+      "runs": 3,
+      "passed": 3,
+      "pass_rate": 1.0,
+      "ci95": [
+        0.4385,
+        1.0
+      ]
+    }
+  },
+  "by_level": {
+    "code": {
+      "1": {
+        "runs": 1,
+        "passed": 1,
+        "pass_rate": 1.0,
+        "ci95": [
+          0.2065,
+          1.0
+        ]
+      },
+      "2": {
+        "runs": 1,
+        "passed": 1,
+        "pass_rate": 1.0,
+        "ci95": [
+          0.2065,
+          1.0
+        ]
+      },
+      "3": {
+        "runs": 1,
+        "passed": 1,
+        "pass_rate": 1.0,
+        "ci95": [
+          0.2065,
+          1.0
+        ]
+      }
+    },
+    "mcp": {
+      "1": {
+        "runs": 1,
+        "passed": 1,
+        "pass_rate": 1.0,
+        "ci95": [
+          0.2065,
+          1.0
+        ]
+      },
+      "2": {
+        "runs": 1,
+        "passed": 1,
+        "pass_rate": 1.0,
+        "ci95": [
+          0.2065,
+          1.0
+        ]
+      },
+      "3": {
+        "runs": 1,
+        "passed": 1,
+        "pass_rate": 1.0,
+        "ci95": [
+          0.2065,
+          1.0
+        ]
+      }
+    }
+  },
+  "by_category": {
+    "code": {
+      "operating_point": {
+        "runs": 3,
+        "passed": 3,
+        "pass_rate": 1.0,
+        "ci95": [
+          0.4385,
+          1.0
+        ]
+      }
+    },
+    "mcp": {
+      "operating_point": {
+        "runs": 3,
+        "passed": 3,
+        "pass_rate": 1.0,
+        "ci95": [
+          0.4385,
+          1.0
+        ]
+      }
+    }
+  },
+  "by_domain": {
+    "code": {
+      "pumping": {
+        "runs": 2,
+        "passed": 2,
+        "pass_rate": 1.0,
+        "ci95": [
+          0.3424,
+          1.0
+        ]
+      },
+      "treatment": {
+        "runs": 1,
+        "passed": 1,
+        "pass_rate": 1.0,
+        "ci95": [
+          0.2065,
+          1.0
+        ]
+      }
+    },
+    "mcp": {
+      "pumping": {
+        "runs": 2,
+        "passed": 2,
+        "pass_rate": 1.0,
+        "ci95": [
+          0.3424,
+          1.0
+        ]
+      },
+      "treatment": {
+        "runs": 1,
+        "passed": 1,
+        "pass_rate": 1.0,
+        "ci95": [
+          0.2065,
+          1.0
+        ]
+      }
+    }
+  },
+  "answers": {
+    "code": {
+      "overall": {
+        "n": 11,
+        "passed": 11,
+        "accuracy": 1.0
+      },
+      "by_kind": {
+        "number": {
+          "n": 11,
+          "passed": 11,
+          "accuracy": 1.0
+        }
+      },
+      "by_answer": {
+        "pump-lift-01/flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-lift-01/head": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-lift-01/pump_power": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-station-01/flow_large": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-station-01/flow_small": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-station-01/header_pressure": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-station-01/zone_pressure": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-skid-duty-01/dose": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-skid-duty-01/flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-skid-duty-01/head": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-skid-duty-01/pump_power": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        }
+      }
+    },
+    "mcp": {
+      "overall": {
+        "n": 11,
+        "passed": 11,
+        "accuracy": 1.0
+      },
+      "by_kind": {
+        "number": {
+          "n": 11,
+          "passed": 11,
+          "accuracy": 1.0
+        }
+      },
+      "by_answer": {
+        "pump-lift-01/flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-lift-01/head": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-lift-01/pump_power": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-station-01/flow_large": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-station-01/flow_small": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-station-01/header_pressure": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "pump-station-01/zone_pressure": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-skid-duty-01/dose": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-skid-duty-01/flow": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-skid-duty-01/head": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        },
+        "treat-skid-duty-01/pump_power": {
+          "n": 1,
+          "passed": 1,
+          "accuracy": 1.0
+        }
+      }
+    }
+  },
+  "traceability": {
+    "code": {
+      "numeric_answers": 11,
+      "traceable": 11,
+      "correct": 11,
+      "correct_traceable": 11,
+      "in_prompt": 0,
+      "correct_untraceable_not_in_prompt": 0,
+      "traceable_rate": 1.0
+    },
+    "mcp": {
+      "numeric_answers": 11,
+      "traceable": 11,
+      "correct": 11,
+      "correct_traceable": 11,
+      "in_prompt": 0,
+      "correct_untraceable_not_in_prompt": 0,
+      "traceable_rate": 1.0
+    }
+  },
+  "usage": {
+    "code": {
+      "median_tool_calls": 4.0,
+      "median_tool_errors": 1.0,
+      "median_turns": 5.0,
+      "median_total_tokens": 79293.0,
+      "median_output_tokens": 5113.0,
+      "median_cost_usd": 0.19702619999999998,
+      "total_cost_usd": 0.6187,
+      "median_duration_s": 58.669,
+      "timeouts": 0,
+      "cli_errors": 0
+    },
+    "mcp": {
+      "median_tool_calls": 25.0,
+      "median_tool_errors": 0.0,
+      "median_turns": 26.0,
+      "median_total_tokens": 329724.0,
+      "median_output_tokens": 4859.0,
+      "median_cost_usd": 0.42836739999999995,
+      "total_cost_usd": 1.2331,
+      "median_duration_s": 42.104,
+      "timeouts": 0,
+      "cli_errors": 0
+    }
+  },
+  "format": {
+    "code": {
+      "runs_with_format_issues": 0,
+      "unparseable": 0
+    },
+    "mcp": {
+      "runs_with_format_issues": 0,
+      "unparseable": 0
+    }
+  },
+  "per_task": [
+    {
+      "task": "pump-lift-01",
+      "level": 1,
+      "category": "operating_point",
+      "domain": "pumping",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 3,
+          "answers": 3
+        }
+      }
+    },
+    {
+      "task": "treat-skid-duty-01",
+      "level": 2,
+      "category": "operating_point",
+      "domain": "treatment",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 4,
+          "answers": 4
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 4,
+          "answers": 4
+        }
+      }
+    },
+    {
+      "task": "pump-station-01",
+      "level": 3,
+      "category": "operating_point",
+      "domain": "pumping",
+      "conditions": {
+        "code": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 4,
+          "answers": 4
+        },
+        "mcp": {
+          "runs": 1,
+          "passed": 1,
+          "answers_passed": 4,
+          "answers": 4
+        }
+      }
+    }
+  ],
+  "decision_gate": {
+    "runs": 1,
+    "passed": 1,
+    "pass_rate": 1.0,
+    "ci95": [
+      0.2065,
+      1.0
+    ],
+    "threshold": 0.8,
+    "met": true
+  },
+  "infra_errors": [],
+  "contaminated": []
+}

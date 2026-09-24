@@ -2,19 +2,21 @@
 
 **Tested water components an AI agent can wire together instead of writing physics code.**
 
-Ask an AI agent to size a pump or check a treatment skid and it will usually write the
-physics itself. The code runs, but the numbers are often wrong: a unit slips, a gauge
-pressure is read as absolute, or a pump curve is used far outside its range. Nothing tells
-the agent that the result is wrong.
-
-worldparts gives the agent parts instead: pumps, valves, pipes, tanks, media filters and UV
+worldparts gives an AI agent parts to build water systems from: pumps, valves, pipes, tanks, media filters and UV
 reactors that it selects, sets and connects through typed tools. Every part declares its
 units, hard limits, operating envelope and warning codes. Every part ships scenarios and
 behavioural contracts that run in CI. The agent composes the system and the library does
 the physics. When a result falls outside a model's validity, the result carries a warning.
 
-The focus is **pumping, water treatment and distribution**: design checks, what-if analysis
-and, later, fault diagnosis.
+The focus is **pumping, water treatment and distribution**: design checks, what-if analysis,
+and calibration and diagnosis against plant data.
+
+Our own benchmark keeps the claims honest. On small, fully specified calculations, frontier
+models writing Python from scratch were as accurate as agents using worldparts, and several
+times cheaper ([results](docs/benchmark-results-v0.2.md)). worldparts therefore aims at
+what a one-off script does not give you: a reusable system model that can be reviewed and
+rerun, calibration and diagnosis against measurements, real product data with provenance,
+and systems too large or long-running to rebuild each time.
 
 > Status: v0.1.0, alpha. The interfaces may still change. See [Status](#status-and-roadmap).
 
@@ -330,6 +332,14 @@ provenance:
 
 ## Evidence
 
+**Our benchmark (v0.2).** 32 tasks (calculations and design-judgement reviews) ran under two
+conditions: an agent with only the worldparts MCP tools, and an agent writing Python from
+scratch with numpy, scipy, fluids and wntr. Claude Sonnet 5 and Claude Opus 5.5 each ran
+every task in both conditions. Both passed 97 to 100 percent in both conditions. The
+from-scratch agent used about one eighth of the tokens. The only worldparts failure traced to
+an ambiguous component description, since fixed. Details, harness problems found along the
+way, and limits: [docs/benchmark-results-v0.2.md](docs/benchmark-results-v0.2.md).
+
 The design follows a research report,
 [World model libraries for AI agents](docs/research/world-model-libraries-for-ai-agents.md).
 Three of its findings drive the design:
@@ -350,14 +360,13 @@ lift to a rooftop tank and a purification skid with a clogging filter. It made 4
 calls with one error. Its answers agreed with its hand calculations. It reported 16
 friction items, and most were fixed before this release. See
 [docs/agent-trial.md](docs/agent-trial.md). That was one informal trial, not a benchmark.
-The benchmark is milestone v0.2.
 
 ## Status and roadmap
 
 v0.1.0 is the first public release: manifest format 0.1, 11 components, the reference
 runtime, the `System` API, the MCP server and the CLI. The WNTR/EPANET adapter is described
-in [docs/wntr-adapter.md](docs/wntr-adapter.md). Next come a composition benchmark (v0.2),
-pump systems and diagnostics (v0.3), real product data with provenance (v0.4) and a
+in [docs/wntr-adapter.md](docs/wntr-adapter.md). The composition benchmark (v0.2) is done
+([results](docs/benchmark-results-v0.2.md)). Next come pump systems and diagnostics (v0.3), real product data with provenance (v0.4) and a
 Modelica backend (v0.5). See [docs/roadmap.md](docs/roadmap.md), the design contract
 [docs/design.md](docs/design.md) and the [changelog](CHANGELOG.md).
 

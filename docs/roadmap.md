@@ -19,6 +19,8 @@ Goal: an agent can build and query a small water-treatment skid (tank, pump, fil
 
 ## v0.2: Composition benchmark
 
+**Done (September 2026).** Both Claude Sonnet 5 and Claude Opus 5.5 passed 97 to 100 percent of 32 tasks, with and without worldparts. The decision gate is met, but from-scratch Python was just as accurate and several times cheaper on these small, fully specified tasks. See [the results](benchmark-results-v0.2.md). The next benchmark round tests where a component library could still add value: scale, operations against plant data, product data, weaker models, and cost.
+
 Goal: test the project's central thesis. The report found that no published study measures an agent composing several pre-built components. This milestone builds that measurement on pumping, treatment and distribution tasks.
 
 - Build, sizing, what-if and diagnosis tasks, each with a machine checker based on reference operating points and contracts.
