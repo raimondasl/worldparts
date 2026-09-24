@@ -84,6 +84,7 @@ Components are bound to manifests by import path (`implementations.reference.pyt
 - Two-port components define their forward direction as from the first port to the second (`port_a` to `port_b`, or `inlet` to `outlet`). Their `volume_flow` observable is positive in that direction.
 - Variable paths: `<instance>.<name>` for inputs, parameters, states and observables; `<instance>.<port>.p|m_flow|T` for port variables. Port `p` is in bar gauge, `m_flow` in kg/s, `T` in degC.
 - Undefined values (for example the outlet temperature of a closed faucet) are reported as `null`/`None`. Checks skip `None`.
+- Port pressures neglect the velocity head at nodes (as EPANET does): kinetic energy is not tracked separately and velocity heads appear only as loss terms (`minor_loss`, Kv elements). A port pressure is therefore the energy-balance pressure, and NPSH available computed from it already includes the velocity head. (Added after benchmark v0.2 showed two models adding v²/2g a second time because the pump's description did not say this.)
 
 ### 3.3 Medium
 

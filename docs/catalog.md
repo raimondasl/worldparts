@@ -109,8 +109,8 @@ transients and inertia, and the temperature rise of the water through the pump.
 | `shaft_power` | kW | Shaft power from the fitted power curve at the current flow and speed (not below 0), scaled for wear. |
 | `hydraulic_power` | kW | Hydraulic power rho g Q H (negative with reverse flow or negative head). |
 | `efficiency` | % | Hydraulic over shaft power; 0 when flow, head or power is not positive. |
-| `specific_energy` | kWh/m3 | Shaft energy per pumped volume, shaft_power / volume_flow (equal to rho g H / efficiency); the running cost per m3 before motor and drive losses. None unless the flow is above 0.01 m3/h (a leakage flow would give a meaningless huge value). |
-| `npsh_available` | m | Net positive suction head available: (p_inlet_abs - p_vapour(T_inlet)) / (rho g). |
+| `specific_energy` | kWh/m3 | Shaft energy per pumped volume, shaft_power / volume_flow (= rho g H / efficiency), before motor and drive losses. None unless the flow is above 0.01 m3/h. |
+| `npsh_available` | m | NPSH available, (p_inlet_abs - p_vapour(T_inlet)) / (rho g). Port pressures neglect velocity head (as in EPANET), so this is already the suction energy balance: do not add v^2/2g. |
 | `npsh_required` | m | NPSH required from the fitted curve at the current flow and speed (not below 0). |
 | `speed_rpm` | rpm | Rotational speed. |
 | `bep_flow` | m3/h | Best-efficiency flow (new pump) at the current speed. |
