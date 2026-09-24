@@ -666,7 +666,7 @@ def test_numbers_and_traceability() -> None:
     assert grading.traceable(0.0, [0.0]) and not grading.traceable(0.0, [1e-9])
 
 
-def _stream(tool_result: Any, final: str, is_error: bool = False) -> str:
+def _stream(tool_result: Any, final: str, is_error: bool = False, denied: bool = True) -> str:
     msgs = [
         {"type": "system", "subtype": "init", "model": "claude-test", "session_id": "abc",
          "tools": ["mcp__worldparts__solve"], "mcp_servers": [{"name": "worldparts",
@@ -680,7 +680,8 @@ def _stream(tool_result: Any, final: str, is_error: bool = False) -> str:
             {"type": "tool_use", "id": "t2", "name": "mcp__worldparts__solve", "input": {}}]}},
         {"type": "user", "message": {"content": [
             {"type": "tool_result", "tool_use_id": "t2", "is_error": True,
-             "content": "Permission to use Bash has been denied."}]}},
+             "content": "Permission to use Bash has been denied." if denied
+             else "Tool error: solve failed."}]}},
         {"type": "assistant", "message": {"content": [{"type": "text", "text": final}]}},
         {"type": "result", "subtype": "success", "is_error": is_error, "result": final,
          "num_turns": 4, "duration_ms": 12345, "duration_api_ms": 10000,
@@ -791,12 +792,8 @@ def test_claude_command_lines(tmp_path: Path) -> None:
     assert mcp[mcp.index("--tools") + 1] == ""
     assert mcp[mcp.index("--allowedTools") + 1 :] == ["mcp__worldparts"]
     assert code[code.index("--tools") + 1] == "Bash,Read,Write,Edit"
-    assert code[code.index("--allowedTools") + 1 :] == [
-        "Bash(python *)",
-        "Read(./**)",
-        "Write(./**)",
-        "Edit(./**)",
-    ]
+    # Unrestricted within the session (a Bash(python *) pattern denied ordinary commands).
+    assert code[code.index("--allowedTools") + 1 :] == ["Bash", "Read", "Write", "Edit"]
     assert code[code.index("--max-budget-usd") + 1] == "2.5"
     with pytest.raises(ValueError):
         runner.build_command("both", "opus", tmp_path, tmp_path, 1)
@@ -869,7 +866,7 @@ def test_dry_run_prints_commands_and_prompts_without_running(
     out = capsys.readouterr().out
     assert out.count("claude -p --output-format stream-json --verbose --model sonnet") == 4
     assert "--allowedTools mcp__worldparts" in out
-    assert "'Bash(python *)'" in out
+    assert "--allowedTools Bash Read Write Edit" in out
     assert "When you are done, end your reply with a single JSON object" in out
     assert "4 session(s); nothing was run (--dry-run)" in out
     assert not (REPO / "benchmarks" / "composition" / "results" / "dry").exists()
@@ -905,7 +902,10 @@ def test_infrastructure_errors_are_detected_and_excluded(task: Any, tmp_path: Pa
     assert grading.infra_error(grading.parse_stream(""), {"timed_out": True}) is None
 
     run_dir = tmp_path / "run-infra"
-    for name, text in (("mcp-1", AUTH_FAILURE_STREAM), ("mcp-2", _stream("x", "no answer"))):
+    for name, text in (
+        ("mcp-1", AUTH_FAILURE_STREAM),
+        ("mcp-2", _stream("x", "no answer", denied=False)),
+    ):
         d = run_dir / task.id / name
         d.mkdir(parents=True)
         (d / "stream.jsonl").write_text(text, encoding="utf-8")
@@ -1068,3 +1068,23 @@ def test_claude_executable_can_be_overridden(monkeypatch) -> None:
 
     monkeypatch.setenv("WPBENCH_CLAUDE", "C:/tools/claude-new.exe")
     assert runner.claude_executable() == "C:/tools/claude-new.exe"
+
+
+def test_code_condition_allows_ordinary_shell_commands() -> None:
+    """The code condition must not deny normal commands such as `sed ...; python s.py`."""
+    from benchmarks.composition.harness import runner
+
+    assert runner.ALLOWED_TOOLS["code"] == ["Bash", "Read", "Write", "Edit"]
+
+
+def test_a_denied_tool_call_is_an_infrastructure_error() -> None:
+    """If the harness denies a tool it offered, the run measured the harness, not the agent."""
+    from benchmarks.composition.harness.grading import StreamSummary, infra_error
+
+    s = StreamSummary()
+    s.result_subtype = "success"
+    s.final_text = s.last_assistant_text = "I can't finish because the Bash tool was denied."
+    # no answer object follows the denial
+    s.usage = {"input_tokens": 5000, "output_tokens": 300}
+    s.denied = ["Bash"]
+    assert "denied a tool call" in (infra_error(s, {}) or "")

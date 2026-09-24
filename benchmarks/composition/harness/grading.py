@@ -512,6 +512,11 @@ def infra_error(s: StreamSummary, outcome: dict[str, Any] | None = None) -> str 
         return "authentication failed (log in to the Claude CLI or set ANTHROPIC_API_KEY)"
     if outcome.get("timed_out"):
         return None
+    if s.denied and parse_final_json(s.final_text).data is None:
+        # Every tool the harness offers is allowed, so a denial is a harness fault. It only
+        # voids the run when the agent then gave no answer; a run that recovered is graded.
+        tools = ", ".join(sorted({str(d) for d in s.denied}))
+        return f"the harness denied a tool call and no answer followed ({tools})"
     servers = {m.get("name"): m.get("status") for m in s.mcp_servers}
     if servers and any(status != "connected" for status in servers.values()):
         # A session that started before its MCP server connected has no tools; a model may

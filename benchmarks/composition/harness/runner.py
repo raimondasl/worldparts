@@ -63,9 +63,10 @@ PREAMBLE = {
     ),
     "code": (
         "You are solving an engineering calculation about a water system. You can write and "
-        "read files in the current directory and run Python with the shell: `python "
-        "script.py` or `python -c ...`. The Python environment has numpy, scipy, fluids and "
-        "wntr installed; no other packages can be installed and there is no network access. "
+        "read files in the current directory and run any shell command there, including "
+        "Python: `python script.py` or `python -c ...`. The Python environment has numpy, "
+        "scipy, fluids and wntr installed; no other packages can be installed and there is "
+        "no network access. "
         "Work until you have the requested values, then give the final answer as instructed."
     ),
 }
@@ -74,7 +75,10 @@ PREAMBLE = {
 BUILTIN_TOOLS = {"mcp": "", "code": "Bash,Read,Write,Edit"}
 ALLOWED_TOOLS = {
     "mcp": [f"mcp__{MCP_SERVER_NAME}"],
-    "code": ["Bash(python *)", "Read(./**)", "Write(./**)", "Edit(./**)"],
+    # Unrestricted within the session: a pattern such as Bash(python *) denied ordinary
+    # commands (`sed ...; python s.py`) and made agents give up, which measured the harness,
+    # not the agent. Reads of the benchmark files are caught by grading.contamination().
+    "code": ["Bash", "Read", "Write", "Edit"],
 }
 
 #: Parent environment variables passed through although they match a dropped prefix.
