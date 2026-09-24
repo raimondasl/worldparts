@@ -28,9 +28,26 @@ Goal: test the project's central thesis. The report found that no published stud
 - A from-scratch baseline where the agent writes WNTR or plain Python code for the same tasks.
 - Decision gate from the report: if tool-based composition does not clear 80 percent on simple systems with a frontier model, revisit the packaging thesis before investing further.
 
+## Direction after v0.2 (September 2026)
+
+v0.2 showed that frontier models write correct small-system hydraulics from scratch. The owner then chose the "data and operations" direction, with a hard constraint: **if worldparts does not provide clear value, the project pivots or closes.**
+
+Research into licences and prior art ([summary](research/data-and-operations-2026-09.md)) changed the plan:
+
+- **Product data is on hold.** Manufacturers' terms forbid redistributing their pump curves, so the v0.4 corpus below cannot be built as planned without written permission.
+- **Operations is where value is still open.** The open gap found is plant-scale diagnosis that ranks faults across component types and says honestly when the data cannot decide.
+
+The [operations benchmark](../benchmarks/operations/PREREGISTRATION.md) decides whether that gap is worth a library. It is pre-registered and headroom-first. It first checks whether frontier agents working from scratch already pass realistic operations tasks. Only if they do not does it test worldparts against the same agent with the same method checklist and against a competing script toolkit.
+
+Its outcome decides one of three paths:
+
+- **Continue:** keep building worldparts.
+- **Pivot:** publish the method as an agent skill, or serve small models.
+- **Close:** close the project.
+
 ## v0.3: Pump systems and diagnostics
 
-Goal: make worldparts useful for an operating plant, not just a design sketch.
+Goal: make worldparts useful for an operating plant, not just a design sketch. Calibration, identifiability and diagnosis (design section 14) are built and reviewed on a branch. Whether they are finished and released depends on the operations benchmark's Stage 0.
 
 - Pump wear and degradation.
 - Calibration from sensor data, with an identifiability report that says which parameters the available sensors actually determine.
@@ -39,7 +56,9 @@ Goal: make worldparts useful for an operating plant, not just a design sketch.
 - A plant-model oracle for control logic, so generated control code is tested against the equipment it controls.
 - More water components: pressure-reducing valve, dosing pump, RO membrane stage, leak, contact tank.
 
-## v0.4: Real product data with provenance
+## v0.4: Real product data with provenance (on hold)
+
+**On hold since September 2026.** Almost every major pump manufacturer's terms forbid redistributing their curves. The only clean public source, the US DOE Compliance Certification Database, gives one best-efficiency point per pump. This milestone resumes only if manufacturers grant redistribution rights in writing. A pack format could still let users build private packs from their own datasheets, but that is not planned unless the operations benchmark shows value.
 
 Goal: parameterize components from real products with traceable, licence-cleared data.
 
