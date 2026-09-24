@@ -95,6 +95,11 @@ warnings:
   - code: below_vapour_pressure
     severity: warning
     description: The pressure at a pipe end is below the vapour pressure of water (static head in a riser or siphon, or pump suction). A real pipe would cavitate or its water column would separate, so the result is not physical.
+faults:
+  - name: scaled
+    description: "Scale, corrosion or biofilm roughens the wall: the roughness rises up to 20 times its value, raising the friction loss (the narrowing of the bore by the deposit is not modelled)."
+    vary: {path: roughness, lower: 1.0, upper: 20.0, relative: true}
+    healthy: 1.0
 scenarios:
   - id: laminar-poiseuille
     description: 10 m of 16 mm pipe under 50 Pa; laminar flow matches Hagen-Poiseuille, Q = pi D^4 dp / (128 mu L).

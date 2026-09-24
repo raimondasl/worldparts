@@ -58,6 +58,7 @@ top-level keys are allowed.
 | `modes` | no | list | Named discrete modes (section 7). |
 | `envelope` | no | list | Soft validity rules (section 8). |
 | `warnings` | no | list | Warning codes emitted by the implementation (section 8). |
+| `faults` | no | list | Fault modes for diagnosis (section 5, Fault modes). |
 | `scenarios` | yes | list, at least 2 | Test systems with expected results (section 9). |
 | `contracts` | yes | list, at least 3 | Behavioural properties (section 10). |
 | `implementations` | yes | mapping | Bindings to code (section 11). |
@@ -236,10 +237,49 @@ observable. States can be set through the API and in system documents
 ### Observables
 
 Observables are values the component computes after every solve. Each observable has
-`name`, `description` and `unit`, and MAY have `pressure_reference` and `quantity`. The
-implementation MUST return a value for every declared observable. `None` (`null`) means
-undefined, for example the outlet temperature when nothing flows. Checks skip undefined
-values.
+`name`, `description` and `unit`, and MAY have `pressure_reference`, `quantity` and
+`measurable`. The implementation MUST return a value for every declared observable.
+`None` (`null`) means undefined, for example the outlet temperature when nothing flows.
+Checks skip undefined values.
+
+`measurable: false` (the default is `true`) marks a model quantity rather than a physical
+state of the plant, for example a pump's best-efficiency flow or NPSH required, which are
+properties of its fitted curves. Such an observable is never proposed as a sensor (by
+`identifiability` or by a diagnosis's sensor suggestions); a measurement set may still give
+a value for it, for example from a test report.
+
+### Fault modes
+
+`faults` lists failures that show as one number parameter or input moving within a
+plausible range, for diagnosis (`worldparts.diagnose`, design section 14.3). Each entry
+has `name`, `description`, `vary` and `healthy`:
+
+```yaml
+faults:
+  - name: worn_impeller
+    description: "Impeller or wear-ring wear: the head falls at every flow (wear_head)."
+    vary: {path: wear_head, lower: 0.0, upper: 0.5}
+    healthy: 0.0
+  - name: partly_closed
+    description: "The valve is less open than commanded."
+    vary: {path: opening, lower: 0.0, upper: 1.0, relative: true}
+    healthy: 1.0
+```
+
+- `name` follows the naming rules of section 4 and MUST NOT be the name of a port or
+  variable of the component: a system refers to the fault as `<instance>.<name>`
+  (`pump.worn_impeller`).
+- `vary.path` MUST be a `number` parameter or input of the component (not a state,
+  observable, integer, string or table). `vary.lower` MUST be below `vary.upper`, and
+  `healthy`, the value without the fault, MUST lie within them.
+- Without `relative`, the bounds and `healthy` are in the variable's declared unit and MUST
+  lie within its hard limits.
+- With `relative: true`, `lower`, `upper` and `healthy` are non-negative multiples of the
+  value the variable has in the system being diagnosed, which is taken as healthy: a range
+  that follows a commanded input (a partly closed valve has an opening from 0 to 1 times
+  the commanded one) or a value that differs per installation (a pipe's roughness "up to
+  20 times its value" is `{path: roughness, lower: 1, upper: 20, relative: true}` with
+  `healthy: 1`). The resulting range is clipped to the hard limits when a diagnosis runs.
 
 ## 6. The expression language
 
@@ -516,6 +556,10 @@ the offending name.
 12. **Check expressions.** The `left`, `right`, `min`, `max` and `condition` expressions of
     every check parse.
 13. **Mass conservation.** At least one contract uses an `equal` check.
+14. **Fault modes.** Fault names are unique and are not the name of a port or variable;
+    `vary.path` is a `number` parameter or input; `lower < upper`; absolute bounds lie
+    within the variable's hard limits and relative ones are not negative; `healthy` lies
+    within the bounds (section 5, Fault modes).
 
 ## 14. Rules checked when the manifest runs
 
@@ -632,6 +676,11 @@ envelope:
     severity: warning
     condition: "pressure_drop > 3"
     message: Pressure drop above 3 bar; cavitation and noise are likely in a real valve and the Kv law may overpredict flow (choked flow is not modelled).
+faults:
+  - name: partly_closed
+    description: "The valve is less open than commanded (a sticking actuator, a wrong manual setting, debris in the seat): the opening is 0 to 1 times the commanded opening."
+    vary: {path: opening, lower: 0.0, upper: 1.0, relative: true}
+    healthy: 1.0
 scenarios:
   - id: kv-at-1-bar
     description: Fully open linear valve between 1 bar gauge and atmosphere; the flow reproduces the Kv definition.

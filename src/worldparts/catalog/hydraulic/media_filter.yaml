@@ -103,6 +103,11 @@ envelope:
     message: Flow above 125 % of the rated flow; a real filter loses removal efficiency and may break through.
 warnings:
   - {code: reverse_flow, severity: warning, description: "Water flows backwards through the filter (volume_flow below -0.01 m3/h) and may flush retained solids to the raw-water side. change_required and over_rated_flow only check forward flow; the message says when the reverse drop or flow would exceed them."}
+faults:
+  - name: clogged
+    description: "Solids load the media: its resistance rises as 1 / (1 - clogging), raising the pressure drop and cutting the flow."
+    vary: {path: clogging, lower: 0.0, upper: 0.99}
+    healthy: 0.0
 scenarios:
   - id: clean-rated-flow
     description: |

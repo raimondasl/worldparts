@@ -112,6 +112,11 @@ envelope:
     message: Water flows through the reactor with the lamp off; it is not disinfected.
 warnings:
   - {code: reverse_flow, severity: warning, description: "Water flows backwards through the reactor (volume_flow below -0.01 m3/h). underdose and lamp_off only check forward flow; the message says when the reverse-flow dose is below required_dose or the lamp is off."}
+faults:
+  - name: lamp_degraded
+    description: "The lamp delivers less UV than nominal (lamp ageing, sleeve fouling, a failing ballast): the dose falls in proportion to lamp_output; the hydraulics are unchanged."
+    vary: {path: lamp_output, lower: 0.0, upper: 1.0}
+    healthy: 1.0
 scenarios:
   - id: rated-flow
     description: |

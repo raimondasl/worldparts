@@ -9,7 +9,7 @@ interfaces. Each such change is listed here and in [docs/design.md](docs/design.
 
 Milestone v0.3, part 1 (design section 13): control loops, ramp events in documents, pump
 wear, a leak component and top-fed tanks. Part 2 (design section 14) has begun with
-measurements, calibration and identifiability.
+measurements, calibration, identifiability and fault diagnosis.
 
 ### Added
 
@@ -48,6 +48,29 @@ measurements, calibration and identifiability.
   `parameter_unit`, the unit of its standard error).
 - **Example** `examples/calibrate_pump_wear.py` with `examples/pump_wear_readings.yaml`:
   identifiability, calibration of pump wear to a field survey, and the energy cost of wear.
+- **Fault modes in manifests** (design 14.3): an optional `faults` list, `{name,
+  description, vary: {path, lower, upper, relative?}, healthy}`, validated by the schema
+  and the loader (a number parameter or input, bounds within its limits, `healthy` within
+  the bounds; `relative: true` gives bounds as multiples of the value in the system being
+  diagnosed). The catalogue declares pump `worn_impeller`, `efficiency_loss` and
+  `running_slow`, filter `clogged`, valve `partly_closed`, UV reactor `lamp_degraded` and
+  pipe `scaled` (roughness up to 20 times its value); docs/catalog.md lists them.
+- **Fault diagnosis** (design 14.3): `wp.diagnose(system, measurements, hypotheses=None, *,
+  max_faults=1, include_leaks=False, step=None)` scores the system as given and each fault
+  hypothesis (default: every fault mode; `leak_at:<port>` adds a leak at a junction, every
+  junction with `include_leaks=True`; `max_faults=2` tries pairs) by fitting it with
+  `calibrate` and ranking by AIC on the weighted residuals. `DiagnosisResult` gives a
+  one-word `conclusion` (`fault`, `no_fault`, `ambiguous`, `weak_evidence`,
+  `unexplained`), each hypothesis's fitted magnitude with its standard error, at-bound
+  flag and residuals, Akaike weights, the measurements that discriminate the best from the
+  runner-up, the unmeasured variables that would resolve an ambiguous diagnosis, a
+  false-alarm bound for a detected fault, and notes. A hypothesis that only adds a fault
+  to a better or equal one is not counted as a separate explanation (Arnold 2010), so a
+  fault fitted to noise does not make every diagnosis ambiguous. Nothing is applied to the
+  system. About 0.3 s for a nine-component treatment skid with its nine fault modes.
+- Observables may be marked `measurable: false` (model quantities such as the pump's
+  `bep_flow`, `npsh_required` and `curve_fit_rms`), which are no longer proposed as sensors
+  by `identifiability`.
 
 - **Control loops** (design 13.1, `worldparts.controls`). A system may carry `controls`: a
   `pi` loop or a `hysteresis` switch that reads one reported numeric variable and writes

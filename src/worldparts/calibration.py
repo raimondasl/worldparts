@@ -1956,11 +1956,19 @@ def _sensor_entries(sensors: Any) -> list[tuple[str, Any]]:
 
 
 def _default_candidates(system: System) -> list[str]:
-    """Observables, states and port pressures and temperatures: what a sensor could read."""
+    """Observables, states and port pressures and temperatures: what a sensor could read.
+
+    Observables that the manifest marks ``measurable: false`` (model quantities such as a
+    pump's best-efficiency flow) are left out."""
     out: list[str] = []
     for v in system.variables():
         if not v.reported or v.type not in ("number", "integer") or v.unit is None:
             continue
+        if v.kind == "observable":
+            inst, name = v.path.split(".", 1)
+            spec = system.manifest(inst).observables.get(name)
+            if spec is not None and not spec.measurable:
+                continue
         if v.kind in ("observable", "state") or (
             v.kind == "port" and v.path.rsplit(".", 1)[-1] in ("p", "T")
         ):

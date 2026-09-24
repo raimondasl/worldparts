@@ -34,6 +34,14 @@ from worldparts.contracts import (
     run_scenario,
 )
 from worldparts.controls import Control, ControlConflictError, InvalidControlError
+from worldparts.diagnosis import (
+    DiagnosisResult,
+    Discriminator,
+    FaultEstimate,
+    Hypothesis,
+    SensorSuggestion,
+    diagnose,
+)
 from worldparts.errors import (
     CalibrationError,
     ContractError,
@@ -86,7 +94,11 @@ __all__ = [
     "Control",
     "ControlConflictError",
     "ControlReport",
+    "DiagnosisResult",
+    "Discriminator",
     "ExpressionError",
+    "FaultEstimate",
+    "Hypothesis",
     "IdentifiabilityReport",
     "IncompatiblePortsError",
     "InvalidControlError",
@@ -105,6 +117,7 @@ __all__ = [
     "Residual",
     "SelfConnectionError",
     "SensorCandidate",
+    "SensorSuggestion",
     "SimulationResult",
     "SolveResult",
     "SolverError",
@@ -123,6 +136,7 @@ __all__ = [
     "convert",
     "default_catalog",
     "default_sigma",
+    "diagnose",
     "identifiability",
     "load_catalog",
     "load_manifest",

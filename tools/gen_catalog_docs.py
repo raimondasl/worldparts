@@ -193,6 +193,9 @@ def component_section(m: Manifest) -> list[str]:
                 for w in m.warnings.values()
             ],
         )
+    if m.faults:
+        out += ["", "**Fault modes** (hypotheses for `worldparts.diagnose`)", ""]
+        out += table(["Fault", "Varies", "Range", "Healthy", "Description"], fault_rows(m))
 
     checks = Counter(str(c["check"]["type"]) for c in m.contracts)
     simulated = sum(1 for s in m.scenarios if s.get("simulate"))
@@ -233,6 +236,23 @@ def component_section(m: Manifest) -> list[str]:
         out.append(line)
     out.append("")
     return out
+
+
+def fault_rows(m: Manifest) -> list[list[str]]:
+    """Rows of the fault-mode table; a relative range is in multiples of the value the
+    variable has in the system being diagnosed."""
+    rows = []
+    for f in m.faults.values():
+        spec = m.parameters.get(f.path) or m.inputs[f.path]
+        unit = "" if spec.unit in (None, "1") else f" {spec.unit}"
+        if f.relative:
+            rng = f"{num(f.lower)} to {num(f.upper)} times its value"
+            healthy = "its value" if f.healthy == 1 else f"{num(f.healthy)} times its value"
+        else:
+            rng = f"[{num(f.lower)}, {num(f.upper)}]{unit}"
+            healthy = f"{num(f.healthy)}{unit}"
+        rows.append([f"`{f.name}`", f"`{f.path}`", rng, healthy, f.description])
+    return rows
 
 
 def binding_rows(implementations: Mapping[str, Any]) -> list[list[str]]:

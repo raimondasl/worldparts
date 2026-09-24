@@ -71,6 +71,7 @@
     "modes": {"type": "array", "items": {"$ref": "#/$defs/mode"}},
     "envelope": {"type": "array", "items": {"$ref": "#/$defs/envelope_rule"}},
     "warnings": {"type": "array", "items": {"$ref": "#/$defs/warning"}},
+    "faults": {"type": "array", "items": {"$ref": "#/$defs/fault"}, "description": "Fault modes for diagnosis (design section 14.3)."},
     "scenarios": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/scenario"}},
     "contracts": {"type": "array", "minItems": 3, "items": {"$ref": "#/$defs/contract"}},
     "implementations": {
@@ -317,7 +318,8 @@
         "description": {"type": "string", "minLength": 1},
         "unit": {"$ref": "#/$defs/unit"},
         "pressure_reference": {"$ref": "#/$defs/pressure_reference"},
-        "quantity": {"$ref": "#/$defs/variable_quantity"}
+        "quantity": {"$ref": "#/$defs/variable_quantity"},
+        "measurable": {"type": "boolean", "description": "false for a model quantity that is not a physical state of the plant (for example a property of a fitted curve); it is never proposed as a sensor. Default true."}
       },
       "allOf": [{"$ref": "#/$defs/temperature_difference_unit"}]
     },
@@ -350,6 +352,28 @@
         "code": {"$ref": "#/$defs/code"},
         "severity": {"enum": ["info", "warning"]},
         "description": {"type": "string", "minLength": 1}
+      }
+    },
+    "fault": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "description", "vary", "healthy"],
+      "description": "A fault mode: a failure that shows as one numeric parameter or input moving within a plausible range (design section 14.3).",
+      "properties": {
+        "name": {"$ref": "#/$defs/name"},
+        "description": {"type": "string", "minLength": 1},
+        "vary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "lower", "upper"],
+          "properties": {
+            "path": {"$ref": "#/$defs/name", "description": "Local name of a number parameter or input of this component."},
+            "lower": {"type": "number", "description": "Lower end of the fault's range, in the variable's declared unit (or a multiple of its current value when relative)."},
+            "upper": {"type": "number", "description": "Upper end of the fault's range, in the variable's declared unit (or a multiple of its current value when relative)."},
+            "relative": {"type": "boolean", "description": "true: lower, upper and healthy are non-negative multiples of the value the variable has in the system being diagnosed (default false)."}
+          }
+        },
+        "healthy": {"type": "number", "description": "The value without the fault, inside [lower, upper] (a multiple of the current value when relative)."}
       }
     },
     "value": {
