@@ -12,6 +12,23 @@ Run on 23 and 24 September 2026. Raw summaries are in
 
 This result changes what worldparts should claim and what it should measure next. See [What this means](#what-this-means).
 
+## Update: scale tasks (level 4)
+
+Eight further tasks test scale. They have 22 to 57 components, looped networks with two supplies, towers on level switches, a three-pump booster staged by header pressure, three-train treatment plants, filters clogging under a PI flow loop, and 24-hour simulations. Independent auditors solved every task without worldparts, using their own Newton solvers or WNTR/EPANET, and landed within 0.7 percent of every reference value. All three models ran every task in both conditions, on Claude Code 2.1.280.
+
+| Model | Condition | Passed | Median tool calls | Median tokens | Median cost | Median time |
+|---|---|---:|---:|---:|---:|---:|
+| Sonnet 5 | code | 8/8 | 2 | 33,812 | $0.080 | 52 s |
+| Sonnet 5 | mcp | 8/8 | 9.5 | 340,658 | $0.316 | 84 s |
+| Opus 5.5 | code | 8/8 | 1 | 20,714 | $0.108 | 50 s |
+| Opus 5.5 | mcp | 8/8 | 6 | 190,882 | $0.410 | 53 s |
+| Haiku 4.5 | code | 0/8 | 24.5 | 1,203,528 | $0.479 | 572 s |
+| Haiku 4.5 | mcp | 1/8 | 15.5 | 505,290 | $0.347 | 213 s |
+
+- **The scale hypothesis is not supported for frontier models.** Sonnet 5 and Opus 5.5 built correct 57-component networks and 24-hour control simulations from scratch, mostly with WNTR, in one or two tool calls, at a quarter of the MCP condition's cost.
+- **Haiku 4.5 fails at scale in both conditions.** Its answers were present but wrong, for example 288 m³/h from the west supply of the looped network against the correct 177. The component library did not rescue a model that mis-builds a large system. The one pass was the irrigation network with the tools.
+- **Two runs were interrupted.** All three harness processes were killed at the same moment during one night without any log output, and no sleep or power event was recorded. The runs resumed from their saved records and redid only the unfinished sessions.
+
 ## Update: Claude Haiku 4.5
 
 A follow-up run put Claude Haiku 4.5 through the same 32 tasks, using the same product and harness versions as the Sonnet and Opus runs. This is the first result where the tools make a clear difference.
@@ -76,7 +93,7 @@ The report behind worldparts cited 24 to 37 percent functional correctness for L
 
 So the value of worldparts, if any, is not accuracy on small, fully specified calculations. The candidates below are hypotheses that the next benchmark round should test, not conclusions:
 
-- **Scale.** Large networks, long simulations with controls and events, and repeated what-if studies on the same system, where a from-scratch agent must build and debug a solver each time.
+- **Scale.** Not supported. Frontier models solved 20- to 57-component networks and 24-hour control simulations from scratch; Haiku failed them in both conditions (see the scale update above). Repeated what-if studies on one persistent system remain untested.
 - **Operations.** Calibration and diagnosis against plant data, and a persistent model queried many times across sessions.
 - **Data.** Real product curves and ratings with provenance, which a from-scratch agent does not have. This is milestone v0.4.
 - **Weaker or cheaper models.** Confirmed for Claude Haiku 4.5: +25 points of pass rate (see the update above).
