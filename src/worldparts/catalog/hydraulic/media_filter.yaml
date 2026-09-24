@@ -86,7 +86,7 @@ inputs:
 observables:
   - {name: volume_flow, unit: m3/h, description: Volume flow from inlet to outlet.}
   - {name: pressure_drop, unit: bar, pressure_reference: difference, description: Pressure at the inlet minus pressure at the outlet.}
-  - {name: dp_ratio, unit: "1", description: Pressure drop divided by the clean pressure drop at the same flow (the zero-flow limit at zero flow).}
+  - {name: dp_ratio, unit: "1", description: Pressure drop divided by the clean pressure drop at the same flow (the zero-flow limit at zero flow)., measurable: false}
 modes:
   - {name: idle, condition: "abs(volume_flow) < 0.01", description: No significant flow.}
   - {name: needs_change, condition: "pressure_drop > change_pressure_drop", description: The pressure drop exceeds the change pressure drop; backwash or change the media.}

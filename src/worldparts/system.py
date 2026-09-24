@@ -162,6 +162,9 @@ class System:
         self._x0: Any = None
         self._simulating = False
         self._controls: dict[str, Control] = {}
+        #: Paths that solves collect while :meth:`_collecting` is active (None: all).
+        self._lean: frozenset[str] | None = None
+        self._lean_plan: list[tuple[_Instance, bool, list[Any], list[Any]]] | None = None
 
     def __repr__(self) -> str:
         controls = f", controls={list(self._controls)}" if self._controls else ""
@@ -968,6 +971,7 @@ class System:
         self._port_nodes = port_nodes
         self._dirty = False
         self._x0 = None
+        self._lean_plan = None
 
     def check(self) -> list[Issue]:
         """Structural pre-flight.
@@ -1163,7 +1167,115 @@ class System:
         self._x0 = sol.x
         return self._collect(sol, time), sol
 
+    @contextlib.contextmanager
+    def _collecting(self, paths: Iterable[str]) -> Iterator[None]:
+        """Within the block, solves and simulations collect only ``paths`` (and the paths
+        the controls measure) and skip modes, envelope rules and component warnings.
+
+        Calibration (design 14.2) reads only the measured paths of each trial; collecting
+        every variable, mode and warning of every component took about half of its time.
+        The values collected are exactly those of a full solve.
+        """
+        previous, previous_plan = self._lean, self._lean_plan
+        self._lean, self._lean_plan = frozenset(paths), None
+        try:
+            yield
+        finally:
+            self._lean, self._lean_plan = previous, previous_plan
+
+    def _plan_lean(self) -> list[tuple[_Instance, bool, list[Any], list[Any]]]:
+        """Per instance with a wanted path: whether its observables are needed, the wanted
+        variables ``(path, spec, group)`` and the wanted port variables ``(path, port,
+        key)``."""
+        assert self._lean is not None
+        wanted = set(self._lean) | {c.measure for c in self._controls.values()}
+        by_instance: dict[str, set[str]] = {}
+        for path in wanted:
+            inst, _, local = path.partition(".")
+            by_instance.setdefault(inst, set()).add(local)
+        plan: list[tuple[_Instance, bool, list[Any], list[Any]]] = []
+        for inst in self._instances.values():
+            names = by_instance.get(inst.name)
+            if not names:
+                continue
+            m = inst.manifest
+            variables: list[Any] = []
+            needs_obs = False
+            for group, specs in (
+                ("parameters", m.parameters),
+                ("inputs", m.inputs),
+                ("states", m.states),
+                ("observables", m.observables),
+            ):
+                for n, spec in specs.items():
+                    if n in names and (spec.is_numeric or spec.type == "boolean"):
+                        variables.append((f"{inst.name}.{n}", n, spec, group))
+                        needs_obs = needs_obs or group == "observables"
+            ports = [
+                (f"{inst.name}.{port}.{key}", port, key)
+                for port in m.ports
+                for key in PORT_VARIABLES
+                if f"{port}.{key}" in names
+            ]
+            if variables or ports:
+                plan.append((inst, needs_obs, variables, ports))
+        return plan
+
+    def _collect_lean(self, sol: NetworkSolution, time: float | None) -> SolveResult:
+        """:meth:`_collect` of the paths wanted by :meth:`_collecting` only."""
+        if self._lean_plan is None:
+            self._lean_plan = self._plan_lean()
+        values: dict[str, Any] = {}
+        units: dict[str, str] = {}
+        refs: dict[str, str] = {}
+        for inst, needs_obs, variables, ports in self._lean_plan:
+            comp = inst.component
+            assert inst.builder is not None
+            view = NetworkView(sol, inst.builder)
+            obs = comp.observables(view) if needs_obs else {}
+            stores = {
+                "parameters": comp.parameters,
+                "inputs": comp.inputs,
+                "states": comp.states,
+                "observables": obs,
+            }
+            for path, n, spec, group in variables:
+                raw = stores[group].get(n)
+                if spec.is_numeric:
+                    v = None
+                    if raw is not None:
+                        fv = float(raw)
+                        v = spec.converter.from_si(fv) if math.isfinite(fv) else None
+                else:
+                    v = bool(raw)
+                values[path] = v
+                units[path] = spec.unit or "1"
+                if spec.reference:
+                    refs[path] = spec.reference
+            for path, port, key in ports:
+                if key == "p":
+                    values[path] = _BAR_GAUGE.from_si(view.port_p(port))
+                    refs[path] = "gauge"
+                elif key == "T":
+                    values[path] = _DEGC.from_si(view.port_T(port))
+                else:
+                    values[path] = view.port_m_flow(port)
+                units[path] = PORT_VARIABLES[key][0]
+        return SolveResult(
+            converged=sol.converged,
+            iterations=sol.iterations,
+            max_residual=sol.max_residual,
+            values=values,
+            units=units,
+            modes={},
+            warnings=[],
+            references=refs,
+            time=time,
+        )
+
     def _collect(self, sol: NetworkSolution, time: float | None) -> SolveResult:
+        if self._lean is not None:
+            return self._collect_lean(sol, time)
         values: dict[str, Any] = {}
         units: dict[str, str] = {}
         refs: dict[str, str] = {}

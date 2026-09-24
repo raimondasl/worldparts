@@ -151,6 +151,9 @@ STEP_TOLERANCE: float = 0.1
 MAX_AUTO_STEPS: int = 20_000
 #: At most this many refits with a halved step when the fitted values need a finer one.
 MAX_STEP_REFITS: int = 3
+#: The optimiser's end point counts as worse than its start only when its chi-square is
+#: higher by more than this fraction of the start's (at least 1): less is round-off.
+WORSE_TOLERANCE: float = 1e-9
 #: Optimisation methods of ``scipy.optimize.least_squares`` that accept bounds.
 METHODS: tuple[str, ...] = ("trf", "dogbox")
 
@@ -807,6 +810,8 @@ class _Model:
         self.events: list[dict[str, Any]] = []
         self.series: list[str] = []
         self._runs: dict[tuple[Any, ...], dict[tuple[int, str], float | None]] = {}
+        #: Every wanted path: the only ones the solves collect (System._collecting).
+        self.collect = sorted({p for paths in self.wanted.values() for p in paths})
         if self.timed:
             times = [float(points[i].time) for i in timed if points[i].time is not None]
             self.duration = max(times)
@@ -905,26 +910,8 @@ class _Model:
         theta = self.values_at(x)
         out: dict[tuple[int, str], float | None] = {}
         try:
-            for i in self.steady:
-                point = self.points[i]
-                self.reset()
-                try:
-                    self.system.set_values({**theta, **point.settings})
-                    result = self.system._solve([])  # checked once by the caller
-                except _MODEL_FAILURES as exc:
-                    raise _ModelFailure(f"point '{point.name}': {exc}") from exc
-                for path in self.wanted[i]:
-                    value = result.values.get(path)
-                    out[(i, path)] = None if value is None else float(value)
-            if self.timed:
-                h = self.step if step is None else step
-                if self.extrapolate:
-                    coarse, fine = self._run(theta, h), self._run(theta, h / 2)
-                    for key, a in coarse.items():
-                        b = fine[key]
-                        out[key] = None if a is None or b is None else 2.0 * b - a
-                else:
-                    out.update(self._run(theta, h))
+            with self.system._collecting(self.collect):
+                self._predict_into(out, theta, step)
         except _ModelFailure as exc:
             self.failures += 1
             shown = ", ".join(f"{p} = {v:.6g}" for p, v in theta.items())
@@ -933,6 +920,34 @@ class _Model:
                 self.failure_examples.append(self.last_failure)
             raise
         return out
+
+    def _predict_into(
+        self,
+        out: dict[tuple[int, str], float | None],
+        theta: Mapping[str, float],
+        step: float | None,
+    ) -> None:
+        """:meth:`predict` at the trial values ``theta``, into ``out``."""
+        for i in self.steady:
+            point = self.points[i]
+            self.reset()
+            try:
+                self.system.set_values({**theta, **point.settings})
+                result = self.system._solve([])  # checked once by the caller
+            except _MODEL_FAILURES as exc:
+                raise _ModelFailure(f"point '{point.name}': {exc}") from exc
+            for path in self.wanted[i]:
+                value = result.values.get(path)
+                out[(i, path)] = None if value is None else float(value)
+        if self.timed:
+            h = self.step if step is None else step
+            if self.extrapolate:
+                coarse, fine = self._run(theta, h), self._run(theta, h / 2)
+                for key, a in coarse.items():
+                    b = fine[key]
+                    out[key] = None if a is None or b is None else 2.0 * b - a
+            else:
+                out.update(self._run(theta, h))
 
     def _run(self, theta: Mapping[str, float], step: float) -> dict[tuple[int, str], float | None]:
         """The timed points' values from one simulation at ``step`` (the last few runs are
@@ -1461,6 +1476,30 @@ def calibrate(
         SystemCheckError: The system has error-level check issues.
         CalibrationError: The model cannot be evaluated at the starting values.
     """
+    return _calibrate(system, measurements, parameters, method=method, apply=apply, step=step)
+
+
+def _calibrate(
+    system: System,
+    measurements: Any,
+    parameters: Any,
+    *,
+    method: str = "trf",
+    apply: bool = False,
+    step: Any = None,
+    checked: bool = False,
+    start_step: float | None = None,
+) -> CalibrationResult:
+    """:func:`calibrate` with two shortcuts for diagnosis (design 14.3), which fits many
+    hypotheses to the same measurements.
+
+    Args:
+        checked: The caller has run the system check; it is not repeated.
+        start_step: With ``step`` None, an automatic step of the timed points already found
+            accurate at the starting values (by the fit or the scoring that the start comes
+            from): the fit starts from it instead of choosing a step again. The check at the
+            fitted values still runs and refines it when needed.
+    """
     _check_method(method)
     ms = _measurement_set(measurements)
     if ms.n_values == 0:
@@ -1471,7 +1510,8 @@ def calibrate(
     resolved = ms.resolve(system)
     params = _resolve_parameters(system, parameters, resolved.points)
     step_s = _parse_step(step)
-    _preflight(system)
+    if not checked:
+        _preflight(system)
     rows = list(resolved.values)
     keys = [(r.point, r.path) for r in rows]
     measured = np.array([r.value for r in rows])
@@ -1480,6 +1520,9 @@ def calibrate(
     for r in rows:
         wanted.setdefault(r.point, []).append(r.path)
     model = _Model(system, params, resolved.points, wanted, step_s)
+    choose = model.extrapolate
+    if choose and start_step is not None:
+        model.step, choose = min(start_step, model.step), False
     obj = _Objective(model, keys)
     names = [p.path for p in params]
     initial = np.array([min(max(p.current, p.lower), p.upper) for p in params])
@@ -1513,7 +1556,7 @@ def calibrate(
 
     step_change: float | None = None
     try:
-        if model.extrapolate:
+        if choose:
             _choose_step(obj, z0, sigma)
         p0, f0 = at_start()
         undefined = [keys[k] for k in np.flatnonzero(~np.isfinite(p0))]
@@ -1690,7 +1733,12 @@ def _outcome(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[np.ndarray, float] | None]:
     """The optimiser's end point with its predictions and residuals, or the start when the
     end point fits worse (or cannot be evaluated): then also the end point's values and
-    chi-square, for the report."""
+    chi-square, for the report.
+
+    An end point worse by no more than round-off (:data:`WORSE_TOLERANCE` of the starting
+    chi-square) is not a failed fit: the start is already the optimum (such as a diagnosis
+    combination started from the fit of a fault it contains). The start is reported then,
+    without the end point."""
     z = np.clip(sol.x, 0.0, 1.0)
     try:
         p = obj.predict(z)
@@ -1698,8 +1746,11 @@ def _outcome(
         chi = float(f @ f) if np.all(np.isfinite(f)) else math.inf
     except _ModelFailure:
         chi = math.inf
-    if chi > float(f0 @ f0):
+    chi0 = float(f0 @ f0)
+    if chi > chi0 + WORSE_TOLERANCE * max(1.0, chi0):
         return z0, p0, f0, (obj.x(z), chi)
+    if chi > chi0:
+        return z0, p0, f0, None
     return z, p, f, None
 
 

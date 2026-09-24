@@ -13,14 +13,20 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
+import yaml
 
 import worldparts as wp
-from worldparts.diagnosis import AMBIGUITY_AIC, BASELINE, CONCLUSIONS
+from worldparts.calibration import _default_candidates
+from worldparts.diagnosis import AMBIGUITY_AIC, BASELINE, CONCLUSIONS, LEAK_PREFIX
+
+EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 
 #: The skid's sensors and their standard uncertainties (display units).
 SIGMA = {
@@ -185,6 +191,11 @@ def _fault(**changes: Any) -> dict[str, Any]:
         ([_fault(), _fault()], "faults: duplicate names ['stuck']"),
         ([_fault(name="opening")], "the name is already used by an input"),
         ([_fault(name="port_a")], "the name is already used by a port"),
+        # Infinite bounds used to pass the hard-limit check (its tolerance became infinite).
+        ([_fault(upper=math.inf)], "vary.upper must be a finite number"),
+        ([_fault(lower=-math.inf)], "vary.lower must be a finite number"),
+        ([_fault(relative=True, upper=math.inf)], "vary.upper must be a finite number"),
+        ([_fault(healthy=math.nan)], "healthy must be a finite number"),
     ],
 )
 def test_manifest_rejects_bad_faults(faults: list[dict[str, Any]], fragment: str) -> None:
@@ -593,3 +604,302 @@ def test_diagnosis_is_fast() -> None:
     assert result.best == "filter.clogged"
     assert elapsed < 10 and result.elapsed <= elapsed
     assert result.evaluations < 1000
+
+
+# ----------------------------------------------------------------------------------------
+# review fixes: evidence for every fault, blind spots, suggestions, the system as given
+# ----------------------------------------------------------------------------------------
+def test_a_second_fault_needs_evidence_of_its_own() -> None:
+    """With max_faults=2 each true single fault is paired with eight others, and noise
+    alone often lets one of them gain the 2 AIC units a parameter costs. The advantage over
+    no fault comes from the true fault, so the second fault is bounded against the single
+    fault it is added to, with a Bonferroni sum over the eight pairs that extend it."""
+    s = skid()
+    for seed, extra in ((14, "pump.efficiency_loss"), (16, "riser.scaled")):
+        result = wp.diagnose(s, readings({"pump.wear_head": 0.15}, seed=seed), max_faults=2)
+        assert set(result.best_hypothesis.faults) == {"pump.worn_impeller", extra}
+        assert result.conclusion == "weak_evidence", result.notes
+        assert result.false_alarm_against == "pump.worn_impeller"
+        assert result.false_alarm is not None and 0.1 < result.false_alarm < 0.3
+        text = " ".join(result.notes)
+        assert f"The evidence for {extra} in addition to pump.worn_impeller is weak" in text
+        assert "one of the 8 tested hypotheses that add to pump.worn_impeller" in text
+        # The advantage over no fault is still reported, and it is overwhelming.
+        assert "probability at most 1e-15" in text
+    # Two true faults keep a confident conclusion (each is checked against the other).
+    both = wp.diagnose(s, readings({"pump.wear_head": 0.15, "filter.clogging": 0.5}), max_faults=2)
+    assert both.conclusion == "fault" and both.false_alarm is not None
+    assert both.false_alarm < 1e-6
+    assert both.false_alarm_against in ("pump.worn_impeller", "filter.clogged")
+
+
+def test_a_true_single_fault_is_not_given_a_confident_spurious_pair() -> None:
+    """Over twenty noisy readings of a single fault with max_faults=2, a pair that adds a
+    fault which is not there is never concluded with confidence: 'ambiguous' or
+    'weak_evidence' at most. (A flow meter, four pressure gauges and a tachometer: the
+    efficiency loss and the UV lamp are undetectable, so 21 pairs are tried.)"""
+    s = skid()
+    sensors = {**FLOW_AND_PRESSURES, "pump.inlet.p": 0.01, "pump.speed_rpm": 5.0}
+    conclusions = []
+    for seed in range(20):
+        data = readings({"pump.wear_head": 0.15}, sensors, seed=seed)
+        result = wp.diagnose(s, data, max_faults=2)
+        assert "pump.worn_impeller" in result.best_hypothesis.faults
+        if result.conclusion == "fault":
+            assert result.best == "pump.worn_impeller", (seed, result.best, result.notes)
+        else:
+            assert result.conclusion in ("ambiguous", "weak_evidence"), (seed, result.notes)
+        conclusions.append(result.conclusion)
+    assert conclusions.count("fault") >= 12
+
+
+def test_the_sensor_suggestion_separates_all_plausible_hypotheses() -> None:
+    """A flow meter alone fits five faults exactly. The suggestion weighs every pair of the
+    plausible hypotheses, not only the first two in listing order, and says what it
+    separates and what remains."""
+    s = skid()
+    data = readings({"filter.clogging": 0.3}, {"pump.volume_flow": 0.2})
+    result = wp.diagnose(s, data)
+    assert result.conclusion == "ambiguous" and len(result.plausible) == 5
+    top = result.suggested_sensors[0]
+    assert top.pairs == 10 and top.separated >= 4 and not top.resolves
+    assert sorted(n for g in top.groups for n in g) == sorted(result.plausible)
+    # Ranked by the pairs they separate: a tachometer, which separates only the slow pump
+    # from the rest (the old top suggestion), is not first.
+    assert all(x.separated <= top.separated for x in result.suggested_sensors)
+    assert top.path != "pump.speed_rpm"
+    # The ranking does not depend on the order in which the hypotheses were listed.
+    backwards = wp.diagnose(s, data, list(reversed(result.plausible)))
+    assert [x.path for x in backwards.suggested_sensors[:4]] == [
+        x.path for x in result.suggested_sensors[:4]
+    ]
+    note = next(n for n in result.notes if n.startswith("To narrow it down"))
+    assert f"measure {top.path}" in note and "remain tied" in note
+    assert not any(n.startswith("To resolve it") for n in result.notes)
+    # Model quantities are never proposed (friction factors, ratios, coefficients).
+    model_only = ("dp_ratio", "friction_factor", "reynolds", "effective_kv", "residence_time")
+    for r in (result, backwards):
+        assert not any(x.path.endswith(model_only) for x in r.suggested_sensors)
+    # Where one sensor separates every pair, the note says it resolves the diagnosis.
+    pressures = wp.diagnose(s, readings({"pump.wear_head": 0.15}, FLOW_AND_PRESSURES))
+    assert pressures.suggested_sensors[0].resolves
+    assert any(n.startswith("To resolve it, measure") for n in pressures.notes)
+    json.dumps(result.to_dict(), allow_nan=False)
+
+
+def test_only_quantities_an_instrument_reads_are_proposed_as_sensors() -> None:
+    """The default sensor candidates of every catalogue component (identifiability and
+    diagnosis suggestions): model quantities such as a friction factor, a Kv, a ratio to a
+    model reference or a curve fit's properties are marked ``measurable: false``."""
+    catalog = wp.default_catalog()
+    s = wp.System("everything")
+    for alias in catalog.aliases():
+        s.add(alias, alias)
+    physical = {
+        "centrifugal_pump": {
+            "volume_flow", "head", "shaft_power", "hydraulic_power", "efficiency",
+            "specific_energy", "npsh_available", "speed_rpm",
+        },
+        "check_valve": {"volume_flow", "pressure_drop"},
+        "drain": {"volume_flow"},
+        "instantaneous_water_heater": {
+            "volume_flow", "outlet_temperature", "temperature_rise", "heat_rate",
+        },
+        "leak": {"volume_flow", "pressure"},
+        "media_filter": {"volume_flow", "pressure_drop"},
+        "mixing_faucet": {"flow", "temperature", "hot_flow", "cold_flow"},
+        "pipe": {"volume_flow", "velocity", "pressure_drop"},
+        "supply": {"volume_flow"},
+        "tank": {"level", "temperature", "volume", "fill_fraction", "net_inflow", "overflow_rate"},
+        "uv_reactor": {"volume_flow", "pressure_drop", "dose"},
+        "valve": {"position", "volume_flow", "pressure_drop"},
+    }  # fmt: skip
+    got: dict[str, set[str]] = {alias: set() for alias in catalog.aliases()}
+    for path in _default_candidates(s):
+        inst, local = path.split(".", 1)
+        port, _, key = local.rpartition(".")
+        if port in catalog.get(inst).ports:
+            assert key in ("p", "T"), path
+            continue
+        got[inst].add(local)
+    assert got == physical
+
+
+def test_faults_the_measurements_cannot_see_are_reported() -> None:
+    """A flow meter and pressure gauges cannot see an efficiency loss or a dim UV lamp. 'No
+    fault' then covers only the faults that could be tested, and the result says which
+    could not, with a sensor that would see each."""
+    s = skid()
+    data = readings({"pump.wear_efficiency": 0.4, "uv.lamp_output": 0.3}, FLOW_AND_PRESSURES, 2)
+    result = wp.diagnose(s, data)
+    assert result.conclusion == "no_fault" and result.best == BASELINE
+    assert set(result.undetectable) == {"pump.efficiency_loss", "uv.lamp_degraded"}
+    assert result.undetectable["uv.lamp_degraded"] == "uv.dose"
+    assert result.undetectable["pump.efficiency_loss"] in (
+        "pump.shaft_power", "pump.efficiency", "pump.specific_energy",
+    )  # fmt: skip
+    assert result.notes[0].startswith("No fault is detected among the 7 testable")
+    assert result.notes[1].startswith(
+        "Not detectable with these measurements: pump.efficiency_loss and uv.lamp_degraded"
+    )
+    assert "uv.dose for uv.lamp_degraded" in result.notes[1]
+    assert result.to_dict()["undetectable"] == result.undetectable
+    # Undetectable faults are not paired: they add nothing that a measurement sees.
+    pairs = wp.diagnose(s, data, max_faults=2)
+    assert not any(
+        len(h.faults) == 2 and set(h.faults) & set(result.undetectable) for h in pairs.hypotheses
+    )
+    # When nothing that could be tested is left, nothing is concluded.
+    blind = wp.diagnose(s, data, ["pump.efficiency_loss", "uv.lamp_degraded"])
+    assert blind.conclusion == "untested" and blind.best == BASELINE
+    assert blind.notes[0].startswith("No fault hypothesis could be tested")
+    assert "improves the fit" not in blind.notes[0]
+    # With every sensor, both are detectable and none is reported.
+    assert wp.diagnose(s, readings({})).undetectable == {}
+
+
+def test_leaks_at_a_junction_named_by_another_port_are_tested() -> None:
+    """A combination may name a junction by any of its ports; include_leaks then tests the
+    single leak there under that name instead of dropping it."""
+    s = skid()
+    data = readings({}, leak=("filter.outlet", 8.0))
+    listed = ["leak_at:uv.inlet + pump.worn_impeller", "pump.worn_impeller"]
+    result = wp.diagnose(s, data, listed, include_leaks=True)
+    singles = [h.name for h in result.hypotheses if h.name.startswith(LEAK_PREFIX)]
+    singles = [n for n in singles if " + " not in n]
+    assert "leak_at:uv.inlet" in singles and "leak_at:filter.outlet" not in singles
+    assert len(singles) == 8 and result.skipped == {}
+    assert result.best == "leak_at:uv.inlet" and result.conclusion == "fault", result.notes
+    assert not result["leak_at:uv.inlet + pump.worn_impeller"].supported
+    # Leaks where a supply or drain fixes the pressure change no measured value.
+    assert set(result.undetectable) == {"leak_at:src.port", "leak_at:out.port"}
+
+
+def test_an_explicit_combination_checks_each_of_its_faults() -> None:
+    """A combination given explicitly is fitted alone, so its single faults are fitted as
+    well (not ranked) to check each fault against the others: a member the data push past
+    healthy is reported as unsupported, not concluded."""
+    s = skid()
+    for seed in (1, 2, 3):
+        data = readings({"filter.clogging": 0.5}, seed=seed)
+        result = wp.diagnose(s, data, ["pump.worn_impeller + filter.clogged"])
+        assert result.ranking == ["pump.worn_impeller + filter.clogged", BASELINE]
+        assert result.conclusion == "weak_evidence", result.notes
+        assert result.false_alarm == 1.0 and result.false_alarm_against == "filter.clogged"
+        text = " ".join(result.notes)
+        assert "filter.clogged alone (fitted for this check) explains the measurements" in text
+        assert "the data do not support pump.worn_impeller" in text
+        est = result.best_hypothesis.estimates["pump.worn_impeller"]
+        assert est.value == 0.0 and est.bound_end == "start"
+        assert "sits at its healthy value (0) and the data push past it" in text
+        assert "may be larger than its range allows" not in text
+        assert result.best_hypothesis.success  # starting from the contained fit is no failure
+    # A true pair given explicitly is still concluded.
+    both = readings({"pump.wear_head": 0.15, "filter.clogging": 0.5})
+    pair = wp.diagnose(s, both, ["pump.worn_impeller + filter.clogged"])
+    assert pair.conclusion == "fault" and pair.false_alarm is not None
+    assert pair.false_alarm < 1e-6
+
+
+def test_a_system_better_than_given_is_not_diagnosed_with_the_fault() -> None:
+    """A fault is fitted only on its side of the system as given: a repaired pump measured
+    against a model that still has its wear, or a lamp brighter than commanded, is not
+    'diagnosed' as that fault, and the notes say the system as given overstates it."""
+    repaired = skid()
+    repaired.set("pump.wear_head", 0.2)
+    result = wp.diagnose(repaired, readings({}))
+    assert result.best != "pump.worn_impeller" and result.conclusion != "fault"
+    est = result["pump.worn_impeller"].estimates["pump.worn_impeller"]
+    assert (est.lower, est.upper, est.baseline, est.healthy) == (0.2, 0.5, 0.2, 0.0)
+    assert est.value == 0.2 and est.bound_end == "start"
+    text = " ".join(result.notes)
+    assert "The data push pump.worn_impeller back toward healthy" in text
+    assert "overstates this fault" in text
+    dimmed = skid()
+    dimmed.set("uv.lamp_output", 0.6)  # commanded to 60 %, delivering 75 %
+    brighter = wp.diagnose(dimmed, readings({"uv.lamp_output": 0.75}))
+    assert brighter.best != "uv.lamp_degraded" and brighter.conclusion != "fault"
+    lamp = brighter["uv.lamp_degraded"].estimates["uv.lamp_degraded"]
+    assert (lamp.lower, lamp.upper) == (0.0, 0.6) and lamp.value == 0.6
+    # Further wear from a worn system as given is found as before.
+    worn = skid()
+    worn.set("pump.wear_head", 0.1)
+    further = wp.diagnose(worn, readings({"pump.wear_head": 0.2}))
+    assert further.best == "pump.worn_impeller" and further.conclusion == "fault"
+    est = further.best_hypothesis.estimates["pump.worn_impeller"]
+    assert est.lower == 0.1 and est.standard_error is not None
+    assert abs(est.value - 0.2) <= 2 * est.standard_error
+    note = "is not healthy in pump.worn_impeller (pump.wear_head = 0.1, healthy 0)"
+    assert note in " ".join(further.notes)
+    # A fault already at the end of its range cannot grow: skipped with the reason.
+    spent = skid()
+    spent.set("pump.wear_head", 0.5)
+    at_end = wp.diagnose(spent, readings({"pump.wear_head": 0.5}))
+    assert "cannot grow from there" in at_end.skipped["pump.worn_impeller"]
+
+
+def test_notes_lead_with_what_the_result_can_claim() -> None:
+    """An unexplained result leads with that, words the best hypothesis as the closest of
+    those tested and gives no false-alarm bound; a diagnosis that tested nothing says so."""
+    s = skid()
+    off_flow = readings({})
+    off_flow["points"][0]["measured"]["pump.volume_flow"]["value"] += 5.0
+    off_gauge = readings({})
+    off_gauge["points"][0]["measured"]["pump.outlet.p"]["value"] += 0.5
+    for data in (off_flow, off_gauge):
+        result = wp.diagnose(s, data)
+        assert result.conclusion == "unexplained" and result.false_alarm is None
+        assert result.notes[0].startswith("Unexplained: even the best hypothesis misses")
+        assert result.notes[1].startswith("The closest of the tested hypotheses is")
+        text = " ".join(result.notes)
+        assert "No fault is detected" not in text and "Best explanation" not in text
+        assert "probability at most" not in text
+    # A valve whose opening the points set: its only fault mode cannot be tested.
+    t = wp.System("line")
+    t.add("src", "supply", pressure=1.0)
+    t.add("v", "valve", kv=4.0)
+    t.add("out", "drain")
+    t.connect("src.port", "v.port_a")
+    t.connect("v.port_b", "out.port")
+    points = []
+    for name, opening in (("a", 0.5), ("b", 1.0)):
+        t.set("v.opening", opening)
+        flow = t.solve()["v.volume_flow"]
+        measured = {"v.volume_flow": {"value": flow, "sigma": 1.0}}
+        points.append({"name": name, "settings": {"v.opening": opening}, "measured": measured})
+    nothing = wp.diagnose(t, {"points": points})
+    assert nothing.conclusion == "untested" and nothing.ranking == [BASELINE]
+    assert nothing.notes[0].startswith("No fault hypothesis could be tested")
+    assert "improves the fit" not in nothing.notes[0]
+    assert "v.partly_closed" in nothing.skipped
+    points[0]["measured"]["v.volume_flow"]["value"] += 20.0
+    misfit = wp.diagnose(t, {"points": points})
+    assert misfit.conclusion == "unexplained"
+    assert "max_faults=2" not in " ".join(misfit.notes)  # no two single faults to pair
+
+
+def test_lean_collection_matches_a_full_solve() -> None:
+    """Calibration collects only the paths it reads (and what the controls measure); the
+    values are exactly those of a full solve and simulation, with a PI loop in the loop."""
+
+    def station() -> wp.System:
+        text = (EXAMPLES / "booster_station.yaml").read_text(encoding="utf-8")
+        return wp.System.from_dict(yaml.safe_load(text))
+
+    paths = ["pump.volume_flow", "main.port_b.p", "pump.speed", "control.zone_pressure.output"]
+    full = station().solve()
+    s = station()
+    with s._collecting(paths):
+        lean = s.solve()
+    assert lean.modes == {} and len(lean.values) < len(full.values)
+    for p in paths:
+        assert lean.values[p] == full.values[p], p
+    run = {"duration": 60, "step": 1.0, "events": [{"at": 20, "set": {"demand.opening": 0.9}}]}
+    wanted = paths[:3]
+    sim_full = station().simulate(**run, variables=wanted)
+    s = station()
+    with s._collecting(wanted):
+        sim_lean = s.simulate(**run, variables=wanted)
+    for p in wanted:
+        assert sim_lean.series[p] == sim_full.series[p], p
+    assert len(s.solve().values) == len(full.values)  # outside the block, everything again

@@ -61,16 +61,25 @@ measurements, calibration, identifiability and fault diagnosis.
   junction with `include_leaks=True`; `max_faults=2` tries pairs) by fitting it with
   `calibrate` and ranking by AIC on the weighted residuals. `DiagnosisResult` gives a
   one-word `conclusion` (`fault`, `no_fault`, `ambiguous`, `weak_evidence`,
-  `unexplained`), each hypothesis's fitted magnitude with its standard error, at-bound
-  flag and residuals, Akaike weights, the measurements that discriminate the best from the
-  runner-up, the unmeasured variables that would resolve an ambiguous diagnosis, a
-  false-alarm bound for a detected fault, and notes. A hypothesis that only adds a fault
-  to a better or equal one is not counted as a separate explanation (Arnold 2010), so a
-  fault fitted to noise does not make every diagnosis ambiguous. Nothing is applied to the
-  system. About 0.3 s for a nine-component treatment skid with its nine fault modes.
+  `unexplained`, `untested`), each hypothesis's fitted magnitude with its standard error,
+  at-bound flag and residuals, Akaike weights, the measurements that discriminate the best
+  from the runner-up, the unmeasured variables that separate the plausible hypotheses of an
+  ambiguous diagnosis, the faults the measurements cannot see (`undetectable`, each with a
+  sensor that would), a false-alarm bound for a detected fault, and notes. A hypothesis
+  that only adds a fault to a better or equal one is not counted as a separate explanation
+  (Arnold 2010), so a fault fitted to noise does not make every diagnosis ambiguous. Every
+  fault of a combination must beat the combination without it (`false_alarm_against`
+  names the weakest); a fault is fitted only on its side of the system as given, so a
+  repaired pump is not "diagnosed" as worn. Nothing is applied to the system. About 0.2 s
+  for a nine-component treatment skid with its nine fault modes.
 - Observables may be marked `measurable: false` (model quantities such as the pump's
-  `bep_flow`, `npsh_required` and `curve_fit_rms`), which are no longer proposed as sensors
-  by `identifiability`.
+  `bep_flow`, `npsh_required` and `curve_fit_rms`, the pipe's `reynolds` and
+  `friction_factor`, the valve's `effective_kv`, the filter's `dp_ratio` and the UV
+  reactor's `residence_time`), which are not proposed as sensors by `identifiability` or
+  `diagnose`.
+- Calibration's solves and simulations collect only the measured paths (about twice as fast
+  for diagnosis); a fit whose end point is worse than its start only by round-off is no
+  longer reported as a failure.
 
 - **Control loops** (design 13.1, `worldparts.controls`). A system may carry `controls`: a
   `pi` loop or a `hysteresis` switch that reads one reported numeric variable and writes

@@ -95,7 +95,7 @@ inputs:
 observables:
   - {name: volume_flow, unit: m3/h, description: Volume flow from inlet to outlet.}
   - {name: pressure_drop, unit: bar, pressure_reference: difference, description: Pressure at the inlet minus pressure at the outlet.}
-  - {name: residence_time, unit: s, description: Plug-flow residence time volume / |Q| (capped at 1e6 s).}
+  - {name: residence_time, unit: s, description: Plug-flow residence time volume / |Q| (capped at 1e6 s)., measurable: false}
   - {name: dose, unit: mJ/cm2, description: Average UV dose fluence_rate * lamp_output * residence_time (capped at 1e6 mJ/cm2).}
 modes:
   - {name: idle, condition: "abs(volume_flow) < 0.01", description: No significant flow.}

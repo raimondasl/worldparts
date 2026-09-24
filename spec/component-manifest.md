@@ -244,9 +244,13 @@ Checks skip undefined values.
 
 `measurable: false` (the default is `true`) marks a model quantity rather than a physical
 state of the plant, for example a pump's best-efficiency flow or NPSH required, which are
-properties of its fitted curves. Such an observable is never proposed as a sensor (by
-`identifiability` or by a diagnosis's sensor suggestions); a measurement set may still give
-a value for it, for example from a test report.
+properties of its fitted curves, a pipe's Reynolds number or friction factor, a valve's
+effective Kv, or a ratio to a model reference. A quantity that plant instruments or
+standard test methods report stays measurable, even when they compute it from several
+readings (a pump's hydraulic power or efficiency). An observable marked `measurable: false`
+is never proposed as a sensor (by `identifiability` or by a diagnosis's sensor
+suggestions); a measurement set may still give a value for it, for example from a test
+report.
 
 ### Fault modes
 
@@ -270,8 +274,9 @@ faults:
   variable of the component: a system refers to the fault as `<instance>.<name>`
   (`pump.worn_impeller`).
 - `vary.path` MUST be a `number` parameter or input of the component (not a state,
-  observable, integer, string or table). `vary.lower` MUST be below `vary.upper`, and
-  `healthy`, the value without the fault, MUST lie within them.
+  observable, integer, string or table). `vary.lower`, `vary.upper` and `healthy` MUST be
+  finite numbers; `vary.lower` MUST be below `vary.upper`, and `healthy`, the value without
+  the fault, MUST lie within them.
 - Without `relative`, the bounds and `healthy` are in the variable's declared unit and MUST
   lie within its hard limits.
 - With `relative: true`, `lower`, `upper` and `healthy` are non-negative multiples of the
@@ -280,6 +285,9 @@ faults:
   the commanded one) or a value that differs per installation (a pipe's roughness "up to
   20 times its value" is `{path: roughness, lower: 1, upper: 20, relative: true}` with
   `healthy: 1`). The resulting range is clipped to the hard limits when a diagnosis runs.
+- A diagnosis fits an absolute fault only on its side of the value in the system being
+  diagnosed: from that value away from `healthy` (design 14.3), so that a system that
+  already carries some of the fault is not "diagnosed" with the fault receding.
 
 ## 6. The expression language
 
@@ -557,7 +565,8 @@ the offending name.
     every check parse.
 13. **Mass conservation.** At least one contract uses an `equal` check.
 14. **Fault modes.** Fault names are unique and are not the name of a port or variable;
-    `vary.path` is a `number` parameter or input; `lower < upper`; absolute bounds lie
+    `vary.path` is a `number` parameter or input; the bounds and `healthy` are finite;
+    `lower < upper`; absolute bounds lie
     within the variable's hard limits and relative ones are not negative; `healthy` lies
     within the bounds (section 5, Fault modes).
 
@@ -666,7 +675,7 @@ states:
 observables:
   - {name: volume_flow, unit: L/min, description: Volume flow from port_a to port_b.}
   - {name: pressure_drop, unit: bar, pressure_reference: difference, description: Pressure at port_a minus pressure at port_b.}
-  - {name: effective_kv, unit: m3/h, description: Kv at the current position (kv times the characteristic).}
+  - {name: effective_kv, unit: m3/h, description: Kv at the current position (kv times the characteristic)., measurable: false}
 modes:
   - {name: closed, condition: "position <= 0.001", description: Valve closed; only seat leakage passes.}
   - {name: throttling, condition: "position < 0.999", description: Partly open.}

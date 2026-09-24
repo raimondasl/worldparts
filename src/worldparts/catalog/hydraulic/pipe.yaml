@@ -77,8 +77,8 @@ observables:
   - {name: volume_flow, unit: L/min, description: Volume flow from port_a to port_b.}
   - {name: velocity, unit: m/s, description: Mean velocity in the direction port_a to port_b.}
   - {name: pressure_drop, unit: bar, pressure_reference: difference, description: Pressure at port_a minus pressure at port_b (includes static head).}
-  - {name: reynolds, unit: "1", description: Reynolds number (non-negative).}
-  - {name: friction_factor, unit: "1", description: Darcy friction factor (undefined at zero flow).}
+  - {name: reynolds, unit: "1", description: Reynolds number (non-negative)., measurable: false}
+  - {name: friction_factor, unit: "1", description: Darcy friction factor (undefined at zero flow)., measurable: false}
 modes:
   - {name: stagnant, condition: "abs(volume_flow) < 0.001", description: No significant flow.}
   - {name: flowing, condition: "true", description: Water flows through the pipe.}

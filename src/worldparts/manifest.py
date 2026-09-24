@@ -13,7 +13,7 @@ import math
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from functools import cache
+from functools import cache, cached_property
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -284,15 +284,16 @@ class VariableSpec:
         """True for number and integer variables."""
         return self.type in ("number", "integer")
 
-    @property
+    @cached_property
     def converter(self) -> UnitConverter:
-        """Converter between the declared unit and SI (numeric variables only)."""
+        """Converter between the declared unit and SI (numeric variables only; computed
+        once, since solves convert every value)."""
         assert self.unit is not None
         return converter(self.unit, self.reference)
 
-    @property
+    @cached_property
     def reference(self) -> str | None:
-        """Effective reference used for unit conversion.
+        """Effective reference used for unit conversion (computed once).
 
         Pressures: ``gauge`` (default), ``absolute`` or ``difference``. Temperature
         differences (``quantity: temperature_difference``): ``difference``. Otherwise None.
@@ -895,6 +896,23 @@ class Manifest:
                 out.append(
                     f"{label}: vary.path '{f.path}' is {what}; a fault varies a number "
                     "parameter or input. " + format_choices(f.path, numeric)
+                )
+                continue
+            infinite = [
+                key
+                for key, value in (
+                    ("vary.lower", f.lower),
+                    ("vary.upper", f.upper),
+                    ("healthy", f.healthy),
+                )
+                if not math.isfinite(value)
+            ]
+            if infinite:
+                what = "a finite number" if len(infinite) == 1 else "finite numbers"
+                out.append(
+                    f"{label}: {' and '.join(infinite)} must be {what}, not infinity or NaN (a "
+                    f"fault's range is fitted, so it needs finite ends within the hard limits "
+                    f"of '{f.path}', {spec.limits_text()})."
                 )
                 continue
             if not f.lower < f.upper:

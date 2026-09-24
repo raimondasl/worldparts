@@ -81,7 +81,7 @@ states:
 observables:
   - {name: volume_flow, unit: L/min, description: Volume flow from port_a to port_b.}
   - {name: pressure_drop, unit: bar, pressure_reference: difference, description: Pressure at port_a minus pressure at port_b.}
-  - {name: effective_kv, unit: m3/h, description: Kv at the current position (kv times the characteristic).}
+  - {name: effective_kv, unit: m3/h, description: Kv at the current position (kv times the characteristic)., measurable: false}
 modes:
   - {name: closed, condition: "position <= 0.001", description: Valve closed; only seat leakage passes.}
   - {name: throttling, condition: "position < 0.999", description: Partly open.}
