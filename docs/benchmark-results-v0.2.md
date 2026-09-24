@@ -12,6 +12,22 @@ Run on 23 and 24 September 2026. Raw summaries are in
 
 This result changes what worldparts should claim and what it should measure next. See [What this means](#what-this-means).
 
+## Update: three conditions compared (September 24)
+
+A third condition, `lib`, gives the agent the same shell and files as `code` plus worldparts installed as a Python package, with a 22-line quick reference. It does not tell the agent it must use worldparts. All 40 tasks (the 32 small tasks and the 8 scale tasks) ran on all three models. The `mcp` and `code` columns below combine the full and scale runs above.
+
+| Model | mcp | code | lib | Median cost mcp / code / lib | lib sessions that used worldparts |
+|---|---:|---:|---:|---|---|
+| Sonnet 5 | 39/40 | 40/40 | 39/40 | $0.134 / $0.028 / $0.032 | 7 of 40 (all 7 passed) |
+| Opus 5.5 | 39/40 | 39/40 | 40/40 | $0.219 / $0.050 / $0.050 | 1 of 40 |
+| Haiku 4.5 | 28/40 | 19/40 | 23/40 | $0.147 / $0.115 / $0.192 | 33 of 40 (18 passed) |
+
+On the 32 small tasks alone, Haiku 4.5 passed 27 with the MCP tools, 22 with the library and 19 from scratch. On the 8 scale tasks it passed 1, 1 and 0.
+
+- **For frontier models the delivery form does not matter for accuracy, and code is cheapest.** With the library available at no extra cost, Sonnet 5 used it in 7 of 40 sessions, almost all transient or scale tasks with tanks and controls, and all 7 passed. Opus 5.5 used it once.
+- **For the smaller model, the typed tool interface matters more than the physics.** Haiku 4.5 reached for the library in 33 of 40 sessions but passed only 18 of them. It gained 3 small tasks with the library and 8 with the MCP tools. The MCP tools give it typed schemas, component descriptions, structured results and guided error messages, which a Python API alone does not.
+- **Nothing rescued the smaller model at scale.**
+
 ## Update: scale tasks (level 4)
 
 Eight further tasks test scale. They have 22 to 57 components, looped networks with two supplies, towers on level switches, a three-pump booster staged by header pressure, three-train treatment plants, filters clogging under a PI flow loop, and 24-hour simulations. Independent auditors solved every task without worldparts, using their own Newton solvers or WNTR/EPANET, and landed within 0.7 percent of every reference value. All three models ran every task in both conditions, on Claude Code 2.1.280.
