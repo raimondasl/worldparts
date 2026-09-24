@@ -1140,7 +1140,9 @@ def test_code_plus_env_is_keyed_and_built_once(
     assert env.ensure_code_plus_env(d, log=lambda *a: None) == d
     venv, install, probe, freeze = fake.calls
     assert venv[1:3] == ["venv", "--python"]
-    assert f"numpy=={request['packages']['numpy']}" in install and "lmfit" in install
+    assert f"numpy=={request['packages']['numpy']}" in install and any(
+        a.startswith("lmfit") for a in install
+    )
     assert probe[1] == "-c" and "worldparts" in probe[2] and fake.envs[2]["MPLBACKEND"] == "Agg"
     assert freeze[1:3] == ["pip", "freeze"]
     info = env.env_info(d)

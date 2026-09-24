@@ -94,7 +94,7 @@ Every arm gets the same task bundle ([section 5](#5-what-every-arm-receives)), t
 
 ### Models
 
-- Claude Sonnet 5 and Claude Opus 5.5.
+- Claude Sonnet 5 (`claude-sonnet-5`) and Claude Opus 5.5 (`claude-opus-5-5`), called by these explicit model ids.
 - Claude Haiku 4.5 only if the owner names a real deployment that needs a small or local model before freeze-1. In v0.2, Sonnet 5 writing code from scratch beat Haiku with the MCP tools on both accuracy and cost.
 
 ### Pinned settings
@@ -106,7 +106,7 @@ Every arm gets the same task bundle ([section 5](#5-what-every-arm-receives)), t
 
 ### 3.1 Methods checklist (verbatim)
 
-This text is frozen at freeze-0. A test checks that it is 20 to 30 lines and names neither worldparts nor its functions.
+This text is frozen at freeze-0. A test checks that it is 20 to 30 lines and names neither worldparts nor its functions as code. The English word "identifiability" in item 7 is allowed.
 
 ```text
 Method checklist for questions answered from plant data.
@@ -513,14 +513,14 @@ Test tasks and truth are published after the gate decision, with a canary string
 - **The room is closed if and only if F(Sonnet 5) ≤ 3 and F(Opus 5.5) ≤ 3.**
 - `code+` is recorded but does not enter the rule.
 
-**Operating characteristics.** A critic's simulation estimated P(closed) against the true code-hint pass rates below. `power.py` must reproduce these figures within ±0.05 before freeze-0, and the reproduced table replaces this one.
+**Operating characteristics.** `power.py` gives the chance that the room is closed at each true code-hint pass rate. It reproduced a critic's figures within ±0.01. The assumptions and the full tables are in [analysis/power-tables.md](analysis/power-tables.md).
 
 | True code-hint pass rate (Sonnet / Opus) | P(closed) |
 |---|---:|
 | 0.65 / 0.70 | 0.07 |
 | 0.70 / 0.75 | 0.17 |
-| 0.75 / 0.80 | 0.32 |
-| 0.80 / 0.85 | 0.54 |
+| 0.75 / 0.80 | 0.33 |
+| 0.80 / 0.85 | 0.55 |
 | 0.85 / 0.90 | 0.78 |
 | 0.90 / 0.92 | 0.92 |
 
@@ -562,8 +562,8 @@ That is 924 sessions. If PIVOT-small is in play, Haiku adds `code-hint` and `mcp
 
 **Power.** `power.py` simulates P(CONTINUE) under the predicted pattern: gains concentrated on F3 and F4, about 0 on F1 and F2, and `code-skill` capturing a quarter of the gain.
 
-- It must reproduce a critic's estimates within ±0.05: about 0.00 at a true 0, 0.14 at +10, 0.55 at +15, and 0.84 at +20. The figures at +15 and +20 fall to 0.27 and 0.54 when only one model gains.
-- If P(CONTINUE) at a true +20 is below 0.70, the test set is enlarged before the seed is drawn, or the owner's acceptance of the lower power is recorded in the change log.
+- Under the rule as pre-registered, P(CONTINUE) is 0.00 at a true 0, 0.15 at +10, 0.60 at +15 and 0.88 at +20. When only Sonnet 5 gains, it is 0.28 at +15 and 0.56 at +20. These reproduce a critic's estimates within ±0.05; see [analysis/power-tables.md](analysis/power-tables.md).
+- The requirement is met: P(CONTINUE) at a true +20 is at least 0.70. Had it fallen short, the test set would have been enlarged before the seed was drawn, or the owner's acceptance of the lower power recorded in the change log.
 - The primary thresholds (+15 with a lower bound of +5) never change.
 
 ### Blind defect audit and re-runs

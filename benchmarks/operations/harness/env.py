@@ -40,9 +40,13 @@ from .bundles import REPO_ROOT
 PYTHON_VERSION = "3.12"
 #: Taken at the version the repository's environment has (uv.lock).
 LOCKED_PACKAGES = ("numpy", "scipy", "pandas", "fluids", "wntr", "matplotlib")
-#: Not in uv.lock: pinned here (None: the newest compatible version at build time; the
-#: installed version is recorded in stamp.json and run.json).
-EXTRA_PINS: dict[str, str | None] = {"statsmodels": None, "scikit-learn": None, "lmfit": None}
+#: Not in uv.lock: pinned here at freeze-0 (None would mean the newest compatible version
+#: at build time); the installed versions are recorded in stamp.json and run.json.
+EXTRA_PINS: dict[str, str | None] = {
+    "statsmodels": "0.15.0",
+    "scikit-learn": "1.9.1",
+    "lmfit": "1.3.4",
+}
 #: Import names of every package the preamble lists, in its order.
 IMPORTS = (
     "numpy",

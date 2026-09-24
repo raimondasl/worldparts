@@ -343,20 +343,42 @@ def test_a_cell_without_any_reported_cost_fails_condition_7_saying_so() -> None:
 # ----------------------------------------------------------------------------------------
 # power.py
 # ----------------------------------------------------------------------------------------
-def test_preregistered_figures_are_the_ones_printed() -> None:
+def _power_table_rows(section: str) -> list[list[str]]:
+    text = (REPO / "benchmarks" / "operations" / "analysis" / "power-tables.md").read_text(
+        encoding="utf-8"
+    )
+    body = text.split(section, 1)[1].split("\n## ", 1)[0]
+    return [
+        [c.strip() for c in line.strip().strip("|").split("|")]
+        for line in body.splitlines()
+        if line.startswith("| ") and not line.startswith("| True")
+    ]
+
+
+def test_preregistered_figures_are_the_reproduced_ones() -> None:
+    # Stage 0: the pre-registration prints the reproduced column of power-tables.md, and every
+    # reproduced figure is within 0.05 of the critic's printed figure (PREREG_STAGE0).
+    stage0 = {
+        r[0]: float(r[2]) for r in _power_table_rows("## Stage 0") if re.match(r"\d\.\d\d / ", r[0])
+    }
     for (ps, po), want in P.PREREG_STAGE0:
-        assert f"| {ps:.2f} / {po:.2f} | {want:.2f} |" in PREREG
+        got = stage0[f"{ps:.2f} / {po:.2f}"]
+        assert abs(got - want) <= 0.05
+        assert f"| {ps:.2f} / {po:.2f} | {got:.2f} |" in PREREG
+    stage1 = {
+        (r[1], r[0]): float(r[3])
+        for r in _power_table_rows("## Stage 1")
+        if len(r) >= 4 and re.match(r"[+-]\d", r[0])
+    }
     flat = re.sub(r"\s+", " ", PREREG)
-    s1 = dict(P.PREREG_STAGE1)
+    b = {d: stage1[("both", d)] for d in ("+0", "+10", "+15", "+20")}
+    s = {d: stage1[("Sonnet 5 only", d)] for d in ("+15", "+20")}
     assert (
-        f"about {s1[('both', 0.0)]:.2f} at a true 0, {s1[('both', 0.10)]:.2f} at +10, "
-        f"{s1[('both', 0.15)]:.2f} at +15, and {s1[('both', 0.20)]:.2f} at +20" in flat
+        f"P(CONTINUE) is {b['+0']:.2f} at a true 0, {b['+10']:.2f} at +10, {b['+15']:.2f} at "
+        f"+15 and {b['+20']:.2f} at +20. When only Sonnet 5 gains, it is {s['+15']:.2f} at +15 "
+        f"and {s['+20']:.2f} at +20." in flat
     )
-    assert (
-        f"fall to {s1[('Sonnet 5 only', 0.15)]:.2f} and {s1[('Sonnet 5 only', 0.20)]:.2f} "
-        "when only one model gains" in flat
-    )
-    assert "If P(CONTINUE) at a true +20 is below 0.70" in flat and P.POWER_REQUIREMENT == 0.70
+    assert b["+20"] >= P.POWER_REQUIREMENT == 0.70
 
 
 def test_layouts_match_the_preregistered_cells() -> None:
