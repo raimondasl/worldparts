@@ -16,28 +16,109 @@ measures an agent composing pre-built components**. This benchmark does.
 
 Each task is a water-engineering question (an operating point, a sizing, a what-if, a
 transient, a fault diagnosis or an open design review, see [Judgement tasks](#judgement-tasks))
-stated completely in numbers. The same prompt runs in two conditions, and the answers are
-graded against a reference computed with worldparts.
+stated completely in numbers. The same prompt runs in two conditions (three with the
+optional [lib condition](#the-lib-condition)), and the answers are graded against a
+reference computed with worldparts.
 
 **Decision gate** (report, section "What to do next"): if tool-based composition does not
 clear **80 %** on level-1 tasks with a frontier model, the packaging thesis needs rethinking.
 Every report prints this line: the level-1 pass rate of condition `mcp` versus 80 %.
 
-### The two conditions
+### The conditions
 
 | Condition | The agent has | The agent does not have |
 |---|---|---|
 | `mcp` | Only the worldparts MCP server's tools (list, describe, create, add, connect, solve, solve_for, simulate, ...) | Code execution, files, web, any other tool |
-| `code` | A shell restricted to running Python (`python script.py`, `python -c`) in an environment with numpy, scipy, fluids and wntr; reading and writing files in its working directory | worldparts, pip, the network (by instruction and configuration; see limitations) |
+| `code` | A shell (Bash, and Read, Write, Edit in its working directory) whose `python` is an environment with numpy, scipy, fluids and wntr | worldparts, pip, the network (by instruction and configuration; see limitations) |
+| `lib` (opt-in) | The same tools and permissions as `code`; the environment also has **worldparts installed as a package** (and its `worldparts` command on PATH), and the preamble carries a short quick reference of it | The repository, pip, the network |
 
-Both conditions get the same task prompt, the same appended answer-format instruction, the
-default Claude Code system prompt plus a one-paragraph description of the condition's
-tools, and the same turn and time limits (which may differ by level, see
+`run` runs `mcp` and `code` unless `--conditions` says otherwise; `lib` is described in
+[The lib condition](#the-lib-condition). All conditions get the same task prompt, the same
+appended answer-format instruction, the default Claude Code system prompt plus a short
+description of the condition's tools, and the same turn and time limits (which may differ
+by level, see
 [Scale tasks](#scale-tasks-level-4)). Because the `code` agent must be able to reach
 the same answer by hand or in plain Python, every prompt gives every number with units and
 states every convention that is not textbook-standard (for example how a filter's pressure
 drop splits into a linear and a quadratic part, or that UV dose is fluence rate times
 volume over flow).
+
+### The lib condition
+
+Benchmark v0.2 found that frontier agents writing Python from scratch matched agents using
+the worldparts MCP tools on accuracy at a quarter to an eighth of the tokens, while Claude
+Haiku gained 25 points of pass rate from the MCP tools. Coding agents prefer writing one
+script to making many tool calls. The `lib` condition asks whether worldparts helps when it
+is delivered as a **Python library** the agent imports in its script: code-level token cost
+with tested components. It differs from `code` only in its environment and preamble, so
+`lib` against `code` isolates the library. `lib` against `mcp` measures the delivery plus
+some API differences: the Python API has no `solve_for` (the MCP server's search for the
+input that gives a target result) and no per-call `units` mapping (the agent converts a
+result with `r.get(path, unit=...)` instead).
+
+- **Environment.** `lib-env` builds a cached environment in
+  `%LOCALAPPDATA%/worldparts-bench/lib-env-<key>` (`--lib-env DIR` overrides it for `run`,
+  `smoke` and `lib-env`): Python 3.12, numpy, scipy, fluids and wntr at the code
+  environment's versions, worldparts' own runtime dependencies (pint, pyyaml, jsonschema,
+  mcp, pydantic and theirs; the code environment does not have them), every package at
+  the version the repository's environment has (a constraints file), and worldparts from
+  a **wheel built from the repository the harness runs from** (`uv build --wheel` into
+  `<env>/dist`), installed non-editable, so the agent's Python sees an ordinary installed
+  package and nothing points back to the repository. A probe checks the imports, that
+  worldparts is imported from the environment's site-packages, that it is not editable and
+  that no `.pth` file puts its sources on the path; `worldparts --version` checks the
+  command. `stamp.json` records the versions and a SHA-256 of the package sources
+  (`src/worldparts`, `pyproject.toml`, `README.md`, `LICENSE`), and `<key>` is a hash of
+  that stamp: a change of the sources or versions, or another checkout with other
+  sources, gets a new directory, so building one never clears an environment that a
+  running benchmark uses (old `lib-env-*` directories can be deleted when no run uses
+  them). The stamp is removed before a rebuild and written last, so a half-built
+  environment is never taken as current. The session environment is set up as for
+  `code`: the environment's scripts directory first on PATH (so `python` and `worldparts`
+  are its own), `VIRTUAL_ENV`, `PIP_NO_INDEX=1`, `UV_OFFLINE=1`.
+- **Which worldparts a run measured.** `run.json` records the lib environment (`lib_env`:
+  directory, key, worldparts version, source hash), and so does each lib session's
+  `outcome.json` (and its record). Resuming a run (`--run-id`) with lib sessions refuses
+  when the sources or versions have changed since the run started; the report flags lib
+  runs from more than one lib environment.
+- **Tools.** Exactly those of `code`: `--tools Bash,Read,Write,Edit` and the same
+  `--allowedTools`.
+- **Preamble.** The code paragraph, which also names the installed package worldparts and
+  its command, followed by a 23-line quick reference (`LIB_CHEAT_SHEET_*` in
+  `harness/runner.py`): `worldparts list`, `worldparts describe <component>`, and the
+  Python API (`wp.System`, `add`, `connect`, `check`, `solve` and reading results,
+  `set`, `simulate` with events, `add_control`, `to_dict`/`System.from_dict`,
+  `variables`), with the unit conventions the MCP instructions also give (plain numbers
+  in declared units, strings with units, gauge pressures, and flow units that differ by
+  part: L/min for pipes, valves, drains and supplies, m3/h for pumps, tanks, filters and
+  UV reactors). It describes the package and never tells the agent to use it. Its example
+  system (a pump transferring water from tank `a` through pipe `link` and valve `v` into
+  tank `b`) matches no task's layout or instance names, so it is no template for a task;
+  a test checks this against every task's reference system.
+  `tests/test_benchmark_harness_lib.py` runs every line of it against the package (the
+  shell lines through `worldparts.cli.main`, the Python lines as one script), so the
+  reference cannot drift from the API; an opt-in test (`WPBENCH_LIB_ENV_TEST=1`) builds a
+  real lib environment and runs them with its own `python` and `worldparts`. The dry run
+  prints the preamble of each session.
+- **Contamination.** In `lib`, the word worldparts and reads of the installed package's
+  own files (its site-packages directory, manifests, schemas, the metadata and README
+  installed with it) are allowed. A look into the repository is still flagged, as in
+  `code`: its path (absolute, or relative to the home directory, which catches `~/...`,
+  `$HOME/...`, `%USERPROFILE%/...` and `../..` spellings; each as a whole name, so a
+  sibling such as `worldparts-bench` does not count), `src/worldparts/`, `uv.lock`,
+  `tests/fixtures/benchmark`, and a tool input naming the repository's GitHub address;
+  so are the task directory and schema, the task's file name and frozen `expected:`
+  answers. A test builds the wheel and checks that none of its files trips a marker.
+- **Report.** Every table has a row or column per condition, in the order mcp, code, lib.
+  The decision gate stays the level-1 pass rate of `mcp`; a run with `lib` sessions adds
+  the line `Library versus code: level-1 pass rate lib X % (k/n, 95 % CI ...) versus code
+  Y % (...): +Z points for lib; median tokens A (lib) versus B (code); on N task(s) with
+  valid runs in both conditions (M left out: ...).` (`lib_vs_code` in `summary.json`).
+  The rates are paired by task: contamination and infrastructure errors can remove a
+  task from one condition only, and such a task is left out rather than compared with a
+  different task set (on each task, runs with the same repeat number are paired first,
+  then the rest, as many as the smaller side has; all valid runs are kept under
+  `all_runs`).
 
 ### Task format
 
@@ -261,6 +342,16 @@ uv run python -m benchmarks.composition.harness run --dry-run --model opus --tas
 # One-time: build the code condition's Python environment (outside the repository).
 uv run python -m benchmarks.composition.harness code-env
 
+# The lib condition's environment (worldparts from a wheel of this repository); `run`
+# also builds or refreshes it when a selected condition is lib.
+uv run python -m benchmarks.composition.harness lib-env
+
+# lib against code and mcp: dry run (prints each session's preamble), then level 1.
+uv run python -m benchmarks.composition.harness run --dry-run --model opus \
+    --tasks pump-lift-01 --conditions mcp code lib
+uv run python -m benchmarks.composition.harness run --model opus --levels 1 \
+    --conditions mcp code lib --repeats 3 --max-budget-usd 2
+
 # A real run: level-1 tasks, both conditions, three repeats each.
 uv run python -m benchmarks.composition.harness run --model opus --levels 1 --repeats 3
 
@@ -316,21 +407,31 @@ claude -p --output-format stream-json --verbose --model M --max-turns N
   --no-session-persistence --no-chrome [--max-budget-usd X]
   --append-system-prompt <condition paragraph>
   mcp:  --tools "" --allowedTools mcp__worldparts
-  code: --tools Bash,Read,Write,Edit --allowedTools "Bash(python *)" "Read(./**)" "Write(./**)" "Edit(./**)"
+  code: --tools Bash,Read,Write,Edit --allowedTools Bash Read Write Edit
+  lib:  --tools Bash,Read,Write,Edit --allowedTools Bash Read Write Edit
 ```
+
+(A `Bash(python *)` pattern denied ordinary commands such as `sed ...; python s.py` and
+made agents give up, which measured the harness rather than the agent, so the code and lib
+sessions are unrestricted within the session; grading's contamination check catches reads
+of the benchmark.)
 
 The prompt goes to stdin. `--setting-sources ""` loads no user, project or local settings
 (so no hooks, permission rules or plugins); `settings.json` only sets `disableAllHooks`;
 `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` keep CLAUDE.md
 files and memory out; `--disable-slash-commands` disables skills; `--strict-mcp-config`
 loads only the worldparts server (`uv run --directory <repo> worldparts mcp` with
-`WORLDPARTS_AUTOSAVE_DIR=<tmp>/systems`) or, for `code`, no server; `dontAsk` denies every
+`WORLDPARTS_AUTOSAVE_DIR=<tmp>/systems`) or, for `code` and `lib`, no server; `dontAsk` denies every
 tool call that the allow rules do not cover; `ENABLE_TOOL_SEARCH=false` loads all tool
 schemas up front. The parent's `CLAUDE*`/`ANTHROPIC_*` variables (except credentials) and
 the repository's virtual environment are removed from the CLI's environment; for `code`,
 `python` on PATH is a separate environment (`%LOCALAPPDATA%/worldparts-bench/code-env`)
 with the same numpy, scipy, fluids and wntr versions as the repository and no worldparts,
-no pip, `PIP_NO_INDEX=1` and `UV_OFFLINE=1`.
+no pip, `PIP_NO_INDEX=1` and `UV_OFFLINE=1`; for `lib`, `python` and `worldparts` come from
+`%LOCALAPPDATA%/worldparts-bench/lib-env-<key>`, the same set-up plus worldparts installed
+from a wheel (see [The lib condition](#the-lib-condition)). A multi-line preamble (lib)
+cannot pass through a `.cmd` or `.bat` wrapper of the CLI; the harness refuses one before
+any session starts (set `WPBENCH_CLAUDE` to the executable).
 
 ### How results are graded
 
@@ -350,9 +451,13 @@ no pip, `PIP_NO_INDEX=1` and `UV_OFFLINE=1`.
   prompt" is the one worth reading.
 - **Contamination**: every tool input and result is scanned for the benchmark itself: the
   task directory or schema (`benchmarks/composition`, `composition/tasks`,
-  `task.schema.json`), the task's own file name, a frozen `expected: {...}` mapping, and,
-  in the code condition only, the repository path and the word worldparts (the code
-  environment does not contain it; its `worldparts-bench` directory name does not count).
+  `task.schema.json`), the task's own file name, a frozen `expected: {...}` mapping, in
+  the code and lib conditions the repository (its path, also home-relative, its
+  `src/worldparts/`, `uv.lock` and test fixtures, and its GitHub address in a tool input),
+  and in the code condition only the word worldparts (the code environment does not
+  contain it; its `worldparts-bench` directory name does not count). In the lib condition
+  the word and the installed package's own files (site-packages, manifests, the metadata
+  and docs installed with it) are allowed.
   A contaminated run is left out of every rate and listed with its reasons at the end of
   the report; the run command prints `CONTAMINATED` for it.
 - Runs that fail for infrastructure reasons (CLI not logged in, CLI could not start, API
@@ -365,16 +470,30 @@ no pip, `PIP_NO_INDEX=1` and `UV_OFFLINE=1`.
   table gives, per level and condition, the pass rate, median turns, tool calls, tokens,
   cost and duration, timeouts, turn-limit hits (`error_max_turns`) and the session limits
   the runs used, so level-4 cost and failures can be read against levels 1-3. The decision
-  gate stays the level-1 pass rate of condition `mcp`.
+  gate stays the level-1 pass rate of condition `mcp`. Conditions appear in the order mcp,
+  code, lib; a run with lib sessions also prints the level-1 lib-versus-code line.
 
 ### Known limitations
 
-- **The code condition is restricted, not sandboxed.** The agent can only run `python`,
-  but Python can read any file the user can (including this repository and the frozen
-  answers) and open network connections. Claude Code's own sandbox is not available on
-  Windows. The prompt never names worldparts; runs whose tool traffic touches the
-  benchmark are detected and excluded (see Contamination), and the saved transcripts show
-  what each run did. Detection is by markers, so a deliberately disguised read would pass.
+- **The code and lib conditions are restricted, not sandboxed.** The agent works in a
+  temporary directory, but its shell and Python can read any file the user can (including
+  this repository and the frozen answers) and open network connections. Claude Code's own
+  sandbox is not available on Windows. The code prompt never names worldparts (the lib
+  prompt names only the installed package); runs whose tool traffic touches the benchmark
+  are detected and excluded (see Contamination), and the saved transcripts show what each
+  run did. Detection is by markers, so a deliberately disguised read would pass.
+- **The lib environment is the repository's current package.** A new one is built from
+  the working tree whenever the package sources change, so a lib run measures the
+  worldparts that the harness's repository holds when the run starts (`run.json` and each
+  lib session's outcome record the source hash; compare runs only across the same hash).
+- **The lib package's metadata talks about this benchmark.** The wheel's METADATA carries
+  the repository README, which states the v0.2 result (agents writing Python were as
+  accurate as agents using worldparts, and cheaper) and the GitHub address, where the
+  tasks and frozen answers are public if the repository is. A lib agent that opens the
+  metadata (`pip show`, `importlib.metadata`) reads a statement about the choice it is
+  making. This is accepted: the preamble already names the package, and a fetch of the
+  repository needs the network, which the preamble says is unavailable; a tool input
+  naming the GitHub address is flagged as contamination.
 - **Tank-connection defaults (MCP condition).** A worldparts tank's nozzle defaults to
   Kv 200 m3/h, which is restrictive for DN150 and larger connections. The task prompts
   state that tank connections are hydrostatic, lossless or already inside the stated K,

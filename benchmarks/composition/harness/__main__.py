@@ -6,12 +6,13 @@ Run from the repository root::
     uv run python -m benchmarks.composition.harness regen [--check]
     uv run python -m benchmarks.composition.harness oracle [--corrupt]
     uv run python -m benchmarks.composition.harness run --model M [--tasks ...] \\
-        [--conditions mcp code] [--repeats N] [--dry-run] \\
+        [--conditions mcp code lib] [--repeats N] [--dry-run] \\
         [--level-max-turns 4=120] [--level-timeout 4=2400] [--recommended-level-limits]
     uv run python -m benchmarks.composition.harness grade RUN_ID
     uv run python -m benchmarks.composition.harness report RUN_ID
     uv run python -m benchmarks.composition.harness smoke --condition code --prompt ...
     uv run python -m benchmarks.composition.harness code-env
+    uv run python -m benchmarks.composition.harness lib-env
 """
 
 from __future__ import annotations
@@ -29,22 +30,29 @@ from typing import Any
 from . import regen as regen_mod
 from .grading import Grade, build_prompt, contamination, grade, infra_error, parse_stream
 from .reference import ReferenceStepError
-from .report import gate_line, summarise, to_markdown, write_report
+from .report import comparison_line, gate_line, summarise, to_markdown, write_report
 from .runner import (
     CONDITIONS,
+    DEFAULT_CONDITIONS,
     DEFAULT_LIMITS,
+    PREAMBLE,
     RECOMMENDED_LEVEL_LIMITS,
     RunSpec,
     SessionLimits,
     build_command,
+    check_executable,
     child_env,
     claude_version,
-    default_code_env_dir,
     ensure_code_env,
+    ensure_lib_env,
     execute,
     format_command,
+    lib_env_info,
+    lib_env_key,
+    lib_env_stamp,
     mcp_config,
     parse_level_values,
+    python_env_dirs,
     session_limits,
 )
 from .tasks import RESULTS_DIR, TASKS_DIR, Task, load_tasks
@@ -214,6 +222,22 @@ def cmd_oracle(args: argparse.Namespace) -> int:
     return 0 if rate == want else 1
 
 
+def _check_executable(conditions: list[str]) -> None:
+    """Stop before any session starts when the CLI cannot run a selected condition."""
+    try:
+        check_executable(conditions)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+
+
+def _previous_run(run_dir: Path) -> dict[str, Any]:
+    """The run.json of a run being resumed ({} for a new run)."""
+    try:
+        return json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
 def _run_id(model: str) -> str:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     return f"{stamp}-{re.sub(r'[^A-Za-z0-9.]+', '-', model)}"
@@ -224,7 +248,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not tasks:
         print("no tasks selected")
         return 1
-    conditions = _split(args.conditions) or list(CONDITIONS)
+    conditions = _split(args.conditions) or list(DEFAULT_CONDITIONS)
     for c in conditions:
         if c not in CONDITIONS:
             raise SystemExit(f"unknown condition '{c}' (choose from {', '.join(CONDITIONS)})")
@@ -242,7 +266,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     ]
     if args.dry_run:
         return dry_run(list(specs), args)
-    code_env = ensure_code_env(args.code_env) if "code" in conditions else None
+    _check_executable(conditions)
+    previous = _previous_run(run_dir)
+    before = (previous.get("lib_env") or {}).get("key")
+    if "lib" in conditions and before and before != lib_env_key(lib_env_stamp()):
+        # A resumed run must not mix lib sessions that ran different worldparts builds.
+        raise SystemExit(
+            f"run {run_id} used the lib environment {before}, but the worldparts sources or "
+            "versions have changed since; start a new run (another --run-id) for lib"
+        )
+    envs = python_env_dirs(conditions, args.code_env, args.lib_env)
     run_dir.mkdir(parents=True, exist_ok=True)
     meta = {
         "run_id": run_id,
@@ -257,8 +290,14 @@ def cmd_run(args: argparse.Namespace) -> int:
         },
         "max_budget_usd": args.max_budget_usd,
         "claude_version": claude_version(),
-        "started": datetime.now().isoformat(timespec="seconds"),
+        "started": previous.get("started") or datetime.now().isoformat(timespec="seconds"),
     }
+    if previous:
+        meta["resumed"] = datetime.now().isoformat(timespec="seconds")
+    if "lib" in envs:
+        meta["lib_env"] = lib_env_info(envs["lib"])
+    elif previous.get("lib_env"):
+        meta["lib_env"] = previous["lib_env"]
     (run_dir / "run.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     print(f"run {run_id}: {len(specs)} session(s) -> {run_dir}")
 
@@ -281,7 +320,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             args.model,
             limits.max_turns,
             limits.timeout_s,
-            code_env,
+            envs.get(spec.condition),
             args.max_budget_usd,
             keep_tmp=args.keep_tmp,
         )
@@ -316,13 +355,20 @@ def cmd_run(args: argparse.Namespace) -> int:
             f"STOPPED: {stop[0]}. Fix it and rerun with --run-id {run_id} (graded runs are kept)."
         )
     print(gate_line(summary))
+    if comparison_line(summary):
+        print(comparison_line(summary))
     print(f"report: {run_dir / 'summary.md'}")
     return 0
 
 
 def dry_run(specs: list[tuple[Task | None, RunSpec]], args: argparse.Namespace) -> int:
-    """Print the exact claude command lines and prompts without running anything."""
-    code_env = args.code_env or default_code_env_dir()
+    """Print the exact claude command lines, preambles and prompts without running anything."""
+    envs = python_env_dirs(
+        sorted({spec.condition for _, spec in specs}),
+        getattr(args, "code_env", None),
+        getattr(args, "lib_env", None),
+        ensure=False,
+    )
     for task, spec in specs:
         run = Path("<tmp-run-dir>")
         limits = _limits(task.level if task is not None else None, args)
@@ -335,7 +381,7 @@ def dry_run(specs: list[tuple[Task | None, RunSpec]], args: argparse.Namespace) 
             args.max_budget_usd,
             claude="claude",
         )
-        _, changed = child_env(spec.condition, code_env)
+        _, changed = child_env(spec.condition, envs.get(spec.condition))
         print("=" * 88)
         print(f"{spec.label}  condition={spec.condition}  repeat={spec.repeat}  -> {spec.out_dir}")
         print(f"cwd: {run / 'work'}   (a fresh temporary directory outside the repository)")
@@ -345,6 +391,9 @@ def dry_run(specs: list[tuple[Task | None, RunSpec]], args: argparse.Namespace) 
         print(f"limits: {level}max-turns {limits.max_turns}, timeout {limits.timeout_s:g} s")
         print("command (prompt on stdin):")
         print("  " + format_command(cmd))
+        print("preamble (--append-system-prompt):")
+        for line in PREAMBLE[spec.condition].splitlines():
+            print("  | " + line)
         print("prompt:")
         for line in spec.prompt.splitlines():
             print("  | " + line)
@@ -370,6 +419,8 @@ def cmd_grade(args: argparse.Namespace) -> int:
     summary = write_report(run_dir)
     print(f"graded {n} run(s)")
     print(gate_line(summary))
+    if comparison_line(summary):
+        print(comparison_line(summary))
     return 0
 
 
@@ -380,6 +431,8 @@ def cmd_report(args: argparse.Namespace) -> int:
         print(to_markdown(summary))
     else:
         print(gate_line(summary))
+        if comparison_line(summary):
+            print(comparison_line(summary))
         print(f"wrote {run_dir / 'summary.md'} and summary.json")
     return 0
 
@@ -391,9 +444,10 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     spec = RunSpec("smoke", args.condition, 1, args.prompt, out)
     if args.dry_run:
         return dry_run([(None, spec)], args)
-    code_env = ensure_code_env(args.code_env) if args.condition == "code" else None
+    _check_executable([args.condition])
+    env_dir = python_env_dirs([args.condition], args.code_env, args.lib_env).get(args.condition)
     outcome = execute(
-        spec, args.model, args.max_turns, args.timeout, code_env, args.max_budget_usd,
+        spec, args.model, args.max_turns, args.timeout, env_dir, args.max_budget_usd,
         keep_tmp=args.keep_tmp,
     )  # fmt: skip
     text = (out / "stream.jsonl").read_text(encoding="utf-8", errors="replace")
@@ -431,6 +485,11 @@ def cmd_code_env(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_lib_env(args: argparse.Namespace) -> int:
+    print(ensure_lib_env(args.lib_env))
+    return 0
+
+
 # ----------------------------------------------------------------------------------------
 # parser
 # ----------------------------------------------------------------------------------------
@@ -457,6 +516,7 @@ def parser() -> argparse.ArgumentParser:
         )
         sp.add_argument("--max-budget-usd", type=float, default=None, help="Per session.")
         sp.add_argument("--code-env", type=Path, default=None, help="Code-condition env dir.")
+        sp.add_argument("--lib-env", type=Path, default=None, help="Lib-condition env dir.")
         sp.add_argument("--run-id", default=None)
         sp.add_argument("--dry-run", action="store_true", help="Print commands; run nothing.")
         sp.add_argument("--keep-tmp", action="store_true", help="Keep the temp run dirs.")
@@ -501,7 +561,11 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help=f"Use the recommended per-level limits ({rec}); --level-* values still win.",
     )
-    sp.add_argument("--conditions", nargs="*", help="mcp, code (default: both).")
+    sp.add_argument(
+        "--conditions",
+        nargs="*",
+        help=f"Any of {', '.join(CONDITIONS)} (default: {' '.join(DEFAULT_CONDITIONS)}).",
+    )
     sp.add_argument("--repeats", type=int, default=1)
     sp.add_argument("--jobs", type=int, default=1, help="Sessions in parallel.")
     sp.add_argument("--rerun", action="store_true", help="Redo runs that already have a record.")
@@ -526,6 +590,13 @@ def parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("code-env", help="Create or check the code-condition environment.")
     sp.add_argument("--code-env", type=Path, default=None)
     sp.set_defaults(fn=cmd_code_env)
+
+    sp = sub.add_parser(
+        "lib-env",
+        help="Create or refresh the lib-condition environment (worldparts from a wheel).",
+    )
+    sp.add_argument("--lib-env", type=Path, default=None)
+    sp.set_defaults(fn=cmd_lib_env)
     return p
 
 

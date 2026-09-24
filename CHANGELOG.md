@@ -74,6 +74,20 @@ wear, a leak component and top-fed tanks.
   reservoirs, a tower on a level switch over a 24 h stepped demand schedule, and a
   three-pump booster staged by header pressure over a 24 h ramped schedule. Each task's
   notes give an independent check (own Python and WNTR's EpanetSimulator).
+- **Benchmark lib condition** (benchmarks/README.md, "The lib condition"). A third,
+  opt-in condition (`run --conditions mcp code lib`): the code condition's tools and
+  permissions, in an environment that also has worldparts installed from a wheel built
+  from the repository (not editable; `lib-env` builds it, `--lib-env` overrides its
+  directory, and it is rebuilt when the package sources change), with the `worldparts`
+  command on PATH and a 23-line quick reference of the CLI and Python API in the preamble
+  (its example matches no task's layout), which the tests run line by line. Each lib
+  environment gets its own directory keyed by its sources and versions, and `run.json` and
+  each lib session record which one was used. In lib sessions the word worldparts and the
+  installed package's files are not contamination; the repository (by path, also
+  home-relative, sources, lock file, fixtures, GitHub address) and the benchmark files
+  still are. Reports order the conditions mcp, code, lib and add a level-1
+  lib-versus-code line over the tasks both conditions have valid runs on; the dry run
+  prints each session's preamble.
 
 ### Changed
 

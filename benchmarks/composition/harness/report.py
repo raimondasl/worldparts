@@ -5,7 +5,11 @@ Input: the ``record.json`` of every run under ``results/<run-id>/<task>/<cond>-<
 per-answer accuracy, traceability, medians of tool calls, tokens, cost and duration (per
 condition, and per level and condition with timeouts, turn-limit hits and the session
 limits used, so that the level-4 scale tasks can be compared with levels 1-3), a per-task
-table and the v0.2 decision-gate line (level-1 pass rate of condition mcp versus 80 %).
+table, the v0.2 decision-gate line (level-1 pass rate of condition mcp versus 80 %) and,
+when the run has the lib condition, a line comparing lib with code on the level-1 tasks
+that have valid runs in both conditions.
+
+Conditions appear in the order mcp, code, lib, then any other (e.g. oracle) by name.
 """
 
 from __future__ import annotations
@@ -22,6 +26,53 @@ from .tasks import level_label
 GATE_THRESHOLD = 0.80
 GATE_LEVEL = 1
 GATE_CONDITION = "mcp"
+
+#: Order of the conditions in every table; others follow by name.
+CONDITION_ORDER = ("mcp", "code", "lib")
+#: The lib-versus-code comparison: worldparts as a library against plain Python, level 1.
+COMPARE_LEVEL = 1
+COMPARE_CONDITIONS = ("lib", "code")
+
+
+def order_conditions(conditions: Any) -> list[str]:
+    """``conditions`` in report order: mcp, code, lib, then the rest by name."""
+    known = {c: i for i, c in enumerate(CONDITION_ORDER)}
+    return sorted(set(conditions), key=lambda c: (known.get(c, len(known)), c))
+
+
+def pair_runs(
+    runs_a: list[dict[str, Any]], runs_b: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], list[str]]:
+    """The runs of two conditions paired by task, so both sides cover the same tasks.
+
+    On each task with valid runs in both, runs with the same repeat number are paired
+    first, then the remaining ones in repeat order, as many as the smaller side has.
+    Returns (paired runs of a, paired runs of b, tasks compared, tasks left out because
+    only one condition has valid runs there).
+    """
+    by_a: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
+    by_b: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
+    for r in runs_a:
+        by_a[r["task"]][int(r["repeat"])] = r
+    for r in runs_b:
+        by_b[r["task"]][int(r["repeat"])] = r
+    out_a: list[dict[str, Any]] = []
+    out_b: list[dict[str, Any]] = []
+    compared: list[str] = []
+    left_out: list[str] = []
+    for task in sorted(set(by_a) | set(by_b)):
+        ra, rb = by_a.get(task, {}), by_b.get(task, {})
+        if not ra or not rb:
+            left_out.append(task)
+            continue
+        compared.append(task)
+        common = sorted(set(ra) & set(rb))
+        rest_a = [ra[k] for k in sorted(ra) if k not in common]
+        rest_b = [rb[k] for k in sorted(rb) if k not in common]
+        n = min(len(rest_a), len(rest_b))
+        out_a += [ra[k] for k in common] + rest_a[:n]
+        out_b += [rb[k] for k in common] + rest_b[:n]
+    return out_a, out_b, compared, left_out
 
 
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float] | None:
@@ -112,7 +163,7 @@ def summarise(records: list[dict[str, Any]], run_id: str = "") -> dict[str, Any]
     records = [r for r in records if not r.get("infra_error")]
     tainted = [r for r in records if r.get("contamination")]
     records = [r for r in records if not r.get("contamination")]
-    conds = sorted({r["condition"] for r in records})
+    conds = order_conditions(r["condition"] for r in records)
     by_cond: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in records:
         by_cond[r["condition"]].append(r)
@@ -218,6 +269,39 @@ def summarise(records: list[dict[str, Any]], run_id: str = "") -> dict[str, Any]
     gate = _rate(gate_records)
     gate["threshold"] = GATE_THRESHOLD
     gate["met"] = (gate["pass_rate"] >= GATE_THRESHOLD) if gate["pass_rate"] is not None else None
+    compare: dict[str, Any] | None = None
+    if COMPARE_CONDITIONS[0] in by_cond:
+        level_runs = {
+            c: [r for r in by_cond.get(c, []) if int(r["level"]) == COMPARE_LEVEL]
+            for c in COMPARE_CONDITIONS
+        }
+        # Contamination and infrastructure errors can remove different tasks from the two
+        # conditions; the rates are compared only on tasks that both have valid runs on.
+        paired_a, paired_b, compared, left_out = pair_runs(*level_runs.values())
+        compare = {
+            "level": COMPARE_LEVEL,
+            "conditions": list(COMPARE_CONDITIONS),
+            "tasks_compared": compared,
+            "tasks_left_out": left_out,
+            "all_runs": {c: _rate(rs) for c, rs in level_runs.items()},
+        }
+        for c, rs in zip(COMPARE_CONDITIONS, (paired_a, paired_b), strict=True):
+            u = _usage(rs)
+            compare[c] = {
+                **_rate(rs),
+                "median_total_tokens": u["median_total_tokens"],
+                "median_cost_usd": u["median_cost_usd"],
+            }
+        a, b = (compare[c]["pass_rate"] for c in COMPARE_CONDITIONS)
+        compare["difference"] = (a - b) if a is not None and b is not None else None
+        # Which lib environments (worldparts builds) the lib runs used; more than one means
+        # the runs measured different packages.
+        envs = {
+            (r.get("outcome") or {}).get("lib_env", {}).get("key")
+            for r in by_cond[COMPARE_CONDITIONS[0]]
+            if isinstance((r.get("outcome") or {}).get("lib_env"), dict)
+        }
+        compare["lib_envs"] = sorted(e for e in envs if e)
     models = sorted({str(r.get("model")) for r in records if r.get("model")})
     return {
         "run_id": run_id,
@@ -235,6 +319,7 @@ def summarise(records: list[dict[str, Any]], run_id: str = "") -> dict[str, Any]
         "format": fmt,
         "per_task": sorted(tasks.values(), key=lambda t: (t["level"], t["task"])),
         "decision_gate": gate,
+        "lib_vs_code": compare,
         "infra_errors": [
             {
                 "task": r["task"],
@@ -283,6 +368,52 @@ def gate_line(summary: dict[str, Any]) -> str:
     )
 
 
+def comparison_line(summary: dict[str, Any]) -> str | None:
+    """The level-1 comparison of lib with code, or None when the run has no lib runs.
+
+    The rates are over the runs paired by task (:func:`pair_runs`); without any task that
+    both conditions have valid runs on, the line gives each condition's own runs and says
+    they are not compared.
+    """
+    cmp_ = summary.get("lib_vs_code")
+    if not cmp_:
+        return None
+    a_name, b_name = cmp_["conditions"]
+    level = cmp_["level"]
+    diff = cmp_["difference"]
+    source = cmp_ if diff is not None else cmp_.get("all_runs", cmp_)
+
+    def rate(name: str) -> str:
+        r = source[name]
+        if not r["runs"]:
+            return f"{name}: no level-{level} runs"
+        ci = r["ci95"]
+        return (
+            f"{name} {_pct(r['pass_rate'])} ({r['passed']}/{r['runs']}, 95 % CI {_pct(ci[0])} "
+            f"to {_pct(ci[1])})"
+        )
+
+    text = f"Library versus code: level-{level} pass rate {rate(a_name)} versus {rate(b_name)}"
+    envs = cmp_.get("lib_envs") or []
+    mixed = (
+        f" The lib runs used {len(envs)} different lib environments ({', '.join(envs)}), "
+        "so they did not all run the same worldparts."
+        if len(envs) > 1
+        else ""
+    )
+    if diff is None:
+        return f"{text}; no level-{level} task has valid runs in both, so not compared.{mixed}"
+    tokens = " versus ".join(
+        f"{_num(cmp_[c]['median_total_tokens'])} ({c})" for c in (a_name, b_name)
+    )
+    compared = cmp_.get("tasks_compared") or []
+    left_out = cmp_.get("tasks_left_out") or []
+    scope = f"; on {len(compared)} task(s) with valid runs in both conditions"
+    if left_out:
+        scope += f" ({len(left_out)} left out: {', '.join(left_out)})"
+    return f"{text}: {100 * diff:+.0f} points for {a_name}; median tokens {tokens}{scope}.{mixed}"
+
+
 def to_markdown(summary: dict[str, Any]) -> str:
     """The human-readable report (``summary.md``)."""
     conds = list(summary["conditions"])
@@ -306,6 +437,7 @@ def to_markdown(summary: dict[str, Any]) -> str:
         "",
         f"**{gate_line(summary)}**",
         "",
+        *([f"**{comparison_line(summary)}**", ""] if comparison_line(summary) else []),
         "## Pass rate by condition",
         "",
         "| Condition | Passed | Runs | Pass rate | 95 % CI |",
@@ -376,7 +508,10 @@ def to_markdown(summary: dict[str, Any]) -> str:
             f"{u['timeouts']} | {u['cli_errors']} | {f['runs_with_format_issues']} |"
         )
     by_level_usage = summary.get("usage_by_level") or {}
-    level_rows = sorted({(int(lv), c) for c in conds for lv in by_level_usage.get(c, {})})
+    level_rows = sorted(
+        {(int(lv), c) for c in conds for lv in by_level_usage.get(c, {})},
+        key=lambda row: (row[0], conds.index(row[1])),
+    )
     if level_rows:
         lines += [
             "",

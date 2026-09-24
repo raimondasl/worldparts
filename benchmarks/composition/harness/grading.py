@@ -18,9 +18,10 @@ Grading rules:
   (``in_prompt``, e.g. a required dose the design just meets) or a closed-form result of
   prompt constants can be right without appearing in any tool result.
 - Contamination: a session whose tool inputs or results touch the benchmark itself (the
-  repository path, the task files, a frozen ``expected:`` mapping, or, in the code
-  condition, the worldparts library) is contaminated; the report leaves it out of every
-  rate and lists it separately.
+  task files, a frozen ``expected:`` mapping, in the code and lib conditions the
+  repository (its path, sources, lock file or test fixtures), and in the code condition
+  the worldparts library) is contaminated; the report leaves it out of every rate and
+  lists it separately.
 """
 
 from __future__ import annotations
@@ -31,6 +32,8 @@ import math
 import re
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
+from functools import cache
+from pathlib import Path
 from typing import Any
 
 from .tasks import REPO_ROOT, Answer, Task, build_prompt_text
@@ -541,6 +544,47 @@ _EXPECTED_BLOCK = re.compile(r"(?<![\w\"'])expected:\s*\{\s*[A-Za-z_]\w*:")
 #: The library name, except as part of a longer name such as the code environment's
 #: ``worldparts-bench`` directory.
 _LIBRARY = re.compile(r"(?<![\w-])worldparts(?![\w-])")
+#: Conditions whose agent runs its own Python outside the repository: a mention of the
+#: repository path means it looked into the repository.
+REPO_PATH_CONDITIONS = ("code", "lib")
+#: Conditions without worldparts: any mention of the library means a look into the
+#: repository or its virtual environment. The lib condition has worldparts installed, so
+#: the name, its site-packages directory and the files installed with it are allowed there.
+LIBRARY_CONDITIONS = ("code",)
+
+
+#: Markers of a look into a checkout of the repository that do not depend on how its path
+#: is spelled (matched on normalised text in the code and lib conditions): the package
+#: sources as a repository lays them out (``src/worldparts/``, after a separator; the
+#: installed package has no ``src`` directory, and the README link in its metadata is
+#: ``(src/worldparts/...``), the lock file, and the harness's test fixtures.
+REPO_MARKERS = {
+    "src/worldparts/": re.compile(r"(?<=/)src/worldparts/"),
+    "uv.lock": re.compile(r"(?<![\w.-])uv\.lock(?![\w-])"),
+    "tests/fixtures/benchmark": re.compile(r"/tests/fixtures/benchmark"),
+}
+
+
+@cache
+def _repo_address(repo_root: str) -> tuple[str, re.Pattern[str]] | None:
+    """The repository's GitHub address (from ``[project.urls]`` in its pyproject.toml) as a
+    tool input would spell it to clone or fetch it (``github.com/<owner>/<repo>``,
+    ``raw.githubusercontent.com/...``, ``api.github.com/repos/...``), or None. Matched on
+    tool inputs only: the metadata installed with the lib package names the address, so a
+    tool result may show it."""
+    import tomllib
+
+    try:
+        data = tomllib.loads((Path(repo_root) / "pyproject.toml").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    for url in ((data.get("project") or {}).get("urls") or {}).values():
+        m = re.match(r"https?://github\.com/([\w.-]+)/([\w.-]+?)(?:\.git)?(?:/|$)", str(url))
+        if m:
+            slug = f"{m.group(1)}/{m.group(2)}".lower()
+            pattern = r"github(?:usercontent)?\.com/(?:repos/)?" + re.escape(slug) + r"(?![\w-])"
+            return f"the repository's address github.com/{slug}", re.compile(pattern)
+    return None
 
 
 def _path_forms(root: Any) -> list[str]:
@@ -551,6 +595,27 @@ def _path_forms(root: Any) -> list[str]:
         forms.add(f"/{p[0]}{p[2:]}")
         forms.add(f"/mnt/{p[0]}{p[2:]}")
     return sorted(forms)
+
+
+def _home_relative(root: Any, home: Any = None) -> str | None:
+    """The repository path relative to the home directory (``world-model/worldparts``), or
+    None when it is not under the home directory or is a single name (which would match
+    any mention of the directory name). It catches the spellings without a drive letter:
+    ``~/…``, ``$HOME/…``, ``%USERPROFILE%/…``, ``$USERPROFILE/…`` and relative paths
+    such as ``../../world-model/worldparts``."""
+    try:
+        rel = Path(root).resolve().relative_to(Path(home or Path.home()).resolve())
+    except (ValueError, OSError):
+        return None
+    parts = [x for x in rel.as_posix().lower().split("/") if x and x != "."]
+    return "/".join(parts) if len(parts) >= 2 else None
+
+
+def _path_pattern(form: str) -> re.Pattern[str]:
+    """``form`` as a whole path: not followed by more of a name (``worldparts-bench`` is
+    another directory), and for a relative form not preceded by more of a name."""
+    left = "" if form.startswith("/") or (len(form) > 1 and form[1] == ":") else r"(?<![\w-])"
+    return re.compile(left + re.escape(form) + r"(?![\w-])")
 
 
 def _normalise(text: str) -> str:
@@ -564,34 +629,58 @@ def contamination(
     task_id: str | None = None,
     repo_root: Any = REPO_ROOT,
     extra_texts: Iterable[str] = (),
+    home: Any = None,
 ) -> list[str]:
     """Why a session is contaminated (it looked at the benchmark itself), or ``[]``.
 
     The code condition runs Python with read access to the whole disk, so an agent could
     open the task files and copy the frozen answers. Every tool input and tool result
     (errors included) is scanned for the benchmark's task directory and schema, the task's
-    own file name and a frozen ``expected: {...}`` mapping. In the code condition the
-    repository path and any mention of the worldparts library count too: the agent works
-    in a temporary directory outside the repository and its Python has no worldparts, so
-    only a look into the repository or its virtual environment can produce them. The MCP
-    condition legitimately talks to worldparts (whose messages may carry source paths), so
-    those two markers are not applied there.
+    own file name and a frozen ``expected: {...}`` mapping. In the code and lib conditions
+    a look into the repository counts too: the agent works in a temporary directory outside
+    the repository, and the lib environment's worldparts is installed from a wheel (not
+    editable), so its files, tracebacks and metadata never name the repository. The
+    repository is recognised by its path (absolute, in the Windows, Git Bash and WSL
+    spellings, or relative to the home directory ``home``, which also catches ``~/...``,
+    ``$HOME/...``, ``%USERPROFILE%/...`` and ``../..`` paths), each as a whole name, and by
+    :data:`REPO_MARKERS` (``src/worldparts/``, ``uv.lock``, ``tests/fixtures/benchmark``);
+    a tool input that names its GitHub address (to clone or fetch it) counts as well.
+    In the code condition any mention of the worldparts library counts as well, since its
+    Python has no worldparts; in the lib condition the name and the installed package's own
+    files (site-packages, manifests, the metadata and docs installed with it) are allowed.
+    The MCP condition legitimately talks to worldparts (whose messages may carry source
+    paths), so neither the repository nor the library markers are applied there.
     """
     inputs = list(s.tool_input_texts)
     results = [*s.tool_result_texts, *s.tool_error_texts, *extra_texts]
-    roots = _path_forms(repo_root) if repo_root and condition == "code" else []
+    absolute: list[tuple[str, re.Pattern[str]]] = []
+    relative: list[tuple[str, re.Pattern[str]]] = []
+    markers: list[tuple[str, re.Pattern[str]]] = []
+    address: tuple[str, re.Pattern[str]] | None = None
+    if repo_root and condition in REPO_PATH_CONDITIONS:
+        absolute = [(f"the repository path {r}", _path_pattern(r)) for r in _path_forms(repo_root)]
+        rel = _home_relative(repo_root, home)
+        if rel:
+            relative = [(f"the repository path {rel} (relative to home)", _path_pattern(rel))]
+        markers = [(f"the repository's {m}", pat) for m, pat in REPO_MARKERS.items()]
+        address = _repo_address(str(repo_root))
     task_file = f"{task_id.lower()}.yaml" if task_id else None
     reasons: list[str] = []
     for where, texts in (("tool input", inputs), ("tool result", results)):
         for raw in texts:
             norm = _normalise(raw)
-            found = [f"the repository path {r}" for r in roots if r in norm]
+            found = [what for what, pat in absolute if pat.search(norm)]
+            if not found:  # an absolute path contains the home-relative one
+                found = [what for what, pat in relative if pat.search(norm)]
+            found += [what for what, pat in markers if pat.search(norm)]
+            if address and where == "tool input" and address[1].search(norm):
+                found.append(address[0])
             found += [f"'{m}'" for m in BENCH_MARKERS if m in norm]
             if task_file and task_file in norm:
                 found.append(f"the task file {task_file}")
             if _EXPECTED_BLOCK.search(raw):
                 found.append("a frozen 'expected:' answer mapping")
-            if condition == "code" and _LIBRARY.search(norm):
+            if condition in LIBRARY_CONDITIONS and _LIBRARY.search(norm):
                 found.append("the worldparts library")
             for f in found:
                 reason = f"{where} mentions {f}"
