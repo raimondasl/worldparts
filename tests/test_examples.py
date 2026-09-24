@@ -306,6 +306,9 @@ def test_wear_fit_recovers_the_survey_wear(wear_run: tuple[dict[str, Any], list[
     assert partial.parameters["pump.wear_efficiency"].verdict == "not_identifiable"
     assert partial.parameters["pump.wear_efficiency"].standard_error is None
     assert partial.parameters["pump.wear_efficiency"].value == 0.0  # left at the start
+    # ... which is not a fit pushed onto the lower bound (review finding).
+    assert partial.parameters["pump.wear_efficiency"].at_bound is None
+    assert not any("bound" in note for note in partial.notes)
     assert partial["pump.wear_head"] == pytest.approx(fit["pump.wear_head"], abs=0.005)
 
 

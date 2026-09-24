@@ -432,7 +432,16 @@ def parse_value(
             f"{what}: '{value}' has unit {given_unit}, which is not compatible with the "
             f"declared unit {_unit_text(unit)}: expected {_example(unit)}.{hint}"
         )
-    return float(q.to(target).magnitude)
+    try:
+        return float(q.to(target).magnitude)
+    except pint.errors.PintError as exc:
+        # delta_degC and the like into an absolute temperature (pint cannot add the offset).
+        raise UnitError(
+            f"{what}: '{value}' is a temperature difference, but the variable is an absolute "
+            f"temperature; use K, degC or degF (declared unit {_unit_text(unit)})."
+            if _is_delta_unit(given_unit)
+            else f"{what}: cannot convert '{value}' to {_unit_text(unit)}: {exc}"
+        ) from None
 
 
 def convert(

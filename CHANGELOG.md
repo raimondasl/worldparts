@@ -20,7 +20,9 @@ measurements, calibration and identifiability.
   to each variable's unit and pressure reference; sigmas convert by scale only. Without a
   sigma, `wp.default_sigma` gives 1 % of the value floored per kind of quantity (0.01 bar,
   0.05 m3/h, 0.1 K, 0.01 kW, 0.01 m and so on for every unit dimension in the catalogue).
-  Every problem is listed in one `MeasurementError` (code `invalid_measurements`).
+  Every problem is listed in one `MeasurementError` (code `invalid_measurements`),
+  including settings of an input a control writes, keys given twice, non-finite times and
+  implausibly small sigmas.
 - **Calibration** (design 14.2): `wp.calibrate(system, measurements, parameters, *,
   method="trf", apply=False, step=None)` fits parameters or inputs within bounds with
   `scipy.optimize.least_squares` on uncertainty-weighted residuals: steady points apply
@@ -31,10 +33,19 @@ measurements, calibration and identifiability.
   condition number and null directions of the range-scaled Jacobian, per-path residuals and
   RMS, the reduced chi-square and its p-value, model failures during the fit and notes. The
   system is restored unless `apply=True`. `CalibrationError` (code `calibration_failed`).
+  Timed points are predicted by Richardson extrapolation to zero step, with a step chosen
+  and checked for accuracy (`step`, `step_extrapolated`, `step_change` in the result), so
+  the explicit-Euler error of a coarse step does not bias the estimates. Finite-difference
+  steps and the start margin follow each parameter's own scale, so plain paths with wide
+  hard limits fit exactly as tight bounds do; null directions are judged per direction
+  against the Jacobian's own error bound and an absolute floor; `at_bound` flags only a
+  value the data push onto a bound, with how far in standard errors; a fit that ends worse
+  than its start reports `success` False.
 - **Identifiability** (design 14.2): `wp.identifiability(system, sensors, parameters,
   points=None, *, candidates=None)` says before any data exists which parameters the
   sensors can determine with default uncertainties, and which candidate sensor most
-  improves the worst-determined one.
+  improves the worst-determined one (`SensorCandidate` gives `sensor_unit` and
+  `parameter_unit`, the unit of its standard error).
 - **Example** `examples/calibrate_pump_wear.py` with `examples/pump_wear_readings.yaml`:
   identifiability, calibration of pump wear to a field survey, and the energy cost of wear.
 

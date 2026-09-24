@@ -64,6 +64,7 @@ from worldparts.errors import (
 )
 from worldparts.media import RHO
 from worldparts.units import (
+    _pint_unit,
     convert,
     converter,
     is_pressure_unit,
@@ -83,6 +84,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CSV_COLUMNS",
+    "MIN_SIGMA_RELATIVE",
     "RELATIVE_SIGMA",
     "SIGMA_FLOORS",
     "MeasuredValue",
@@ -122,6 +124,11 @@ SIGMA_FLOORS: dict[str, tuple[float, str]] = {
     "rotational_speed": (1.0, "rpm"),
     "density": (0.1, "kg/m3"),
 }
+
+#: A sigma below this fraction of ``max(|value|, floor)`` (the floor of the value's kind of
+#: quantity, :data:`SIGMA_FLOORS`) is rejected: no instrument is that accurate, and the
+#: normalised residuals would overflow.
+MIN_SIGMA_RELATIVE: float = 1e-9
 
 #: Columns of the long-format CSV. ``path`` and ``value`` are required, and ``point`` or
 #: ``time``; ``kind`` is ``measured`` (default) or ``setting``.
@@ -179,7 +186,8 @@ def _difference(value: float, from_unit: str, to_unit: str) -> float:
         raise UnitError(
             f"Cannot express an uncertainty in {from_unit} in {to_unit}: the dimensions differ."
         )
-    return value * converter(a).scale / converter(b).scale
+    # As differences, so a temperature-difference unit such as delta_degC is valid here.
+    return value * converter(a, "difference").scale / converter(b, "difference").scale
 
 
 def default_sigma(value: float, unit: str, reference: str | None = None) -> float:
@@ -400,7 +408,11 @@ class MeasurementSet:
 
         Measured paths must be reported numeric variables (observables, states, parameters,
         inputs, port variables or control results); settings must be settable paths with
-        valid values. Measured values are converted to the declared unit and reference
+        valid values that no control writes (and, at a steady point, not a state that a
+        steady solve settles). The parser's checks are repeated (unique names, finite times
+        and values, positive sigmas no smaller than :data:`MIN_SIGMA_RELATIVE` of the value
+        or its kind's floor), so a set built from :class:`MeasurementPoint` objects is
+        checked too. Measured values are converted to the declared unit and reference
         (``"3.8 bara"`` becomes 2.7867 bar gauge for a port pressure); sigmas convert by
         scale only; missing sigmas get :func:`default_sigma` of the measured value.
 
@@ -443,10 +455,33 @@ def _number_and_unit(raw: Any, where: str) -> tuple[float, str | None]:
 
 
 def _check_unit(unit: str, where: str) -> None:
+    """Raise :class:`UnitError` when ``unit`` cannot be parsed. Whether it fits the variable
+    (its dimension, absolute or difference) is decided against the system in
+    :func:`resolve_value`, so a temperature-difference unit such as ``delta_degC`` passes
+    here: it is right for a sigma and for a temperature-difference variable."""
     try:
-        converter(_base_unit(unit))
+        _pint_unit(_base_unit(unit))
     except UnitError as exc:
         raise UnitError(f"{where}: {exc}") from None
+
+
+def _parse_time(raw: Any, where: str) -> float:
+    """A point's time in s: non-negative and finite."""
+    time = parse_duration(raw, where)
+    if not math.isfinite(time):
+        raise InvalidValueError(f"{where}: a time must be finite, got {raw!r}.")
+    return time
+
+
+def _seconds(t: float) -> str:
+    """A time in s written without losing digits: ``60``, ``12345.25``, ``1000001``."""
+    return str(int(t)) if float(t).is_integer() and abs(t) < 1e15 else repr(float(t))
+
+
+def _time_name(t: float) -> str:
+    """The default name of a timed point, ``t=<time> s``; distinct times give distinct
+    names."""
+    return f"t={_seconds(t)} s"
 
 
 def _parse_measured(raw: Any, where: str) -> MeasuredValue:
@@ -510,11 +545,11 @@ def _parse_point(raw: Any, index: int, problems: list[str]) -> MeasurementPoint 
     time: float | None = None
     if raw.get("time") is not None:
         try:
-            time = parse_duration(raw["time"], f"{where}.time")
+            time = _parse_time(raw["time"], f"{where}.time")
         except InvalidValueError as exc:
             problems.append(str(exc))
     if name is None:
-        name = f"point_{index + 1}" if time is None else f"t={time:g} s"
+        name = f"point_{index + 1}" if time is None else _time_name(time)
     where = f"{where} ('{name}')"
     settings = raw.get("settings") or {}
     if not isinstance(settings, Mapping):
@@ -616,19 +651,26 @@ def _read_csv(path: Path) -> MeasurementSet:
         time: float | None = None
         if time_text:
             try:
-                time = parse_duration(
+                time = _parse_time(
                     float(time_text) if _is_number(time_text) else time_text, f"{where}: time"
                 )
             except InvalidValueError as exc:
                 problems.append(str(exc))
                 continue
-        name = cell(row, "point") or (f"t={time:g} s" if time is not None else "")
+        name = cell(row, "point") or (_time_name(time) if time is not None else "")
         if not name:
             problems.append(f"{where}: give a point name or a time.")
             continue
         entry = points.get(name)
         if entry is None:
-            entry = {"name": name, "time": time, "settings": {}, "measured": {}, "row": n}
+            entry = {
+                "name": name,
+                "time": time,
+                "settings": {},
+                "measured": {},
+                "row": n,
+                "setting_rows": {},
+            }
             points[name] = entry
             order.append(name)
         elif entry["time"] != time:
@@ -646,10 +688,17 @@ def _read_csv(path: Path) -> MeasurementSet:
         if kind == "setting":
             if sigma:
                 problems.append(f"{where}: a setting has no sigma.")
+            if var in entry["settings"]:
+                problems.append(
+                    f"{where}: point '{name}' sets {var} twice (rows "
+                    f"{entry['setting_rows'][var]} and {n}); give each setting once."
+                )
+                continue
             setting: Any = _setting_cell(value)
             if unit:
                 setting = f"{value} {unit}"
             entry["settings"][var] = setting
+            entry["setting_rows"][var] = n
         elif kind == "measured":
             if var in entry["measured"]:
                 problems.append(f"{where}: point '{name}' measures {var} twice.")
@@ -665,7 +714,12 @@ def _read_csv(path: Path) -> MeasurementSet:
     if problems:
         raise MeasurementError(f"{path}: the CSV file is not valid:", problems)
     data = [
-        {k: v for k, v in points[n].items() if k != "row" and v not in (None, {})} for n in order
+        {
+            k: v
+            for k, v in points[n].items()
+            if k not in ("row", "setting_rows") and v not in (None, {})
+        }
+        for n in order
     ]
     return _parse_set({"points": data})
 
@@ -687,7 +741,68 @@ def _setting_cell(text: str) -> Any:
 
 
 def _fmt_time(t: float | None) -> str:
-    return "none" if t is None else f"{t:g} s"
+    return "none" if t is None else f"{_seconds(t)} s"
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """A safe YAML loader that records keys given twice in one mapping (the plain loader
+    keeps the last value silently)."""
+
+    def __init__(self, stream: Any) -> None:
+        super().__init__(stream)
+        self.duplicates: list[str] = []
+
+    def construct_mapping(self, node: Any, deep: bool = False) -> Any:
+        if isinstance(node, yaml.MappingNode):
+            first: dict[Any, int] = {}
+            for key_node, _ in node.value:  # the mapping's own keys; a merge (<<) may override
+                if key_node.tag == "tag:yaml.org,2002:merge":
+                    continue
+                key = self.construct_object(key_node, deep=True)
+                line = key_node.start_mark.line + 1
+                try:
+                    seen = key in first
+                except TypeError:  # an unhashable key; the base loader reports it
+                    continue
+                if seen:
+                    self.duplicates.append(
+                        f"line {line}: '{key}' is given twice in one mapping (first on line "
+                        f"{first[key]}); give each key once."
+                    )
+                else:
+                    first[key] = line
+        return super().construct_mapping(node, deep=deep)
+
+
+def _load_yaml(text: str) -> tuple[Any, list[str]]:
+    """Parsed YAML and the keys given twice in one mapping."""
+    loader = _UniqueKeyLoader(text)
+    try:
+        return loader.get_single_data(), loader.duplicates
+    finally:
+        loader.dispose()
+
+
+def _load_json(text: str) -> tuple[Any, list[str]]:
+    """Parsed JSON and the keys given twice in one object."""
+    duplicates: list[str] = []
+
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for key, value in items:
+            if key in out:
+                shown = [
+                    repr(v) if len(repr(v)) <= 40 else repr(v)[:37] + "..."
+                    for v in (out[key], value)
+                ]
+                duplicates.append(
+                    f"'{key}' is given twice in one object (values {shown[0]} and {shown[1]}); "
+                    "give each key once."
+                )
+            out[key] = value
+        return out
+
+    return json.loads(text, object_pairs_hook=pairs), duplicates
 
 
 def load_measurements(path: str | os.PathLike[str]) -> MeasurementSet:
@@ -711,9 +826,11 @@ def load_measurements(path: str | os.PathLike[str]) -> MeasurementSet:
     if suffix == ".csv":
         return _read_csv(p)
     try:
-        data = json.loads(text) if suffix == ".json" else yaml.safe_load(text)
+        data, duplicates = _load_json(text) if suffix == ".json" else _load_yaml(text)
     except (json.JSONDecodeError, yaml.YAMLError) as exc:
         raise MeasurementError(f"{p}: cannot parse the file: {exc}") from None
+    if duplicates:
+        raise MeasurementError(f"{p}: the measurement set is not valid:", duplicates)
     try:
         return _parse_set(data)
     except MeasurementError as exc:
@@ -739,8 +856,15 @@ def resolve_value(mv: MeasuredValue, info: VariableInfo, where: str) -> tuple[fl
     unit = info.unit or "1"
     ref = info.pressure_reference
     value = parse_value(_value_text(mv.value, mv.unit), unit, where, ref)
+    if not math.isfinite(value):
+        raise InvalidValueError(f"{where}: the value must be a finite number, got {mv.value!r}.")
     if mv.sigma is None:
         return value, default_sigma(value, unit, ref), True
+    if not (math.isfinite(mv.sigma) and mv.sigma > 0):
+        raise InvalidValueError(
+            f"{where}: sigma must be positive and finite (a standard uncertainty), got "
+            f"{mv.sigma!r}."
+        )
     sigma_unit = mv.sigma_unit or mv.unit
     if sigma_unit is None:
         return value, mv.sigma, False
@@ -753,6 +877,26 @@ def resolve_value(mv: MeasuredValue, info: VariableInfo, where: str) -> tuple[fl
     return value, sigma, False
 
 
+def _sigma_problem(value: float, sigma: float, info: VariableInfo, where: str) -> str | None:
+    """A problem when ``sigma`` is below :data:`MIN_SIGMA_RELATIVE` of ``max(|value|,
+    floor)``, with the floor of the variable's kind of quantity (:data:`SIGMA_FLOORS`)."""
+    unit = info.unit or "1"
+    try:
+        kind = quantity_kind(unit, info.pressure_reference)
+        floor = _difference(*SIGMA_FLOORS[kind], unit)
+    except InvalidValueError:
+        floor = 0.0
+    least = MIN_SIGMA_RELATIVE * max(abs(value), floor)
+    if sigma >= least:
+        return None
+    return (
+        f"{where}: sigma {sigma:.3g} {unit} is below {MIN_SIGMA_RELATIVE:g} of the value (or "
+        f"of the default floor for its kind of quantity), {least:.3g} {unit}. No instrument "
+        "is that accurate, and the normalised residuals would overflow; give the instrument's "
+        "real uncertainty."
+    )
+
+
 def measurable_paths(system: System) -> dict[str, VariableInfo]:
     """Reported numeric variables of ``system`` (paths that can be measured)."""
     return {
@@ -763,9 +907,20 @@ def measurable_paths(system: System) -> dict[str, VariableInfo]:
 
 
 def parse_settings(
-    system: System, settings: Mapping[str, Any], where: str, problems: list[str]
+    system: System,
+    settings: Mapping[str, Any],
+    where: str,
+    problems: list[str],
+    time: float | None = None,
 ) -> dict[str, Any]:
-    """Settings parsed into declared units; problems are appended to ``problems``."""
+    """Settings parsed into declared units; problems are appended to ``problems``.
+
+    Besides unknown paths and invalid values, a setting is a problem when a control writes
+    its path (the control would override it: silently at a steady point, as a rejected
+    event in a time series), and, at a steady point (``time`` None), when it sets a state
+    that a steady solve puts to its equilibrium (``steady: settle``), which discards it.
+    """
+    controlled = {c.actuate: name for name, c in system.controls.items()}
     out: dict[str, Any] = {}
     for path, raw in settings.items():
         try:
@@ -773,6 +928,19 @@ def parse_settings(
             out[path] = spec.parse(raw, f"{where}.settings['{path}']")
         except WorldpartsError as exc:
             problems.append(f"{where}.settings: {exc}")
+            continue
+        if path in controlled:
+            problems.append(
+                f"{where} sets {path}, which control '{controlled[path]}' writes, so the "
+                "control would override the setting. Remove the setting, or remove the "
+                f"control (System.remove_control) and set {path} at every point."
+            )
+        elif time is None and spec.kind == "state" and spec.steady == "settle":
+            problems.append(
+                f"{where} sets {path}, a state that a steady solve puts to its equilibrium, "
+                "so the setting would have no effect. Set the input that drives it, or give "
+                "the point a time (a time series applies it as an event)."
+            )
     return out
 
 
@@ -783,9 +951,21 @@ def _resolve(ms: MeasurementSet, system: System) -> ResolvedMeasurements:
     unknown: dict[str, list[str]] = {}
     points: list[ResolvedPoint] = []
     values: list[ResolvedValue] = []
+    # A set built directly from MeasurementPoint objects has not been through the parser:
+    # repeat its checks on names and times here.
+    counts: dict[str, int] = {}
+    for pt in ms.points:
+        counts[pt.name] = counts.get(pt.name, 0) + 1
+    problems += [
+        f"The point name '{n}' is used {c} times; names must be unique."
+        for n, c in counts.items()
+        if c > 1
+    ]
     for i, pt in enumerate(ms.points):
         where = f"point '{pt.name}'"
-        settings = parse_settings(system, pt.settings, where, problems)
+        if pt.time is not None and not (math.isfinite(pt.time) and pt.time >= 0):
+            problems.append(f"{where}: time must be finite and not negative, got {pt.time!r}.")
+        settings = parse_settings(system, pt.settings, where, problems, pt.time)
         points.append(ResolvedPoint(pt.name, pt.time, settings))
         for path, mv in pt.measured.items():
             info = variables.get(path)
@@ -803,6 +983,10 @@ def _resolve(ms: MeasurementSet, system: System) -> ResolvedMeasurements:
                 value, sigma, default = resolve_value(mv, info, f"{where}: {path}")
             except InvalidValueError as exc:
                 problems.append(str(exc))
+                continue
+            problem = _sigma_problem(value, sigma, info, f"{where}: {path}")
+            if problem:
+                problems.append(problem)
                 continue
             values.append(
                 ResolvedValue(
@@ -840,8 +1024,8 @@ def _time_conflicts(points: Iterable[ResolvedPoint]) -> list[str]:
         for path, value in p.settings.items():
             if path in slot and slot[path][0] != value:
                 out.append(
-                    f"Points '{slot[path][1]}' and '{p.name}' both at t = {p.time:g} s set "
-                    f"{path} to different values ({slot[path][0]!r} and {value!r})."
+                    f"Points '{slot[path][1]}' and '{p.name}' both at t = {_seconds(p.time)} "
+                    f"s set {path} to different values ({slot[path][0]!r} and {value!r})."
                 )
             else:
                 slot[path] = (value, p.name)

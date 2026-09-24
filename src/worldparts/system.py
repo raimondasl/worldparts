@@ -1462,6 +1462,10 @@ class System:
         dt = parse_duration(step, "step")
         if dt <= 0:
             raise InvalidValueError(f"step must be positive, got {step!r}.")
+        if not (math.isfinite(total) and math.isfinite(dt)):
+            raise InvalidValueError(
+                f"duration and step must be finite, got duration {duration!r} and step {step!r}."
+            )
         n = math.floor(total / dt + 1e-9)
         tol = 1e-9 * dt
         parsed = self._parse_events(events, total, dt, tol)

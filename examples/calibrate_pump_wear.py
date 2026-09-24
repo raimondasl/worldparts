@@ -61,7 +61,7 @@ def main() -> dict[str, Any]:
     rec = plan.recommendation
     assert rec is not None
     print(
-        f"  best extra sensor: {rec.sensor} ({rec.unit}), {rec.parameter} then "
+        f"  best extra sensor: {rec.sensor} ({rec.sensor_unit}), {rec.parameter} then "
         f"{rec.verdict} with a standard error of {rec.standard_error:.3f}"
     )
 

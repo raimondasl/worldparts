@@ -8,6 +8,7 @@ errors match the scatter of repeated fits, and the reduced chi-square is about 1
 
 from __future__ import annotations
 
+import functools
 import json
 import math
 from pathlib import Path
@@ -109,19 +110,34 @@ FILTER_EVENT = {"at": 240, "set": {"v.opening": 0.5}}
 LEVEL_SIGMA, DP_SIGMA = 0.01, 0.005
 
 
-def filter_series(seed: int | None, clogging: float = 0.6, housing: float = 0.3) -> dict[str, Any]:
-    """Tank level and filter pressure drop every minute for 8 minutes, the valve throttled
-    at 4 minutes (a settings-only point at that time)."""
-    s = filter_rig(clogging, housing)
-    sim = s.simulate(
+@functools.lru_cache(maxsize=16)
+def _filter_truth(
+    clogging: float, housing: float, step: str
+) -> tuple[tuple[float, float, float], ...]:
+    """(time, tank level, filter pressure drop) once a minute from a simulation at ``step``."""
+    sim = filter_rig(clogging, housing).simulate(
         duration="8 min",
-        step="60 s",
+        step=step,
         events=[FILTER_EVENT],
         variables=["tank.level", "filt.pressure_drop"],
     )
+    rows = zip(sim.time, sim["tank.level"], sim["filt.pressure_drop"], strict=True)
+    return tuple(r for r in rows if abs(r[0] - 60.0 * round(r[0] / 60.0)) < 1e-9)
+
+
+def filter_series(
+    seed: int | None, clogging: float = 0.6, housing: float = 0.3, step: str = "0.25 s"
+) -> dict[str, Any]:
+    """Tank level and filter pressure drop every minute for 8 minutes, the valve throttled
+    at 4 minutes (a settings-only point at that time).
+
+    The data come from a simulation with a fine step (``step``), standing for the
+    continuous process a real log records; a fit that simulated with the logging interval
+    as its step would be biased by the integration error (review finding). Tests that need
+    the model to reproduce the data exactly pass the fit's step here and to calibrate()."""
     rng = np.random.default_rng(seed)
     points: list[dict[str, Any]] = []
-    for t, level, dp in zip(sim.time, sim["tank.level"], sim["filt.pressure_drop"], strict=True):
+    for t, level, dp in _filter_truth(clogging, housing, step):
         e1, e2 = (0.0, 0.0) if seed is None else rng.normal(0.0, [LEVEL_SIGMA, DP_SIGMA])
         points.append(
             {
@@ -250,20 +266,20 @@ def test_media_filter_clogging_from_a_time_series(seed: int) -> None:
 
 def test_time_series_settings_are_events() -> None:
     """Without the valve event at 4 minutes the same data cannot be fitted: the settings of
-    a timed point act from its time on."""
-    data = filter_series(None)
-    good = wp.calibrate(filter_rig(), data, {"filt.clogging": [0, 0.95]})
+    a timed point act from its time on. (Data and fit share the step, so the fit is exact.)"""
+    data = filter_series(None, step="60 s")
+    good = wp.calibrate(filter_rig(), data, {"filt.clogging": [0, 0.95]}, step="60 s")
     assert good["filt.clogging"] == pytest.approx(0.6, abs=1e-6)
     del data["points"][4]["settings"]
-    bad = wp.calibrate(filter_rig(), data, {"filt.clogging": [0, 0.95]})
+    bad = wp.calibrate(filter_rig(), data, {"filt.clogging": [0, 0.95]}, step="60 s")
     assert bad.chi_square > 1e3 * max(good.chi_square, 1e-6)
     assert bad.p_value is not None and bad.p_value < 1e-6
 
 
 def test_steady_and_timed_points_together() -> None:
     """A steady point (settings applied, then solved from the starting state) can sit next
-    to a time series."""
-    data = filter_series(None)
+    to a time series. (Data and fit share the step, so the fit is exact.)"""
+    data = filter_series(None, step="60 s")
     truth = filter_rig(0.6)
     truth.set("v.opening", 0.3)
     dp = truth.solve()["filt.pressure_drop"]
@@ -274,7 +290,7 @@ def test_steady_and_timed_points_together() -> None:
             "measured": {"filt.pressure_drop": dp},
         }
     )
-    res = wp.calibrate(filter_rig(), data, {"filt.clogging": [0, 0.95]})
+    res = wp.calibrate(filter_rig(), data, {"filt.clogging": [0, 0.95]}, step="60 s")
     assert res["filt.clogging"] == pytest.approx(0.6, abs=1e-6)
     steady = [r for r in res.residuals if r.point == "throttled"]
     assert len(steady) == 1 and steady[0].time is None and steady[0].sigma_default
@@ -323,12 +339,14 @@ def test_valves_in_series_seen_only_through_their_sum_are_not_identifiable() -> 
 
 def test_filter_seen_only_through_a_product_is_not_identifiable() -> None:
     """With no housing loss the filter's drop is clean_pressure_drop / (1 - clogging) times
-    the flow: the data fix only that ratio."""
-    data = filter_series(None, housing=0.0)
+    the flow: the data fix only that ratio. (Data and fit share the step, so the ratio is
+    exact.)"""
+    data = filter_series(None, housing=0.0, step="60 s")
     res = wp.calibrate(
         filter_rig(0.3, housing=0.0),
         data,
         {"filt.clogging": [0, 0.95], "filt.clean_pressure_drop": ["0.05 bar", "1 bar"]},
+        step="60 s",
     )
     verdicts = {p: e.verdict for p, e in res.parameters.items()}
     assert set(verdicts.values()) <= {"not_identifiable", "weak"}
@@ -763,7 +781,10 @@ def test_results_are_json_safe_with_units() -> None:
     report = wp.identifiability(pump_circuit(), ["pump.outlet.p"], WEAR_BOUNDS)
     r = json.loads(json.dumps(report.to_dict(), allow_nan=False))
     assert r["parameters"]["pump.wear_efficiency"]["standard_error"] is None
-    assert r["recommendation"]["unit"] and len(r["candidates"]) <= 10
+    # The candidate's standard error is in the parameter's unit, and says so.
+    assert r["recommendation"]["sensor_unit"] and len(r["candidates"]) <= 10
+    assert r["recommendation"]["parameter_unit"] == "1"
+    assert all("unit" not in c for c in r["candidates"])
 
 
 def test_sample_interpolates_between_simulation_samples() -> None:
