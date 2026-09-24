@@ -1,10 +1,11 @@
 # worldparts examples
 
 Each example is a **system document** (YAML, validated by `system.schema.json`) and, for the
-two pumping examples, a short Python script that loads the document and asks the questions an
+pumping examples, a short Python script that loads the document and asks the questions an
 engineer or an agent would ask of it. The scripts use only the public API (`import worldparts as wp`)
 and print fewer than 60 lines. `tests/test_examples.py` runs them and checks their numbers
-against hand calculations.
+against hand calculations (and, for the calibration example, against the wear its synthetic
+readings were made with).
 
 The examples are in the repository, not in the installed package. Clone it and run
 everything from the repository root:
@@ -68,6 +69,32 @@ per m3), and estimates the time to empty the ground tank, by hand and by simulat
 
 The tanks are filled and emptied in batches, so `check()` reports the ground tank's inlet and
 the rooftop tank's outlet as unconnected (capped) ports. That is intended.
+
+## Pump wear from field readings (calibration)
+
+`calibrate_pump_wear.py`, `pump_wear_readings.yaml`
+
+The rooftop lift's pump after some years in service. `pump_wear_readings.yaml` is a
+measurement set (design section 14.1): outlet pressure, flow and shaft power at four
+positions of the discharge valve, each with its instrument uncertainty. The readings are
+synthetic (the lift with 10 % head wear and 12 % efficiency wear, plus instrument noise), so
+the answer is known.
+
+```
+uv run python examples/calibrate_pump_wear.py
+```
+
+The script:
+
+1. asks `wp.identifiability` which wear a pressure gauge and a flow meter could determine
+   before any data exists: head wear (to about 0.004), but not efficiency wear, which only
+   changes the shaft power; it recommends a power-related reading as the extra sensor;
+2. calibrates both wear inputs to the survey with `wp.calibrate`: 0.097 +/- 0.003 head wear
+   and 0.109 +/- 0.007 efficiency wear, both identifiable, reduced chi-square 0.65;
+3. fits the survey again without the power readings: efficiency wear is then reported as
+   not identifiable, with no standard error, instead of a made-up number;
+4. applies the fit and compares the pumps with the valve open: the worn pump delivers about
+   9 % less water and needs about 7 % more energy per m3.
 
 ## Domestic hot water (secondary)
 

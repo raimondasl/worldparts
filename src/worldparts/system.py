@@ -1128,7 +1128,13 @@ class System:
             SystemCheckError: When :meth:`check` finds error-level issues.
             SolverError: When the solver does not converge.
         """
-        issues = self._preflight()
+        return self._solve(self._preflight())
+
+    def _solve(self, issues: list[Issue]) -> SolveResult:
+        """:meth:`solve` after the pre-flight; ``issues`` are the non-fatal check issues to
+        attach to the result. Calibration (design 14.2) checks the system once and then
+        calls this for every trial, since values set through :meth:`set_values` are
+        validated there."""
         resolved, _ = self._control_issues()
         for inst in self._instances.values():
             inst.component.time_step = None

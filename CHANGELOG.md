@@ -8,9 +8,35 @@ interfaces. Each such change is listed here and in [docs/design.md](docs/design.
 ## [Unreleased]
 
 Milestone v0.3, part 1 (design section 13): control loops, ramp events in documents, pump
-wear, a leak component and top-fed tanks.
+wear, a leak component and top-fed tanks. Part 2 (design section 14) has begun with
+measurements, calibration and identifiability.
 
 ### Added
+
+- **Measurement sets** (design 14.1, `worldparts.measurements`). Operating points with
+  optional settings, an optional time and measured values with units and uncertainties;
+  `wp.load_measurements` reads YAML, JSON or a long-format CSV (`point, time, path, value,
+  unit, sigma`, optional `kind`), `wp.MeasurementSet.from_dict` plain data. Values convert
+  to each variable's unit and pressure reference; sigmas convert by scale only. Without a
+  sigma, `wp.default_sigma` gives 1 % of the value floored per kind of quantity (0.01 bar,
+  0.05 m3/h, 0.1 K, 0.01 kW, 0.01 m and so on for every unit dimension in the catalogue).
+  Every problem is listed in one `MeasurementError` (code `invalid_measurements`).
+- **Calibration** (design 14.2): `wp.calibrate(system, measurements, parameters, *,
+  method="trf", apply=False, step=None)` fits parameters or inputs within bounds with
+  `scipy.optimize.least_squares` on uncertainty-weighted residuals: steady points apply
+  their settings and solve, timed points run one simulation with the settings as events.
+  `CalibrationResult` reports each fitted value with its standard error (`s**2 (J^T J)^-1`,
+  `s**2` the reduced chi-square when above 1), a verdict (`identifiable`, `weak`,
+  `not_identifiable`) and an at-bound flag, the correlation matrix, singular values,
+  condition number and null directions of the range-scaled Jacobian, per-path residuals and
+  RMS, the reduced chi-square and its p-value, model failures during the fit and notes. The
+  system is restored unless `apply=True`. `CalibrationError` (code `calibration_failed`).
+- **Identifiability** (design 14.2): `wp.identifiability(system, sensors, parameters,
+  points=None, *, candidates=None)` says before any data exists which parameters the
+  sensors can determine with default uncertainties, and which candidate sensor most
+  improves the worst-determined one.
+- **Example** `examples/calibrate_pump_wear.py` with `examples/pump_wear_readings.yaml`:
+  identifiability, calibration of pump wear to a field survey, and the energy cost of wear.
 
 - **Control loops** (design 13.1, `worldparts.controls`). A system may carry `controls`: a
   `pi` loop or a `hysteresis` switch that reads one reported numeric variable and writes

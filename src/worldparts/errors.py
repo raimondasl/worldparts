@@ -14,11 +14,13 @@ if TYPE_CHECKING:
     from worldparts.results import Issue
 
 __all__ = [
+    "CalibrationError",
     "ContractError",
     "ExpressionError",
     "IncompatiblePortsError",
     "InvalidValueError",
     "ManifestError",
+    "MeasurementError",
     "OutOfRangeError",
     "SelfConnectionError",
     "SolverError",
@@ -138,6 +140,36 @@ class ManifestError(WorldpartsError):
         if self.problems:
             message = message + "\n" + "\n".join(f"  - {p}" for p in self.problems)
         super().__init__(message)
+
+
+class MeasurementError(InvalidValueError):
+    """A measurement set is malformed, or does not fit the system it is used with.
+
+    Attributes:
+        problems: Individual problems, each naming the point, the path or the file row.
+    """
+
+    code = "invalid_measurements"
+
+    #: At most this many problems are written into the message (all are in ``problems``).
+    MAX_LISTED = 25
+
+    def __init__(self, message: str, problems: Sequence[str] = ()) -> None:
+        self.problems = list(problems)
+        if self.problems:
+            shown = self.problems[: self.MAX_LISTED]
+            more = len(self.problems) - len(shown)
+            message = message + "\n" + "\n".join(f"  - {p}" for p in shown)
+            if more:
+                message += f"\n  ... and {more} more."
+        super().__init__(message)
+
+
+class CalibrationError(WorldpartsError):
+    """Calibration or an identifiability analysis could not run, for example because the
+    model fails at the starting values."""
+
+    code = "calibration_failed"
 
 
 class ContractError(WorldpartsError):

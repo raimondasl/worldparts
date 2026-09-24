@@ -14,6 +14,16 @@ Quick start::
     print(r["v.volume_flow"], r.units["v.volume_flow"])
 """
 
+from worldparts.calibration import (
+    CalibrationResult,
+    IdentifiabilityReport,
+    ParameterEstimate,
+    PathFit,
+    Residual,
+    SensorCandidate,
+    calibrate,
+    identifiability,
+)
 from worldparts.catalog import Catalog, default_catalog, load_catalog
 from worldparts.contracts import (
     CheckOutcome,
@@ -25,11 +35,13 @@ from worldparts.contracts import (
 )
 from worldparts.controls import Control, ControlConflictError, InvalidControlError
 from worldparts.errors import (
+    CalibrationError,
     ContractError,
     ExpressionError,
     IncompatiblePortsError,
     InvalidValueError,
     ManifestError,
+    MeasurementError,
     OutOfRangeError,
     SelfConnectionError,
     SolverError,
@@ -41,6 +53,13 @@ from worldparts.errors import (
     WorldpartsError,
 )
 from worldparts.manifest import Manifest, Table, load_manifest, validate_manifest_data
+from worldparts.measurements import (
+    MeasuredValue,
+    MeasurementPoint,
+    MeasurementSet,
+    default_sigma,
+    load_measurements,
+)
 from worldparts.results import (
     ComponentWarning,
     ControlReport,
@@ -57,6 +76,8 @@ __version__ = "0.1.0"
 
 __all__ = [
     "P_ATM",
+    "CalibrationError",
+    "CalibrationResult",
     "Catalog",
     "CheckOutcome",
     "ComponentReport",
@@ -66,15 +87,24 @@ __all__ = [
     "ControlConflictError",
     "ControlReport",
     "ExpressionError",
+    "IdentifiabilityReport",
     "IncompatiblePortsError",
     "InvalidControlError",
     "InvalidValueError",
     "Issue",
     "Manifest",
     "ManifestError",
+    "MeasuredValue",
+    "MeasurementError",
+    "MeasurementPoint",
+    "MeasurementSet",
     "ModeChange",
     "OutOfRangeError",
+    "ParameterEstimate",
+    "PathFit",
+    "Residual",
     "SelfConnectionError",
+    "SensorCandidate",
     "SimulationResult",
     "SolveResult",
     "SolverError",
@@ -88,11 +118,15 @@ __all__ = [
     "VariableInfo",
     "WorldpartsError",
     "__version__",
+    "calibrate",
     "check_catalog",
     "convert",
     "default_catalog",
+    "default_sigma",
+    "identifiability",
     "load_catalog",
     "load_manifest",
+    "load_measurements",
     "parse_duration",
     "parse_value",
     "run_component",
