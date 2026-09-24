@@ -591,3 +591,63 @@ Also accepted in component-manifest scenario `simulate.events` (validated by com
 ### 13.5 Top-fed tank (issue #19)
 
 `tank` gains `inlet_height` m, 0, [0, 100] (must not exceed `height`). With `inlet_height > 0` the `inlet` port discharges freely at that height above the tank bottom: its internal node is at `P_ATM + rho * g * max(level, inlet_height)`, and backflow out through the inlet is blocked while the level is below `inlet_height` (the pipe mouth is above the water). With `inlet_height = 0` the tank behaves as in v0.1. `drawing_air` on the inlet follows 8.9: only when the port is more than 100 Pa below atmospheric while the mouth is dry, or while the step cap binds. In a simulation, dry ports take no share of the outflow cap. The WNTR adapter keeps EPANET's bottom-fed tank and lists a top-fed inlet as an approximation (a PSV at `inlet_height` would be exact while the mouth is dry but would block a siphon through a submerged mouth; see docs/wntr-adapter.md).
+
+## 14. v0.3 part 2: calibration, diagnosis, controller testing
+
+This section is the contract for the diagnostics half of milestone v0.3. The research report rates plant what-if analysis and fault diagnosis as the most valuable, lowest-risk uses of component models: advisory, offline, and with a human in the loop. It also names practical identifiability with noisy, sparse sensors as an open problem that no library packages per component. Everything here is advisory: results carry their uncertainty and never actuate a real plant.
+
+### 14.1 Measurements
+
+A measurement set is a list of **operating points**. Each point has optional settings (inputs or parameters applied before solving), an optional time (for simulations), and measured values with units and optional uncertainty:
+
+```yaml
+points:
+  - name: valve-open
+    settings: {valve.opening: 1.0}
+    measured:
+      pump.volume_flow: {value: "31.8 m3/h", sigma: "0.5 m3/h"}
+      pump.outlet.p: {value: "2.71 bar", sigma: "0.02 bar"}
+  - name: valve-half
+    settings: {valve.opening: 0.5}
+    measured: {pump.volume_flow: "22.4 m3/h", pump.outlet.p: "3.35 bar"}
+```
+
+Without `sigma`, the default uncertainty is 1 % of the value, floored at a variable-specific absolute value (for example 0.01 bar for pressures, 0.05 m³/h for flows, 0.1 K for temperatures). `worldparts.load_measurements(path)` reads this YAML or JSON, or a long-format CSV (`point, time, path, value, unit, sigma`). A time series is a set of points with times, compared against one simulation that applies the points' settings as events.
+
+### 14.2 Calibration and identifiability (issue #14)
+
+`calibrate(system, measurements, parameters, *, method="trf") -> CalibrationResult`, where `parameters` lists paths with bounds (`{path: pump.wear_head, lower: 0, upper: 0.5}`; parameters or inputs). It minimises the uncertainty-weighted residuals with `scipy.optimize.least_squares` (bounded), starting from the current values, and reports:
+
+- fitted values with units, and standard errors from the weighted Jacobian at the optimum (`cov = s² (JᵀJ)⁻¹`, with `s²` the reduced chi-square when it exceeds 1);
+- the correlation matrix, the singular values and condition number of the scaled Jacobian, and per parameter a verdict: `identifiable`, `weak` (standard error above 25 % of its bound range, or correlation above 0.95 with another parameter) or `not_identifiable` (in the null space: singular value below 1e-8 of the largest);
+- per measured path the residual, its normalised value and the RMS; the reduced chi-square; and whether each fitted value sits on a bound (a sign of a wrong hypothesis or missing parameter).
+
+The system is left at the fitted values only if `apply=True`. `identifiability(system, sensors, parameters, points=None)` answers the design question before any data exists: at the given operating points (default: the current one), which of the parameters the listed sensor paths can determine, using the same Jacobian analysis with default uncertainties, and which sensor would help most (the one whose addition most improves the worst-determined parameter).
+
+### 14.3 Fault modes in manifests and diagnosis (issue #15)
+
+Manifests gain an optional `faults` list: machine-readable failure modes that map to a parameter or input and a plausible range.
+
+```yaml
+faults:
+  - name: worn_impeller
+    description: Impeller or wear-ring wear; head falls at every flow.
+    vary: {path: wear_head, lower: 0.0, upper: 0.5}
+    healthy: 0.0
+```
+
+v0.3 fault modes: pump `worn_impeller` (wear_head), `efficiency_loss` (wear_efficiency) and `running_slow` (speed); filter `clogged` (clogging); valve `partly_closed` (opening); UV reactor `lamp_degraded` (lamp_output); pipe `scaled` (roughness, up to 20 times its value); and a system-level `leak_at` hypothesis that adds a `leak` component at a named junction with its diameter varied.
+
+`diagnose(system, measurements, hypotheses=None, *, max_faults=1) -> DiagnosisResult` evaluates the no-fault baseline and each hypothesis (by default every fault mode of every component in the system, plus `leak_at` for every junction when `include_leaks=True`). For each hypothesis it calibrates the fault's parameter to the measurements (14.2) and scores it by reduced chi-square with a penalty per fitted parameter (the Akaike information criterion on the weighted residuals). The result ranks hypotheses with their fitted magnitude and uncertainty, the residual per measurement, whether the fit hit a bound, and which measurements discriminate the best hypothesis from the runner-up. A diagnosis is "ambiguous" when the top two scores are within 2 (AIC units), and says so. `max_faults=2` also tries pairs of faults. Nothing is applied to the system.
+
+### 14.4 Rule controllers, Python controllers and acceptance checks (issue #17)
+
+Control-logic testing needs a plant model in the loop and machine-checkable acceptance criteria.
+
+- **Rule controllers (declarative, MCP-safe).** A control of `type: rules` holds ordered `rules: [{if: <expression>, set: {<input path>: <value>}}]` evaluated with the safe expression language (section 3.4) over measured paths each sample; the first matching rule wins, and with no match the outputs hold. This is how an agent writes control logic through MCP, since the server never executes arbitrary code.
+- **Python controllers (API and CLI only).** `System.simulate(..., controller=callable, sensors=[paths])`: the callable receives the time and the sensor readings (display units) each sample, may keep its own state, and returns input changes, applied with the same timing as controls (13.1). The CLI takes `--controller module:function`.
+- **Acceptance checks.** `verify(simulation_result, checks) -> VerificationReport` with check types `always` (an expression holds at every sample), `eventually` (holds at some sample, optionally `within` a duration of a start time), `never_warning` (a warning code never appears) and `bounds_over` (a path stays within bounds over a time window). Each failed check reports the first violating time and value. MCP tool `verify_simulation(system_id, simulation, checks)` runs a simulation and the checks in one call; CLI `worldparts verify SYSTEM.yaml --checks CHECKS.yaml [--controller mod:func]`.
+
+### 14.5 MCP and CLI
+
+New MCP tools: `calibrate`, `identifiability`, `diagnose`, `verify_simulation`; the tools/list budget still holds (trim elsewhere). New CLI commands: `worldparts calibrate`, `worldparts diagnose`, `worldparts verify`. Measurements are passed inline (MCP) or as files (CLI).
