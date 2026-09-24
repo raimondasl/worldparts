@@ -517,3 +517,71 @@ Revised after implementation and independent review:
 - `uv run pytest` passes on Linux and Windows. Physics tests compare against hand calculations (Kv at 1 bar, pump operating point from the intersection of two quadratics, Darcy-Weisbach against `fluids`, energy balance of mixing).
 - `uv run worldparts check-catalog` passes.
 - No network access at runtime; no global state except the MCP server's system store.
+
+## 13. v0.3 part 1: controls, pump wear, leaks, top-fed tanks
+
+This section is the contract for the first half of milestone v0.3 (pump systems and diagnostics). It follows the same rules as sections 1 to 12.
+
+### 13.1 Control loops (`controls.py`; issue #16)
+
+Controls are system-level rules, like EPANET controls: they read one variable and write one input. They are not components, because v0.1 ports are fluid-only and a signal-port type would be a larger format change. A system document gains an optional top-level `controls` list:
+
+```yaml
+controls:
+  - name: duty_pressure
+    type: pi
+    measure: pump.outlet.p          # any reported numeric path
+    setpoint: 4.0                   # in the measured variable's unit, or a string with units ("4 bar")
+    actuate: pump.speed             # a numeric input of a component
+    gain: 0.2                       # actuator units per measured unit
+    integral_time: 10 s
+    output_min: 0.3
+    output_max: 1.2
+    direction: reverse              # reverse: raise the output when the measure is below the setpoint
+  - name: tower_level_switch
+    type: hysteresis
+    measure: tower.level
+    actuate: pump.speed
+    on_below: 1.0                   # switch on when the measure falls below this
+    off_above: 3.0                  # switch off when it rises above this
+    on_value: 1.0
+    off_value: 0.0
+    initial: on                     # on | off
+```
+
+Semantics:
+
+- **Simulation (sampled data).** After the solve at sample `t`, every control computes its output from the value it measured at `t`, and the output is applied as an input change at `t`, taking effect over the next step exactly like an event. PI uses the incremental form `u += gain * (e - e_prev) + gain * dt / integral_time * e` with `e = setpoint - measure` for `reverse` (`measure - setpoint` for `direct`), clamped to `[output_min, output_max]`; clamping stops the integral from winding up. Hysteresis switches on when the measure is below `on_below`, off when it is above `off_above`, and otherwise holds its state.
+- **Steady solve.** A hysteresis control holds its current state. A PI control is at steady state when the measure equals the setpoint, so `solve()` goal-seeks each PI actuator within `[output_min, output_max]` (Brent's method, as `solve_for`); with several PI loops, iterate loop by loop until all actuators change by less than 1e-6 of their range (at most 50 rounds), and raise a warning if that fails. A loop that cannot reach its setpoint inside its limits is left at the limit and reported.
+- **Validation** (`check()` codes): `unknown_variable` for a bad `measure` or `actuate`, `invalid_control` for an inconsistent definition (for example `on_below >= off_above`, `output_min >= output_max`, an `actuate` that is not a numeric input), and `control_conflict` when two controls write the same input.
+- **Results.** `SolveResult.controls` and `SimulationResult.controls` report, per control, the output, the measured value, the error or state, and whether it is saturated. Series for `control.<name>.output` and `control.<name>.measure` are recorded in simulations.
+- **Warnings** (component name `control.<name>`): `control_saturated` when a PI loop sits at a limit with a non-zero error (steady solve, or at the end of a simulation step); `short_cycling` when a hysteresis control switches more than `max_switches_per_hour` times (default 6) in any sliding hour of a simulation.
+- **API.** `System.add_control(name, type, **fields)`, `System.remove_control(name)`, `System.controls`; MCP tools `add_control` and `remove_control`; controls round-trip in `to_dict`/`from_dict` and appear in `get_system`.
+- **Python controllers** (the control-logic oracle, issue #17) will plug into the same hook in part 2: a callable that receives the measured values at `t` and returns input changes.
+
+### 13.2 Ramp events in system documents (issue #20)
+
+`System.simulate` and the system document's `simulation.events` accept the ramp form the MCP tool already takes: `{at, ramp: {path: [start, end]}, over}`. The expansion into one set event per step moves from the MCP server into the core, and `system.schema.json` validates both forms.
+
+### 13.3 Pump wear (issue #13)
+
+`centrifugal_pump` gains two inputs, so wear can change during a simulation and be estimated by calibration:
+
+- `wear_head` 1, 0.0, [0, 0.5]: the fraction of head lost at every flow and speed; `H = (1 - wear_head) * H_new(Q, s)`.
+- `wear_efficiency` 1, 0.0, [0, 0.5]: the fraction of efficiency lost; shaft power becomes `P_new(Q, s) * (1 - wear_head) / (1 - wear_efficiency)`, so efficiency is `(1 - wear_efficiency)` times the new-pump efficiency at the same flow.
+- NPSH required is unchanged. The fitted curve observables (`bep_flow`, `curve_fit_rms`) describe the new pump.
+- Contracts: zero wear reproduces the published curve exactly; head and efficiency never increase with wear; the operating point on a fixed system curve moves to lower flow.
+
+### 13.4 Leak (issue #18, first component)
+
+`leak`: an orifice discharging to atmosphere from one port, for burst or background leakage and for diagnosis tasks.
+
+- Ports: `port`. Parameters: `diameter` mm (equivalent orifice diameter), 5, [0.1, 1000]; `discharge_coefficient` 1, 0.6, [0.1, 1]. Input `opening` 1, 1.0, [0, 1] (scales the orifice area, so a leak can appear during a simulation).
+- Law: `Q = Cd * A * opening * sqrt(2 * dp / rho)` with `dp` the gauge pressure at the port, regularised at zero like the other laws; flow back into the network (negative gauge pressure) passes through the same orifice.
+- Observables: `volume_flow` L/min (out of the network), `pressure` bar gauge at the port.
+- Envelope: `backflow` warning when `volume_flow < -0.01` (air or dirty water drawn in).
+- WNTR mapping: an EPANET emitter at the port junction with coefficient `Cd * A * sqrt(2 g)` in EPANET units.
+
+### 13.5 Top-fed tank (issue #19)
+
+`tank` gains `inlet_height` m, 0, [0, 100] (must not exceed `height`). With `inlet_height > 0` the `inlet` port discharges freely at that height above the tank bottom: its internal node is at `P_ATM + rho * g * max(level, inlet_height)`, and backflow out through the inlet is blocked while the level is below `inlet_height` (the pipe mouth is above the water). With `inlet_height = 0` the tank behaves as in v0.1. The WNTR adapter keeps EPANET's bottom-fed tank and lists a top-fed inlet as an approximation.
