@@ -512,6 +512,12 @@ def infra_error(s: StreamSummary, outcome: dict[str, Any] | None = None) -> str 
         return "authentication failed (log in to the Claude CLI or set ANTHROPIC_API_KEY)"
     if outcome.get("timed_out"):
         return None
+    servers = {m.get("name"): m.get("status") for m in s.mcp_servers}
+    if servers and any(status != "connected" for status in servers.values()):
+        # A session that started before its MCP server connected has no tools; a model may
+        # then write tool calls as plain text and invent the results.
+        pending = ", ".join(f"{n}={st}" for n, st in servers.items() if st != "connected")
+        return f"MCP server not connected at session start ({pending})"
     if s.result_subtype is None and s.tool_calls == 0 and not s.last_assistant_text:
         return f"no output from the CLI (exit code {outcome.get('exit_code')})"
     if s.is_error and not s.total_tokens and (s.api_error_status or s.api_errors):

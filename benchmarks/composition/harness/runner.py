@@ -81,7 +81,6 @@ ALLOWED_TOOLS = {
 _KEEP_ENV = {
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_BASE_URL",
     "CLAUDE_CODE_OAUTH_TOKEN",
     "CLAUDE_CONFIG_DIR",
     "CLAUDE_CODE_GIT_BASH_PATH",
@@ -92,6 +91,13 @@ _KEEP_ENV = {
 #: Dropped: the parent Claude session's variables and the harness's own virtual env.
 _DROP_PREFIXES = ("CLAUDE", "ANTHROPIC_")
 _DROP_EXACT = {
+    # A parent Claude session may set these; inherited, they make the child start its first
+    # turn before the worldparts server has connected (no tools; the model then invents answers).
+    "MCP_CONNECTION_NONBLOCKING",
+    "MCP_SERVER_CONNECTION_BATCH_SIZE",
+    # A parent desktop session may route its own traffic through a local endpoint; the child
+    # uses its own CLI login against the default endpoint.
+    "ANTHROPIC_BASE_URL",
     "VIRTUAL_ENV",
     "VIRTUAL_ENV_PROMPT",
     "UV_RUN_RECURSION_DEPTH",
@@ -108,6 +114,7 @@ ISOLATION_ENV = {
     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
     "DISABLE_AUTOUPDATER": "1",
     "ENABLE_TOOL_SEARCH": "false",
+    "MCP_TIMEOUT": "60000",
 }
 
 CODE_ENV_PACKAGES = ("numpy", "scipy", "fluids", "wntr")
@@ -239,6 +246,8 @@ def mcp_config(condition: str, systems_dir: Path) -> dict[str, Any]:
         "mcpServers": {
             MCP_SERVER_NAME: {
                 "type": "stdio",
+                # Connect before the first turn even if the CLI defaults to non-blocking MCP.
+                "alwaysLoad": True,
                 "command": "uv",
                 "args": ["run", "--directory", REPO_ROOT.as_posix(), "worldparts", "mcp"],
                 "env": {"WORLDPARTS_AUTOSAVE_DIR": str(systems_dir)},

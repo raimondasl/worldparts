@@ -829,3 +829,31 @@ def test_answers_equal_to_prompt_constants_are_marked(task: Any) -> None:
     assert tr["correct_untraceable_not_in_prompt"] == sum(
         1 for a in g.answers if a.kind == "number" and a.passed and not a.in_prompt
     )
+
+
+def test_session_that_started_before_mcp_connected_is_an_infrastructure_error() -> None:
+    """A pending MCP server at session start means the agent had no tools: not its failure."""
+    from benchmarks.composition.harness.grading import StreamSummary, infra_error
+
+    s = StreamSummary()
+    s.mcp_servers = [{"name": "worldparts", "status": "pending"}]
+    s.final_text = '```json\n{"n": 23}\n```'
+    s.usage = {"input_tokens": 3000, "output_tokens": 690}
+    s.result_subtype = "success"
+    s.last_assistant_text = s.final_text
+    assert "not connected" in (infra_error(s, {}) or "")
+    s.mcp_servers = [{"name": "worldparts", "status": "connected"}]
+    assert infra_error(s, {}) is None
+
+
+def test_child_env_drops_nonblocking_mcp_and_parent_base_url(monkeypatch) -> None:
+    """The child CLI must wait for the worldparts server and use its own login endpoint."""
+    from benchmarks.composition.harness import runner
+
+    monkeypatch.setenv("MCP_CONNECTION_NONBLOCKING", "1")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://127.0.0.1:9")
+    env, _ = runner.child_env("mcp", None)
+    assert "MCP_CONNECTION_NONBLOCKING" not in env
+    assert "ANTHROPIC_BASE_URL" not in env
+    cfg = runner.mcp_config("mcp", runner.REPO_ROOT / "tmp-systems")
+    assert cfg["mcpServers"][runner.MCP_SERVER_NAME]["alwaysLoad"] is True
