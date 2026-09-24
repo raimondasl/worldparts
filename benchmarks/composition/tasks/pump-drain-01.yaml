@@ -1,0 +1,71 @@
+id: pump-drain-01
+title: Gravity drain-down of a storage tank
+level: 1
+category: transient
+domain: storage
+prompt: |
+  An open cylindrical storage tank, 4.0 m in diameter and 3.5 m high, is emptied by
+  gravity for inspection. At time zero it holds water 3.0 m deep and nothing flows in.
+  Water leaves through the bottom outlet nozzle (Kv 150 m3/h) into a 60 m steel outfall
+  pipe, inner diameter 102.3 mm, absolute roughness 0.05 mm, whose open end lies 2.0 m
+  below the tank bottom. The pipe's minor losses total K = 1.5, including the exit loss
+  of its free discharge into a ditch.
+
+  Treat the drain-down as quasi-steady: at each instant the outflow is the steady flow
+  for the current depth, with the water surface and the pipe outlet both at atmospheric
+  pressure. Water: density 998.2 kg/m3, viscosity 1.002e-3 Pa s; g = 9.80665 m/s2.
+  Pipes: Darcy-Weisbach. A Kv element drops (Q/Kv)^2 x 0.9982 bar (Q in m3/h).
+
+  What is the outflow at the start, what is the water depth after 20 minutes, and how
+  long after the start does the depth fall below 0.35 m?
+answers:
+  - key: initial_flow
+    description: Outflow at time zero
+    unit: m3/h
+    rel_tol: 0.03
+  - key: level_20min
+    description: Water depth in the tank 20 minutes after the start
+    unit: m
+    rel_tol: 0.05
+  - key: time_to_low
+    description: Time from the start until the depth falls below 0.35 m
+    unit: min
+    rel_tol: 0.05
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: tank drain-down
+    components:
+      - name: tank
+        type: tank
+        parameters: {diameter: 4.0, height: 3.5, initial_level: 3.0, initial_temperature: 20, port_kv: 150}
+      - name: outfall
+        type: pipe
+        parameters: {length: 60, diameter: 102.3, roughness: 0.05, height_difference: -2.0, minor_loss: 1.5}
+      - name: ditch
+        type: drain
+    connections:
+      - [tank.outlet, outfall.port_a]
+      - [outfall.port_b, ditch.port]
+  steps:
+    - op: solve
+      read: {initial_flow: outfall.volume_flow}
+    - op: simulate
+      duration: 45 min
+      step: 2 s
+      restore: true
+      read_first_warning: {time_to_low: {warning: tank.low_level, unit: min}}
+    - op: simulate
+      duration: 20 min
+      step: 2 s
+      read_final: {level_20min: tank.level}
+  expected: {initial_flow: 65.13057952, time_to_low: 36.56666667, level_20min: 1.424595489}
+notes: |
+  Quasi-steady Torricelli with losses: at depth h, h + 2.0 = (f L/D + 1.5) v^2/2g +
+  (Q/150)^2 x 0.9982 bar. At h = 3.0 m: 65.1 m3/h (v = 2.20 m/s, f = 0.0186). Then
+  A dh/dt = -Q(h) with A = 12.566 m2. The depth 0.35 m is 10 % of the 3.5 m height, where the
+  reference tank model raises its low-level alarm; the reference reads the first time of that
+  alarm (explicit Euler, 2 s step, so the time is resolved to 2 s). Independent Python check
+  (Colebrook, solve_ivp, no worldparts): 65.24 m3/h, depth 1.422 m at 20 min, 0.35 m reached
+  at 36.51 min, within 0.2 % of the reference. The depth is asked at 20 min rather than near
+  the end because late depths are sensitive to the accumulated flow error.

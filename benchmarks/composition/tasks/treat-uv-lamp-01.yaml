@@ -1,0 +1,94 @@
+id: treat-uv-lamp-01
+title: Ageing UV lamp and throttling
+level: 2
+category: what_if
+domain: treatment
+prompt: |
+  A pressure-fed treatment line runs from a header held at 2.0 bar gauge through a 25 m feed pipe
+  (100 mm inner diameter, roughness 0.05 mm, total K = 4), a media filter, a UV reactor and a
+  control valve that discharges to atmosphere into a contact tank. Everything is at one elevation.
+
+  Filter (clean): rated 60 m3/h, pressure drop 0.30 bar at rated flow, of which 65 % is linear in
+  flow and 35 % proportional to flow squared. UV reactor: 0.15 bar at its rated 60 m3/h,
+  proportional to flow squared; volume 45 L; average fluence rate 20 mW/cm2 with a new lamp,
+  proportional to lamp output; UV dose = fluence rate x volume / flow (mW/cm2 x s = mJ/cm2);
+  required dose 40 mJ/cm2. Valve: Kv = 80 m3/h fully open with a linear characteristic, Kv_eff =
+  Kv x opening; it is currently at opening 0.60. Kv convention: Q = Kv sqrt(dp/SG), Q in m3/h, dp
+  in bar, SG = 0.9982. Use Darcy-Weisbach friction (Colebrook or equivalent). Water: density 998.2
+  kg/m3, viscosity 1.002 mPa s; g = 9.80665 m/s2.
+
+  The lamp has aged to 65 % of its new output. At the current opening, what dose does the reactor
+  deliver and does it still meet the requirement? To which opening must the valve be closed to
+  restore exactly 40 mJ/cm2, and what flow results?
+answers:
+- key: aged_dose
+  description: UV dose with the aged lamp at opening 0.60
+  kind: number
+  unit: mJ/cm2
+  rel_tol: 0.03
+- key: aged_meets_dose
+  description: Whether the aged-lamp dose at opening 0.60 is at least 40 mJ/cm2
+  kind: boolean
+- key: opening
+  description: Valve opening (0 to 1) that restores exactly 40 mJ/cm2
+  kind: number
+  unit: '1'
+  rel_tol: 0.03
+  abs_tol: 0.01
+- key: flow
+  description: Flow at that opening
+  kind: number
+  unit: m3/h
+  rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: '0.1'
+    name: uv lamp ageing
+    components:
+    - name: header
+      type: supply
+      parameters: {pressure: 2.0}
+    - name: feed
+      type: pipe
+      parameters: {length: 25, diameter: 100, roughness: 0.05, minor_loss: 4}
+    - name: filter
+      type: media_filter
+      parameters: {rated_flow: 60, clean_pressure_drop: 0.3, housing_fraction: 0.35, change_pressure_drop: 1.2}
+    - name: uv
+      type: uv_reactor
+      parameters: {rated_flow: 60, rated_pressure_drop: 0.15, volume: 45, fluence_rate: 20, required_dose: 40}
+    - name: valve
+      type: valve
+      parameters: {kv: 80, leakage: 1.0e-08}
+      inputs: {opening: 0.6}
+    - {name: out, type: drain}
+    connections:
+    - [header.port, feed.port_a]
+    - [feed.port_b, filter.inlet]
+    - [filter.outlet, uv.inlet]
+    - [uv.outlet, valve.port_a]
+    - [valve.port_b, out.port]
+  steps:
+  - op: set
+    values: {uv.lamp_output: 0.65}
+  - op: solve
+    read: {aged_dose: uv.dose}
+  - op: answer
+    values: {aged_meets_dose: false}
+  - op: solve_for
+    target: uv.dose
+    value: 40 mJ/cm2
+    vary: valve.opening
+    lower: 0.2
+    upper: 0.6
+    read: {opening: valve.opening, flow: uv.volume_flow}
+  expected: {aged_dose: 36.94853385, aged_meets_dose: false, opening: 0.5403383053, flow: 52.65}
+notes: |
+  Hand check: at opening 0.60 (Kv_eff = 48) the line passes 57.0 m3/h: feed pipe 0.177 bar (v =
+  2.02 m/s, f = 0.0187, f L/D = 4.7 plus K = 4), filter 0.280 bar, UV 0.135 bar, valve 0.9982
+  (57.0/48)^2 = 1.408 bar, total 2.0 bar. Aged dose = 0.65 x 20 x 0.045 / (57.0/3600) = 36.9
+  mJ/cm2 < 40, so it fails. 40 mJ/cm2 needs Q = 0.65 x 20 x 0.045 / 40 x 3600 = 52.65 m3/h
+  (exact); then feed 0.151, filter 0.252 and UV 0.116 bar leave 1.481 bar for the valve, Kv_eff =
+  52.65 sqrt(0.9982/1.481) = 43.22 m3/h, opening 43.22/80 = 0.540. Independent Python (Colebrook)
+  gives 36.94 mJ/cm2, opening 0.5403 and 52.65 m3/h. The opening is derived from a difference of
+  pressures, hence 3 % with abs 0.01.

@@ -1,0 +1,85 @@
+id: treat-two-source-01
+title: Village main fed from two sources
+level: 2
+category: operating_point
+domain: distribution
+prompt: |
+  A village main is fed from two sources that meet at a junction J. Source A is the treatment
+  plant's pumped outlet, held at 4.2 bar gauge; it reaches J through 3000 m of 150 mm pipe. Source
+  B is an interconnection with a neighbouring zone whose pressure-reducing station holds 3.6 bar
+  gauge; it reaches J through 500 m of 100 mm pipe. From J a 600 m, 150 mm main climbs 5 m to the
+  village node V. The whole village demand at V is represented as one outlet to atmosphere with Kv
+  = 45 m3/h, i.e. Q = 45 sqrt(p_V / SG) with p_V the gauge pressure at V in bar and SG = 0.9982.
+  A, B and J are at the same elevation.
+
+  All diameters are inner diameters; all pipes have roughness 0.1 mm and no minor losses. Use
+  Darcy-Weisbach friction (Colebrook or equivalent). Water: density 998.2 kg/m3, viscosity 1.002
+  mPa s; g = 9.80665 m/s2. Both sources hold their pressure whatever the flow.
+
+  Find the flow supplied by each source and the gauge pressures at J and at V.
+answers:
+- key: plant_flow
+  description: Flow supplied by source A (treatment plant)
+  kind: number
+  unit: m3/h
+  rel_tol: 0.03
+- key: interconnect_flow
+  description: Flow supplied by source B (interconnection)
+  kind: number
+  unit: m3/h
+  rel_tol: 0.03
+- key: junction_pressure
+  description: Gauge pressure at junction J
+  kind: number
+  unit: bar
+  rel_tol: 0.03
+- key: village_pressure
+  description: Gauge pressure at village node V
+  kind: number
+  unit: bar
+  rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: '0.1'
+    name: two-source branch
+    components:
+    - name: plant
+      type: supply
+      parameters: {pressure: 4.2}
+    - name: interconnect
+      type: supply
+      parameters: {pressure: 3.6}
+    - name: pipe_a
+      type: pipe
+      parameters: {length: 3000, diameter: 150, roughness: 0.1}
+    - name: pipe_b
+      type: pipe
+      parameters: {length: 500, diameter: 100, roughness: 0.1}
+    - name: pipe_c
+      type: pipe
+      parameters: {length: 600, diameter: 150, roughness: 0.1, height_difference: 5}
+    - name: demand
+      type: valve
+      parameters: {kv: 45, leakage: 1.0e-08}
+    - {name: consumers, type: drain}
+    connections:
+    - [plant.port, pipe_a.port_a]
+    - [interconnect.port, pipe_b.port_a]
+    - [pipe_a.port_b, pipe_c.port_a]
+    - [pipe_b.port_b, pipe_c.port_a]
+    - [pipe_c.port_b, demand.port_a]
+    - [demand.port_b, consumers.port]
+  steps:
+  - op: solve
+    read: {plant_flow: plant.volume_flow, interconnect_flow: interconnect.volume_flow, junction_pressure: pipe_c.port_a.p,
+      village_pressure: demand.port_a.p}
+  expected: {plant_flow: 43.90572475, interconnect_flow: 23.74129048, junction_pressure: 3.199854993,
+    village_pressure: 2.255744028}
+notes: |
+  Hand check at p_J = 3.20 bar: pipe A loses 1.0 bar in 3000 m of 150 mm (f = 0.0205 at v = 0.69
+  m/s), which passes 44.0 m3/h; pipe B loses 0.40 bar in 500 m of 100 mm (f = 0.0228, v = 0.84
+  m/s), 23.7 m3/h. The 67.7 m3/h climb pipe C (v = 1.06 m/s, friction 0.453 bar, static 0.490
+  bar), leaving p_V = 2.26 bar, and the outlet passes 45 sqrt(2.26/0.9982) = 67.7 m3/h, which
+  closes the balance. Independent Python (Colebrook, bisection on p_J) gives 43.98 and 23.74 m3/h,
+  3.2028 and 2.2607 bar. A 1 % change in one pipe's friction moves the source-B flow by about 0.5
+  %, so 3 % holds.

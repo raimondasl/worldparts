@@ -1,0 +1,75 @@
+id: treat-uv-throttle-01
+title: Throttle a UV line to meet the dose
+level: 1
+category: sizing
+domain: treatment
+prompt: |
+  A UV reactor on a filtered-water line is fed from a header held at 2.2 bar gauge and discharges
+  through an equal-percentage control valve to an open channel at atmospheric pressure. Everything
+  is at one elevation and the pipework losses are negligible.
+
+  Reactor: pressure drop 0.25 bar at its rated 40 m3/h, proportional to flow squared; water volume
+  20 L; average fluence rate 22 mW/cm2. UV dose = fluence rate x volume / flow (plug-flow
+  convention, mW/cm2 x s = mJ/cm2). Required dose 40 mJ/cm2.
+
+  Valve: full-open Kv = 50 m3/h. Its inherent characteristic is Kv_eff = Kv (R^(y-1) - 1/R) / (1 -
+  1/R) with rangeability R = 50 and opening y from 0 to 1 (leakage negligible). Kv convention: Q =
+  Kv sqrt(dp/SG), Q in m3/h, dp in bar, SG = 0.9982. Water density 998.2 kg/m3.
+
+  With the valve fully open, what dose does the reactor deliver? What valve opening gives exactly
+  the required 40 mJ/cm2, and what is the flow then?
+answers:
+- key: dose_full_open
+  description: UV dose with the valve fully open
+  kind: number
+  unit: mJ/cm2
+  rel_tol: 0.03
+- key: opening
+  description: Valve opening (0 to 1) giving exactly 40 mJ/cm2
+  kind: number
+  unit: '1'
+  rel_tol: 0.03
+  abs_tol: 0.01
+- key: flow
+  description: Flow at that opening
+  kind: number
+  unit: m3/h
+  rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: '0.1'
+    name: uv throttling
+    components:
+    - name: header
+      type: supply
+      parameters: {pressure: 2.2}
+    - name: uv
+      type: uv_reactor
+      parameters: {rated_flow: 40, rated_pressure_drop: 0.25, volume: 20, fluence_rate: 22, required_dose: 40}
+    - name: valve
+      type: valve
+      parameters: {kv: 50, characteristic: equal_percentage, rangeability: 50, leakage: 1.0e-08}
+    - {name: out, type: drain}
+    connections:
+    - [header.port, uv.inlet]
+    - [uv.outlet, valve.port_a]
+    - [valve.port_b, out.port]
+  steps:
+  - op: solve
+    read: {dose_full_open: uv.dose}
+  - op: solve_for
+    target: uv.dose
+    value: 40 mJ/cm2
+    vary: valve.opening
+    lower: 0.3
+    upper: 1.0
+    read: {opening: valve.opening, flow: uv.volume_flow}
+  expected: {dose_full_open: 25.17083341, opening: 0.8583699869, flow: 39.6}
+notes: |
+  Hand check: fully open, Q = sqrt(2.2 / (0.9982/50^2 + 0.25/40^2)) = 62.93 m3/h, dose = 22 x
+  0.020 / (62.93/3600) = 25.17 mJ/cm2. For 40 mJ/cm2 the flow must be 22 x 0.020 / 40 m3/s = 39.6
+  m3/h (exact from the dose definition). The reactor then takes 0.25 (39.6/40)^2 = 0.245 bar, the
+  valve 1.955 bar, so Kv_eff = 39.6 sqrt(0.9982/1.955) = 28.30 m3/h, phi = 0.5660, R^(y-1) =
+  0.5660 x 0.98 + 0.02 = 0.5747, y = 1 + ln(0.5747)/ln(50) = 0.8584. Independent Python gives
+  25.171, 0.85837 and 39.600. The opening depends on the characteristic formula, which the prompt
+  states; 3 % (abs 0.01) covers rounding.

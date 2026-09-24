@@ -1,0 +1,86 @@
+id: pump-transfer-01
+title: Tank-to-tank transfer until overflow and run-dry
+level: 2
+category: transient
+domain: storage
+prompt: |
+  A pump transfers water between two open vertical cylindrical tanks, each with bottom
+  nozzles of Kv 200 m3/h. Lower tank: 3.0 m diameter, water 2.6 m deep at the start.
+  Upper tank: 2.5 m diameter, 2.0 m high (water above the rim spills and is lost), water
+  0.4 m deep at the start. The pump sits at the level of the lower tank bottom and draws
+  from its nozzle. It discharges through a non-return valve (Kv 45 m3/h) into 70 m of
+  pipe (inner diameter 68.8 mm, absolute roughness 0.05 mm, K = 5 including the entry)
+  that rises 16 m and enters the upper tank through its bottom nozzle. Nothing else
+  flows in or out.
+
+  Pump at rated speed: head 30 m at 0 m3/h, 29 m at 10 m3/h, 26 m at 20 m3/h, 21 m at 30
+  m3/h; fit a quadratic. It runs at rated speed from time zero and is never stopped;
+  once the lower tank is empty it delivers nothing.
+
+  Water: density 998.2 kg/m3, viscosity 1.002e-3 Pa s; g = 9.80665 m/s2. Pipes:
+  Darcy-Weisbach. A Kv element drops (Q/Kv)^2 x 0.9982 bar (Q in m3/h). Treat the flow
+  as quasi-steady.
+
+  What is the pump flow at the start, when does the upper tank begin to overflow, and
+  when does the lower tank run empty?
+answers:
+  - key: initial_flow
+    description: Pump flow at time zero
+    unit: m3/h
+    rel_tol: 0.03
+  - key: overflow_time
+    description: Time from the start until the upper tank begins to overflow
+    unit: min
+    rel_tol: 0.05
+  - key: empty_time
+    description: Time from the start until the lower tank is empty
+    unit: min
+    rel_tol: 0.05
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: tank transfer
+    components:
+      - name: lower
+        type: tank
+        parameters: {diameter: 3.0, height: 3.0, initial_level: 2.6, initial_temperature: 15, port_kv: 200}
+      - name: pump
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 30], [10, 29], [20, 26], [30, 21]]
+          power_curve: [[0, 1.1], [10, 1.6], [20, 2.0], [30, 2.3]]
+          npsh_curve: [[10, 1.5], [20, 2.0], [30, 2.9]]
+          motor_power: 3.0
+      - name: nrv
+        type: check_valve
+        parameters: {kv: 45}
+      - name: line
+        type: pipe
+        parameters: {length: 70, diameter: 68.8, roughness: 0.05, height_difference: 16, minor_loss: 5}
+      - name: upper
+        type: tank
+        parameters: {diameter: 2.5, height: 2.0, initial_level: 0.4, initial_temperature: 15, port_kv: 200}
+    connections:
+      - [lower.outlet, pump.inlet]
+      - [pump.outlet, nrv.port_a]
+      - [nrv.port_b, line.port_a]
+      - [line.port_b, upper.inlet]
+  steps:
+    - op: solve
+      read: {initial_flow: pump.volume_flow}
+    - op: simulate
+      duration: 60 min
+      step: 5 s
+      read_first_warning:
+        overflow_time: {warning: upper.tank_overflow, unit: min}
+        empty_time: {warning: lower.tank_empty, unit: min}
+  expected: {initial_flow: 26.56167831, overflow_time: 18.58333333, empty_time: 45.41666667}
+notes: |
+  Quasi-steady: pump head H = 30 - 0.01 Q^2 balances 16 m + h_upper - h_lower + pipe losses
+  + two nozzles + the non-return valve. Start: 26.56 m3/h (v = 1.98 m/s). The upper tank
+  needs 4.909 m2 x 1.6 m = 7.85 m3 to reach its rim; the flow falls as the lift grows, so it
+  overflows at about 18.6 min (the lower tank is then 1.49 m deep). The pump keeps running
+  against the full upper tank (the spill is lost) until the lower tank is empty at about
+  45.4 min. Reference: explicit Euler with a 5 s step; the overflow and empty times are the
+  first samples at which the tank reports them (5 s resolution). Independent Python check
+  (solve_ivp, Colebrook): 26.59 m3/h, 18.55 min, 45.38 min, within 0.2 %.

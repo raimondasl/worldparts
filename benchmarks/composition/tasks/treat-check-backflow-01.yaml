@@ -1,0 +1,76 @@
+id: treat-check-backflow-01
+title: Check valve on a reservoir feed
+level: 1
+category: what_if
+domain: distribution
+prompt: |
+  A pressure zone's reservoir is filled from a water main through a check (non-return) valve and a
+  rising main. The main connection at the check valve inlet holds 4.2 bar gauge. The check valve
+  has Kv = 150 m3/h in the forward direction and seals in reverse (reverse leakage negligible). Kv
+  convention: Q = Kv sqrt(dp/SG), Q in m3/h, dp in bar, SG = 0.9982.
+
+  Rising main: 1200 m long, 152 mm inner diameter, roughness 0.1 mm, its outlet 22 m above the
+  check valve, total minor loss K = 6 (fittings plus entry into the reservoir). It enters the
+  reservoir through the floor. The reservoir is open to atmosphere and its water depth stays at
+  3.5 m, so the pressure at the inlet is the hydrostatic pressure of that depth (the inlet
+  itself adds no loss beyond the K). Use
+  Darcy-Weisbach friction (Colebrook or equivalent). Water: density 998.2 kg/m3, viscosity 1.002
+  mPa s; g = 9.80665 m/s2.
+
+  Find the filling flow. Then the main pressure falls to 2.2 bar gauge during a burst elsewhere in
+  the network: what is the flow now (positive toward the reservoir, negative if water runs back
+  into the main), and the gauge pressure on the reservoir side of the check valve?
+answers:
+- key: fill_flow
+  description: Filling flow into the reservoir at 4.2 bar
+  kind: number
+  unit: m3/h
+  rel_tol: 0.03
+- key: flow_after_drop
+  description: Flow toward the reservoir after the main falls to 2.2 bar
+  kind: number
+  unit: L/min
+  rel_tol: 0.03
+  abs_tol: 1.0
+- key: check_outlet_pressure
+  description: Gauge pressure on the reservoir side of the check valve after the drop
+  kind: number
+  unit: bar
+  rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: '0.1'
+    name: reservoir feed
+    components:
+    - name: main
+      type: supply
+      parameters: {pressure: 4.2}
+    - name: check
+      type: check_valve
+      parameters: {kv: 150, leakage: 1.0e-06}
+    - name: main_line
+      type: pipe
+      parameters: {length: 1200, diameter: 152, roughness: 0.1, height_difference: 22, minor_loss: 6}
+    - name: reservoir
+      type: tank
+      parameters: {diameter: 12, height: 6, initial_level: 3.5, port_kv: 1000000}
+    connections:
+    - [main.port, check.port_a]
+    - [check.port_b, main_line.port_a]
+    - [main_line.port_b, reservoir.inlet]
+  steps:
+  - op: solve
+    read: {fill_flow: main_line.volume_flow}
+  - op: set
+    values: {main.pressure: 2.2}
+  - op: solve
+    read: {flow_after_drop: main_line.volume_flow, check_outlet_pressure: check.port_b.p}
+  expected: {fill_flow: 85.40192632, flow_after_drop: -0.001361819987, check_outlet_pressure: 2.496194477}
+notes: |
+  Hand check: reservoir head at the check valve = 22 + 3.5 = 25.5 m = 2.496 bar, so at 4.2 bar
+  about 1.70 bar drives the flow. At 85.4 m3/h: check valve 0.9982 (85.4/150)^2 = 0.324 bar; pipe
+  v = 1.307 m/s, Re = 1.98e5, f = 0.0197, (f L/D + K) v^2/2 = (155.4 + 6) x 853 Pa = 1.377 bar;
+  total 1.70 bar. After the drop the main (2.2 bar) is below the static 2.496 bar, the check valve
+  closes, the flow is zero (only leakage) and the valve outlet holds the full static pressure
+  998.2 x 9.80665 x 25.5 = 2.496 bar. Independent Python gives 85.64 m3/h, 0 and 2.4962 bar.
+  abs_tol 1 L/min accepts any answer of essentially zero flow.

@@ -1,0 +1,80 @@
+# Test fixture for tests/test_benchmark_harness.py (not a benchmark task): it exercises
+# every reference op (solve, set, solve_for, simulate with warning and final reads, answer).
+id: lift-fixture-01
+title: Ground tank to roof lift (harness fixture)
+level: 1
+category: what_if
+domain: pumping
+prompt: |
+  A pump draws water from the bottom outlet of an open cylindrical ground tank (2.0 m
+  diameter, 3.0 m high, water 1.5 m deep; outlet nozzle Kv 200 m3/h) and lifts it through
+  60 m of steel pipe (inner diameter 50 mm, roughness 0.045 mm) to a free discharge 25 m
+  above the tank bottom. The pipe's minor losses total K = 1 (the exit loss). Pump head at
+  rated speed: 44 m at 0 m3/h, 43 m at 6 m3/h, 40 m at 12 m3/h, 35 m at 18 m3/h and 28 m
+  at 24 m3/h; fit a quadratic head-flow curve through these points and scale it with the
+  affinity laws for other speeds. Water: density 998.2 kg/m3, viscosity 1.002e-3 Pa s.
+  (1) Find the flow and head at full speed. (2) Find the relative speed that gives
+  12 m3/h. (3) Back at full speed, pumping from the full 1.5 m depth, when does the tank
+  run dry, and what level is left after 40 minutes? (4) Is the tank's inflow nozzle used?
+answers:
+  - key: flow
+    description: Pump flow at full speed
+    unit: m3/h
+    rel_tol: 0.03
+  - key: head
+    description: Pump head at full speed
+    unit: m
+    rel_tol: 0.03
+    abs_tol: 0.1
+  - key: speed
+    description: Relative pump speed for 12 m3/h
+    unit: "1"
+    rel_tol: 0.02
+  - key: empty_time
+    description: Time until the tank runs dry
+    unit: min
+    rel_tol: 0.05
+  - key: final_level
+    description: Water level after 40 minutes
+    unit: mm
+    abs_tol: 5
+  - key: inlet_used
+    description: Whether the second tank nozzle carries flow
+    kind: boolean
+  - key: limit
+    description: What ends the pumping
+    kind: choice
+    choices: [tank_runs_dry, pump_overload, none]
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: lift fixture
+    components:
+      - name: tank
+        type: tank
+        parameters: {diameter: 2, height: 3, initial_level: 1.5}
+      - name: pump
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 44], [6, 43], [12, 40], [18, 35], [24, 28]]
+      - name: riser
+        type: pipe
+        parameters: {length: 60, diameter: 50, roughness: 0.045, height_difference: 25, minor_loss: 1}
+      - name: roof
+        type: drain
+    connections:
+      - [tank.outlet, pump.inlet]
+      - [pump.outlet, riser.port_a]
+      - [riser.port_b, roof.port]
+  steps:
+    - {op: solve, read: {flow: pump.volume_flow, head: pump.head}}
+    - {op: solve_for, target: pump.volume_flow, value: "12 m3/h", vary: pump.speed, lower: 0.5, upper: 1.2, read: {speed: pump.speed}}
+    - {op: set, values: {pump.speed: 1.0}}
+    - op: simulate
+      duration: 40 min
+      step: 10 s
+      read_final: {final_level: tank.level}
+      read_first_warning: {empty_time: {warning: tank.tank_empty, unit: min}}
+    - {op: answer, values: {inlet_used: false, limit: tank_runs_dry}}
+  expected: {flow: 19.26359789, head: 33.69150425, speed: 0.8478563826, empty_time: 15, final_level: 0.9910667657, inlet_used: false, limit: tank_runs_dry}
+notes: Harness fixture; values come from regen.

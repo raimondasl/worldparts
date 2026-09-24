@@ -718,3 +718,107 @@ def test_export_system_and_compare_with_wntr() -> None:
         assert "[unsupported_component]" in err and "f (mixing_faucet)" in err
 
     run(body)
+
+
+# ----------------------------------------------------------------------------------------
+# autosave (WORLDPARTS_AUTOSAVE_DIR), used by the composition benchmark harness
+# ----------------------------------------------------------------------------------------
+def run_with_server(server: Any, body: Callable[[Session], Awaitable[None]]) -> None:
+    """Run ``body`` against a given server through the in-process client."""
+
+    async def main() -> None:
+        async with Client(server) as client:
+            tools = await client.list_tools()
+            schemas = {t.name: t.output_schema for t in tools.tools}
+            await body(Session(client, schemas))  # type: ignore[arg-type]
+
+    anyio.run(main)
+
+
+def test_autosave_writes_each_changed_system(tmp_path: Path) -> None:
+    from worldparts.mcp_server import AUTOSAVE_ENV
+
+    assert AUTOSAVE_ENV == "WORLDPARTS_AUTOSAVE_DIR"
+    out = tmp_path / "systems"
+    server = create_server(autosave_dir=out)
+
+    def saved(sid: str) -> dict[str, Any]:
+        return yaml.safe_load((out / f"{sid}.json").read_text(encoding="utf-8"))
+
+    async def body(s: Session) -> None:
+        sid = (await s.call("create_system", name="line"))["system_id"]
+        assert saved(sid)["components"] == []  # written on creation
+        await s.call("add_component", system_id=sid, name="mains", component="supply")
+        assert [c["name"] for c in saved(sid)["components"]] == ["mains"]
+        await s.call("add_component", system_id=sid, name="v", component="valve")
+        await s.call("add_component", system_id=sid, name="out", component="drain")
+        await s.call("connect", system_id=sid, a="mains.port", b="v.port_a")
+        await s.call("connect", system_id=sid, a="v.port_b", b="out.port")
+        doc = saved(sid)
+        assert [list(c) for c in doc["connections"]] == [
+            ["mains.port", "v.port_a"],
+            ["v.port_b", "out.port"],
+        ]
+        # The saved document restores the same system.
+        restored = wp.System.from_dict(doc)
+        assert restored.solve()["v.volume_flow"] == pytest.approx(
+            wp.System.from_dict(doc).solve()["v.volume_flow"]
+        )
+        await s.call("set_values", system_id=sid, values={"v.opening": 0.25})
+        v = next(c for c in saved(sid)["components"] if c["name"] == "v")
+        assert v["inputs"]["opening"] == pytest.approx(0.25)
+        # solve settles the valve position (a state in the document), so it saves once;
+        # after that, read-only calls do not rewrite the unchanged document.
+        await s.call("solve", system_id=sid)
+        v = next(c for c in saved(sid)["components"] if c["name"] == "v")
+        assert v.get("states", {}).get("position", 0.25) == pytest.approx(0.25)
+        (out / f"{sid}.json").write_text("sentinel", encoding="utf-8")
+        await s.call("solve", system_id=sid)
+        await s.call("check_system", system_id=sid)
+        assert (out / f"{sid}.json").read_text(encoding="utf-8") == "sentinel"
+        # A failed call leaves the saved document as it was.
+        await s.fail("connect", system_id=sid, a="v.port_x", b="out.port")
+        assert (out / f"{sid}.json").read_text(encoding="utf-8") == "sentinel"
+        # solve_for changes the system (vary stays at the root): saved again.
+        await s.call("solve_for", system_id=sid, target="v.volume_flow", value="30 L/min",
+                     vary="v.opening", lower=0.01, upper=1)  # fmt: skip
+        v = next(c for c in saved(sid)["components"] if c["name"] == "v")
+        assert 0.01 < v["inputs"]["opening"] < 1
+        await s.call("remove_component", system_id=sid, name="out")
+        assert [c["name"] for c in saved(sid)["components"]] == ["mains", "v"]
+        # A loaded system gets its own file.
+        loaded = await s.call("load_system", document=doc)
+        assert saved(loaded["system_id"])["connections"] == doc["connections"]
+
+    run_with_server(server, body)
+    assert sorted(p.name for p in out.iterdir()) == ["s1.json", "s2.json"]
+
+
+def test_autosave_from_environment_and_off_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("WORLDPARTS_AUTOSAVE_DIR", raising=False)
+    assert create_server().store.autosave_dir is None  # type: ignore[attr-defined]
+    monkeypatch.setenv("WORLDPARTS_AUTOSAVE_DIR", str(tmp_path / "auto"))
+    server = create_server()
+    assert server.store.autosave_dir == tmp_path / "auto"  # type: ignore[attr-defined]
+
+    async def body(s: Session) -> None:
+        await s.call("create_system", name="env")
+
+    run_with_server(server, body)
+    assert (tmp_path / "auto" / "s1.json").exists()
+    assert "WORLDPARTS_AUTOSAVE_DIR" in INSTRUCTIONS
+
+
+def test_autosave_failure_does_not_break_tool_calls(tmp_path: Path) -> None:
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("a file where the directory should be", encoding="utf-8")
+    server = create_server(autosave_dir=blocker / "systems")
+
+    async def body(s: Session) -> None:
+        sid = (await s.call("create_system", name="x"))["system_id"]
+        await s.call("add_component", system_id=sid, name="mains", component="supply")
+
+    run_with_server(server, body)
+    assert server.store.autosave() == []  # type: ignore[attr-defined]

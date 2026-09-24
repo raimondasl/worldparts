@@ -1,0 +1,112 @@
+id: treat-parallel-uv-01
+title: Pump speed for two parallel UV reactors
+level: 3
+category: sizing
+domain: treatment
+prompt: |
+  A variable-speed pump draws from an open raw-water tank (2.5 m of water above its inlet, no
+  suction losses) through a header pipe (40 m, K = 4) and a clean sand filter. The flow splits
+  between two UV reactors in parallel whose outlets rejoin into a transfer main (250 m, K = 4)
+  that rises 24 m and enters an open clearwell through its floor at 1.5 m depth (hydrostatic
+  back-pressure). Both pipes: 125 mm inner diameter, roughness 0.05 mm. Other equipment sits at
+  raw-tank floor level.
+
+  Pump at rated speed 2900 rpm, flow (m3/h) : head (m): 0 : 55, 30 : 50, 60 : 37; flow (m3/h) :
+  shaft power (kW): 0 : 4.5, 30 : 8.0, 60 : 10.5. Fit quadratics through both; at relative speed
+  s, H(Q, s) = s^2 H0(Q/s) and P(Q, s) = s^3 P0(Q/s). Filter: 0.30 bar at its rated 50 m3/h, 70 %
+  linear and 30 % quadratic in flow. UV A: 0.15 bar at 30 m3/h (quadratic), 15 L, fluence rate 20
+  mW/cm2. UV B: 0.25 bar at 30 m3/h, 18 L, 16 mW/cm2. UV dose = fluence rate x volume / flow
+  (mW/cm2 x s = mJ/cm2); both reactors need at least 40 mJ/cm2. Use Darcy-Weisbach friction
+  (Colebrook or equivalent). Water: density 998.2 kg/m3, viscosity 1.002 mPa s; g = 9.80665 m/s2.
+
+  Find the highest pump speed at which both reactors meet the dose and, at that speed, the total
+  flow, the shaft power and both doses.
+answers:
+- key: pump_speed
+  description: Highest pump speed at which both reactors meet 40 mJ/cm2
+  kind: number
+  unit: rpm
+  rel_tol: 0.03
+- key: plant_flow
+  description: Total plant flow at that speed
+  kind: number
+  unit: m3/h
+  rel_tol: 0.03
+- key: pump_power
+  description: Pump shaft power at that speed
+  kind: number
+  unit: kW
+  rel_tol: 0.03
+- key: dose_a
+  description: UV A dose at that speed
+  kind: number
+  unit: mJ/cm2
+  rel_tol: 0.03
+- key: dose_b
+  description: UV B dose at that speed
+  kind: number
+  unit: mJ/cm2
+  rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: '0.1'
+    name: parallel uv trains
+    components:
+    - name: raw
+      type: tank
+      parameters: {diameter: 5, height: 4.5, initial_level: 2.5, port_kv: 1000000}
+    - name: pump
+      type: centrifugal_pump
+      parameters:
+        head_curve: [[0, 55], [30, 50], [60, 37]]
+        power_curve: [[0, 4.5], [30, 8.0], [60, 10.5]]
+        npsh_curve: [[15, 1.8], [40, 3.0], [65, 5.2]]
+        motor_power: 11
+    - name: header
+      type: pipe
+      parameters: {length: 40, diameter: 125, roughness: 0.05, minor_loss: 4}
+    - name: filter
+      type: media_filter
+      parameters: {rated_flow: 50, clean_pressure_drop: 0.3, housing_fraction: 0.3, change_pressure_drop: 1.2}
+    - name: uv_a
+      type: uv_reactor
+      parameters: {rated_flow: 30, rated_pressure_drop: 0.15, volume: 15, fluence_rate: 20, required_dose: 40}
+    - name: uv_b
+      type: uv_reactor
+      parameters: {rated_flow: 30, rated_pressure_drop: 0.25, volume: 18, fluence_rate: 16, required_dose: 40}
+    - name: transfer
+      type: pipe
+      parameters: {length: 250, diameter: 125, roughness: 0.05, height_difference: 24, minor_loss: 4}
+    - name: clearwell
+      type: tank
+      parameters: {diameter: 10, height: 4, initial_level: 1.5, port_kv: 1000000}
+    connections:
+    - [raw.outlet, pump.inlet]
+    - [pump.outlet, header.port_a]
+    - [header.port_b, filter.inlet]
+    - [filter.outlet, uv_a.inlet]
+    - [filter.outlet, uv_b.inlet]
+    - [uv_a.outlet, transfer.port_a]
+    - [uv_b.outlet, transfer.port_a]
+    - [transfer.port_b, clearwell.inlet]
+  steps:
+  - op: solve_for
+    target: uv_a.dose
+    value: 40 mJ/cm2
+    vary: pump.speed
+    lower: 0.6
+    upper: 1.0
+    read: {pump_speed: pump.speed_rpm, plant_flow: pump.volume_flow, pump_power: pump.shaft_power, dose_a: uv_a.dose,
+      dose_b: uv_b.dose}
+  expected: {pump_speed: 2530.9506, plant_flow: 47.91411007, pump_power: 6.744266538, dose_a: 40, dose_b: 49.57418683}
+notes: |
+  Hand check: the reactors share one pressure drop, so Q_A/Q_B = (30/sqrt(0.15))/(30/sqrt(0.25)) =
+  1.291: A takes 56.35 % of the flow and has the lower dose per unit flow (20 x 15 = 300 vs 16 x
+  18 = 288 mW L/cm2 at 43.6 % of the flow), so A limits. A at 40 mJ/cm2 needs 20 x 0.015 / 40 x
+  3600 = 27.0 m3/h, total 47.91 m3/h, B gets 20.91 m3/h and 49.57 mJ/cm2. System head at 47.91
+  m3/h: static 24 + 1.5 - 2.5 = 23 m, filter 2.90 m, UV 1.24 m, pipes 3.14 m: 30.28 m. With H0 =
+  55 - 0.03333 Q - 0.004444 Q^2 the affinity law s^2 55 - 0.03333 s Q - 0.004444 Q^2 = 30.28 gives
+  s = 0.8726, 2530.6 rpm, and P = 4.5 s^3 + 0.1583 s^2 Q - 0.000694 s Q^2 = 6.74 kW. Independent
+  Python (Colebrook) gives 2530.6 rpm, 47.914 m3/h, 6.742 kW, 49.574 mJ/cm2. At full speed the
+  plant would run at 71.9 m3/h, beyond the pump curve and underdosing both reactors; the answer
+  point is inside the curve and within the filter rating.

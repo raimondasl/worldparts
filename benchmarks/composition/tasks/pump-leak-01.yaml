@@ -1,0 +1,97 @@
+id: pump-leak-01
+title: Rising main that loses water
+level: 3
+category: diagnosis
+domain: pumping
+prompt: |
+  A pump at the bottom of an open raw-water tank (water 2.2 m deep, bottom nozzle Kv 300
+  m3/h) sends water through a non-return valve (Kv 110 m3/h) and an isolating valve (Kv
+  150 m3/h fully open) into a rising main of inner diameter 125 mm, absolute roughness
+  0.1 mm. Section 1 runs 450 m and rises 12 m (K = 4) to an air-valve chamber; section 2
+  runs 350 m and rises 9 m (K = 3 including the entry) into the bottom nozzle (Kv 300
+  m3/h) of an open upper tank, now 1.5 m deep. Pump, valves and the start of section 1
+  are at the raw-tank bottom level. Pump head at rated speed: 42 m at 0 m3/h, 40.4 m at
+  20 m3/h, 35.6 m at 40 m3/h, 27.6 m at 60 m3/h (fit a quadratic).
+
+  Readings now: suction 0.19 bar gauge, discharge 3.33 bar gauge, flow meter at the pump
+  49.7 m3/h, flow meter at the upper tank inlet 42.8 m3/h. Exactly one fault is present:
+  leak_at_air_valve_chamber (water escapes to atmosphere there), worn_impeller,
+  partly_closed_isolating_valve or blocked_suction_strainer. Which one? Estimate the
+  flow lost at the chamber and the gauge pressure in the main there.
+
+  Water: density 998.2 kg/m3, viscosity 1.002e-3 Pa s; g = 9.80665 m/s2. Pipes:
+  Darcy-Weisbach. A Kv element drops (Q/Kv)^2 x 0.9982 bar (Q in m3/h).
+answers:
+  - key: fault
+    description: The fault that explains the readings
+    kind: choice
+    choices: [leak_at_air_valve_chamber, worn_impeller, partly_closed_isolating_valve, blocked_suction_strainer]
+  - key: lost_flow
+    description: Flow lost from the main at the air-valve chamber
+    unit: m3/h
+    rel_tol: 0.05
+  - key: chamber_pressure
+    description: Gauge pressure in the main at the air-valve chamber
+    unit: bar
+    rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: leaking rising main
+    components:
+      - name: raw
+        type: tank
+        parameters: {diameter: 4.0, height: 3.0, initial_level: 2.2, initial_temperature: 15, port_kv: 300}
+      - name: pump
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 42], [20, 40.4], [40, 35.6], [60, 27.6]]
+          power_curve: [[0, 3.0], [20, 4.5], [40, 5.8], [60, 6.9]]
+          npsh_curve: [[20, 2.0], [40, 2.8], [60, 4.3]]
+          motor_power: 9.2
+      - name: nrv
+        type: check_valve
+        parameters: {kv: 110}
+      - name: isolating
+        type: valve
+        parameters: {kv: 150, characteristic: linear}
+      - name: section1
+        type: pipe
+        parameters: {length: 450, diameter: 125, roughness: 0.1, height_difference: 12, minor_loss: 4}
+      - name: section2
+        type: pipe
+        parameters: {length: 350, diameter: 125, roughness: 0.1, height_difference: 9, minor_loss: 3}
+      - name: upper
+        type: tank
+        parameters: {diameter: 5.0, height: 3.5, initial_level: 1.5, initial_temperature: 15, port_kv: 300}
+      - name: leak
+        type: valve
+        parameters: {kv: 6.0}
+      - name: chamber_floor
+        type: drain
+    connections:
+      - [raw.outlet, pump.inlet]
+      - [pump.outlet, nrv.port_a]
+      - [nrv.port_b, isolating.port_a]
+      - [isolating.port_b, section1.port_a]
+      - [section1.port_b, section2.port_a]
+      - [section2.port_b, upper.inlet]
+      - [section1.port_b, leak.port_a]
+      - [leak.port_b, chamber_floor.port]
+  steps:
+    - op: solve
+      read: {lost_flow: leak.volume_flow, chamber_pressure: section1.port_b.p}
+    - op: answer
+      values: {fault: leak_at_air_valve_chamber}
+  expected: {lost_flow: 6.952502986, chamber_pressure: 1.340285851, fault: leak_at_air_valve_chamber}
+notes: |
+  The readings are the reference operating point (leak of Kv 6 at the chamber) rounded:
+  49.73 and 42.78 m3/h, suction 0.188 bar, discharge 3.331 bar. Only a leak between the two
+  meters makes them disagree (6.9 m3/h); the other faults change both flows equally. The
+  pump is also still on its rated curve: (3.33 - 0.19) bar = 32.08 m against
+  42 - 0.004 x 49.7^2 = 32.12 m (not worn), the suction is the normal 2.2 m less the nozzle
+  loss (not blocked), and a throttled valve would lower the flow below the healthy 48.5 m3/h
+  instead of raising it. Chamber pressure from the pump side: 3.33 bar - valve drops - 12 m -
+  section 1 loss at 49.7 m3/h = 1.344 bar; from the tank side: 1.5 m + nozzle + 9 m +
+  section 2 loss at 42.8 m3/h = 1.339 bar (reference 1.340 bar). Lost flow tolerance 5 %
+  because the readings are rounded to 0.1 m3/h (difference 6.90 vs reference 6.95 m3/h).

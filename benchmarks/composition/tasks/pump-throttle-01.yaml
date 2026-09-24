@@ -1,0 +1,100 @@
+id: pump-throttle-01
+title: Throttling against speed control for a reduced duty
+level: 2
+category: what_if
+domain: pumping
+prompt: |
+  A transfer pump draws from the bottom outlet of an open tank (water 2.0 m deep, outlet
+  nozzle Kv 250 m3/h; pump at the level of the tank bottom). It discharges through a
+  control valve (Kv 40 m3/h fully open, linear characteristic: effective Kv = 40 x
+  opening) and then 180 m of pipe (inner diameter 80.8 mm, absolute roughness 0.05 mm,
+  rising 22 m, minor losses K = 7 including the exit) to a free discharge.
+
+  Pump at rated speed (2900 rpm): head 44 m at 0 m3/h, 42.2 m at 15 m3/h, 37.4 m at 30
+  m3/h and 29.6 m at 45 m3/h; shaft power 2.4 kW at 0 m3/h, 3.5 kW at 15 m3/h, 4.4 kW at
+  30 m3/h and 5.1 kW at 45 m3/h. Fit quadratic curves through these points; with speed n
+  use the affinity laws (flow ~ n, head ~ n^2, power ~ n^3).
+
+  Water: density 998.2 kg/m3, viscosity 1.002e-3 Pa s; g = 9.80665 m/s2. Pipes:
+  Darcy-Weisbach. A Kv element drops (Q/Kv)^2 x 0.9982 bar (Q in m3/h).
+
+  The duty is to be cut to 24 m3/h. Option A keeps rated speed and closes the valve.
+  Option B leaves the valve fully open and slows the pump. Give the valve opening and
+  shaft power for option A, and the speed and shaft power for option B.
+answers:
+  - key: valve_opening
+    description: Valve opening (0 closed, 1 fully open) that gives 24 m3/h at rated speed
+    unit: "1"
+    rel_tol: 0.03
+  - key: power_throttled
+    description: Shaft power with the valve throttled at rated speed
+    unit: kW
+    rel_tol: 0.03
+  - key: speed
+    description: Pump speed that gives 24 m3/h with the valve fully open
+    unit: rpm
+    rel_tol: 0.03
+  - key: power_speed_control
+    description: Shaft power at that reduced speed
+    unit: kW
+    rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: throttling versus speed
+    components:
+      - name: tank
+        type: tank
+        parameters: {diameter: 3.0, height: 3.0, initial_level: 2.0, initial_temperature: 15, port_kv: 250}
+      - name: pump
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 44], [15, 42.2], [30, 37.4], [45, 29.6]]
+          power_curve: [[0, 2.4], [15, 3.5], [30, 4.4], [45, 5.1]]
+          npsh_curve: [[10, 1.6], [30, 2.6], [45, 3.8]]
+          motor_power: 5.5
+      - name: valve
+        type: valve
+        parameters: {kv: 40, characteristic: linear, leakage: 1.0e-06}
+      - name: line
+        type: pipe
+        parameters: {length: 180, diameter: 80.8, roughness: 0.05, height_difference: 22, minor_loss: 7}
+      - name: outlet
+        type: drain
+    connections:
+      - [tank.outlet, pump.inlet]
+      - [pump.outlet, valve.port_a]
+      - [valve.port_b, line.port_a]
+      - [line.port_b, outlet.port]
+  steps:
+    - op: solve_for
+      target: pump.volume_flow
+      value: 24 m3/h
+      vary: valve.opening
+      lower: 0.05
+      upper: 1
+      read: {valve_opening: valve.opening, power_throttled: pump.shaft_power}
+    - op: set
+      values: {valve.opening: 1}
+    - op: solve_for
+      target: pump.volume_flow
+      value: 24 m3/h
+      vary: pump.speed
+      lower: 0.5
+      upper: 1
+      read: {speed: pump.speed_rpm, power_speed_control: pump.shaft_power}
+  expected: {valve_opening: 0.4949141253, power_throttled: 4.064, speed: 2496.857972, power_speed_control: 2.734664478}
+notes: |
+  Points lie exactly on H = 44 - 0.02 Q - 0.006667 Q^2 and P = 2.4 + 0.08 Q - 0.000444 Q^2.
+  At 24 m3/h the system without the valve needs 20 m static + 4.58 m pipe (v = 1.30 m/s,
+  f = 0.0207, (f L/D + 7) v^2/2g) + 0.09 m nozzle = 24.67 m. Option A: the rated head at
+  24 m3/h is 39.68 m, so the valve must take 15.01 m = 1.470 bar; opening = 24 / (40 x
+  sqrt(1.470 / 0.9982)) = 0.494; shaft power P(24) = 4.064 kW. Option B: the open valve
+  takes (24/40)^2 x 0.9982 bar = 3.67 m, so the pump must give 28.34 m: 44 s^2 - 0.48 s -
+  3.84 = 28.34 gives s = 0.861, 2496 rpm; power 2.4 s^3 + 1.92 s^2 - 0.256 s = 2.73 kW,
+  33 % less than throttling. Independent Python check (Colebrook, no worldparts): opening
+  0.4945, 4.064 kW, 2496 rpm, 2.732 kW. The opening tolerance of 3 % is safe: friction
+  formula differences move the 1.47 bar valve drop by less than 0.01 bar. Throttled, the
+  pump runs at 62 % of its best-efficiency flow (the reference flags it as outside the
+  preferred operating region, which is part of the lesson); with speed control it runs at
+  72 %.

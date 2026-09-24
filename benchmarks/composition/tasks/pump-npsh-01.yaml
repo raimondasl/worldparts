@@ -1,0 +1,98 @@
+id: pump-npsh-01
+title: Suction lift NPSH in warm water
+level: 2
+category: what_if
+domain: pumping
+prompt: |
+  A surface pump lifts from an open sump holding 1.2 m of water (bottom outlet nozzle
+  Kv 250 m3/h). From the nozzle an 8 m suction pipe (inner diameter 82.5 mm, absolute
+  roughness 0.05 mm, K = 2.5 for strainer and bends) rises 5.5 m to the pump inlet. The pump discharges through 60 m of the same pipe, rising a
+  further 14.5 m to a free discharge (K = 4 including the exit).
+
+  Pump at rated speed: head 30 m at 0 m3/h, 28.5 m at 15 m3/h, 24 m at 30 m3/h and 16.5
+  m at 45 m3/h; NPSH required 2.2 m at 15 m3/h, 3.4 m at 30 m3/h and 5.4 m at 45 m3/h.
+  Fit quadratics through the points. The pump runs at this speed.
+
+  NPSH available is the total suction head (velocity head included) above vapour
+  pressure: NPSHa = (101.325 kPa - vapour pressure)/(rho g) + height of the sump water
+  surface above the pump inlet (negative here) - all suction losses (nozzle, pipe
+  friction, K = 2.5). Vapour pressure: 2.339 kPa at 20 degC, 12.35 kPa at 50 degC. Keep
+  density 998.2 kg/m3 and viscosity 1.002e-3 Pa s at every temperature; g = 9.80665
+  m/s2. Pipes: Darcy-Weisbach. A Kv element drops (Q/Kv)^2 x 0.9982 bar.
+
+  Find the flow, the NPSH required and the NPSH available with water at 20 degC. In
+  summer the water reaches 50 degC: what is NPSHa then, and is it still at least NPSH
+  required plus 0.5 m?
+answers:
+  - key: flow
+    description: Pump flow
+    unit: m3/h
+    rel_tol: 0.03
+  - key: npshr
+    description: NPSH required at the operating point
+    unit: m
+    rel_tol: 0.03
+  - key: npsha_20c
+    description: NPSH available with water at 20 degC
+    unit: m
+    rel_tol: 0.03
+  - key: npsha_50c
+    description: NPSH available with water at 50 degC
+    unit: m
+    rel_tol: 0.03
+  - key: margin_met_50c
+    description: Whether NPSH available at 50 degC is at least NPSH required plus 0.5 m
+    kind: boolean
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: suction lift
+    components:
+      - name: sump
+        type: tank
+        parameters: {diameter: 2.5, height: 2.0, initial_level: 1.2, initial_temperature: 20, port_kv: 250}
+      - name: suction
+        type: pipe
+        parameters: {length: 8, diameter: 82.5, roughness: 0.05, height_difference: 5.5, minor_loss: 2.5}
+      - name: pump
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 30], [15, 28.5], [30, 24], [45, 16.5]]
+          power_curve: [[0, 1.5], [15, 2.4], [30, 3.2], [45, 3.9]]
+          npsh_curve: [[15, 2.2], [30, 3.4], [45, 5.4]]
+          npsh_margin: 0.5
+          motor_power: 5.5
+      - name: discharge
+        type: pipe
+        parameters: {length: 60, diameter: 82.5, roughness: 0.05, height_difference: 14.5, minor_loss: 4}
+      - name: outlet
+        type: drain
+    connections:
+      - [sump.outlet, suction.port_a]
+      - [suction.port_b, pump.inlet]
+      - [pump.outlet, discharge.port_a]
+      - [discharge.port_b, outlet.port]
+  steps:
+    - op: solve
+      read: {flow: pump.volume_flow, npshr: pump.npsh_required, npsha_20c: pump.npsh_available}
+    - op: set
+      values: {sump.initial_temperature: 50}
+    - op: solve
+      read: {npsha_50c: pump.npsh_available}
+    - op: answer
+      values: {margin_met_50c: false}
+  expected: {flow: 33.4614653, npshr: 3.79052384, npsha_20c: 4.943899059, npsha_50c: 3.921112494, margin_met_50c: false}
+notes: |
+  Reference point 33.46 m3/h (109 % of the best-efficiency flow). NPSH available = 10.348 m
+  (atmosphere) + 1.2 - 5.5 m (static) - 0.18 m (nozzle) - 0.68 m (suction pipe: v = 1.74 m/s,
+  f = 0.0199, (f L/D + 2.5) v^2/2g = 4.43 x 0.154) - p_v/(rho g). Vapour pressure 2.339 kPa at
+  20 degC (0.239 m) and 12.35 kPa at 50 degC (1.262 m). NPSH required 1.8 + 0.001778 Q^2 =
+  3.79 m. At 20 degC: 4.94 m available against 3.79 + 0.5 = 4.29 m needed (margin met); at
+  50 degC 3.92 m (not met; the reference pump raises its cavitation warning). The warm-water
+  case changes only the vapour pressure (density is held constant by the prompt). Independent
+  Python check (Colebrook, steam-table vapour pressures): 33.49 m3/h, NPSHr 3.79 m, NPSHa
+  4.94 and 3.92 m. This is the textbook NPSHa (the network pressures carry no kinetic head,
+  so the inlet pressure over rho g already includes the velocity head); counting only the
+  static inlet pressure would give 0.15 m less (4.79 and 3.77 m), and the verdict would not
+  change (3.77 m < 4.29 m). The prompt states the energy-balance definition and the vapour
+  pressures so that an independent solver lands on the reference numbers.

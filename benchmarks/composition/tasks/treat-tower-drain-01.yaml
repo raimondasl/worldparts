@@ -1,0 +1,109 @@
+id: treat-tower-drain-01
+title: Water tower drawdown at the evening peak
+level: 3
+category: transient
+domain: distribution
+prompt: |
+  A pressure zone is supplied by a treatment plant and an elevated tower. Nodes A, B and C and the
+  plant outlet are at one elevation. The plant outlet, held at 3.0 bar gauge, feeds A through pipe
+  P1 (2000 m, 200 mm). The tower is an open vertical cylinder, 10 m inner diameter and 8 m high,
+  with its floor 25 m above the nodes; pipe P2 (300 m, 200 mm) runs from the tower floor down to B.
+  P3 (1200 m, 150 mm) joins A and C, P4 (1000 m, 150 mm) joins B and C, P5 (800 m, 100 mm) joins A
+  and B. The evening-peak demand is two outlets to atmosphere, north at C (Kv = 70 m3/h) and south
+  at B (Kv = 45 m3/h), each passing Q = Kv sqrt(p/SG) with p the node gauge pressure in bar and SG
+  = 0.9982.
+
+  Pipe diameters are inner diameters; roughness 0.1 mm, no minor losses. Use Darcy-Weisbach
+  friction (Colebrook or equivalent). Water: density 998.2 kg/m3, viscosity 1.002 mPa s; g =
+  9.80665 m/s2. The pressure at the tower floor is the hydrostatic pressure of its water depth
+  (the tower outlet adds no loss).
+  Treat the network as quasi-steady while the tower drains from an initial depth of 6.0 m.
+
+  Find the initial tower outflow and pressure at C, the time until the tower depth first falls
+  below 0.8 m, and the pressure at C at the end of the 3.75 h peak.
+answers:
+- key: tower_outflow
+  description: Tower outflow at the start of the peak
+  kind: number
+  unit: m3/h
+  rel_tol: 0.03
+- key: pressure_c
+  description: Gauge pressure at C at the start of the peak
+  kind: number
+  unit: bar
+  rel_tol: 0.03
+- key: time_to_low
+  description: Time until the tower depth first falls below 0.8 m
+  kind: number
+  unit: h
+  rel_tol: 0.05
+- key: pressure_c_end
+  description: Gauge pressure at C after 3.75 h
+  kind: number
+  unit: bar
+  rel_tol: 0.05
+reference:
+  system:
+    worldparts_system: '0.1'
+    name: looped zone with tower
+    components:
+    - name: plant
+      type: supply
+      parameters: {pressure: 3.0}
+    - name: tower
+      type: tank
+      parameters: {diameter: 10, height: 8, initial_level: 6, port_kv: 1000000}
+    - name: p1
+      type: pipe
+      parameters: {length: 2000, diameter: 200, roughness: 0.1}
+    - name: p2
+      type: pipe
+      parameters: {length: 300, diameter: 200, roughness: 0.1, height_difference: -25}
+    - name: p3
+      type: pipe
+      parameters: {length: 1200, diameter: 150, roughness: 0.1}
+    - name: p4
+      type: pipe
+      parameters: {length: 1000, diameter: 150, roughness: 0.1}
+    - name: p5
+      type: pipe
+      parameters: {length: 800, diameter: 100, roughness: 0.1}
+    - name: demand_n
+      type: valve
+      parameters: {kv: 70, leakage: 1.0e-08}
+    - {name: out_n, type: drain}
+    - name: demand_s
+      type: valve
+      parameters: {kv: 45, leakage: 1.0e-08}
+    - {name: out_s, type: drain}
+    connections:
+    - [plant.port, p1.port_a]
+    - [tower.outlet, p2.port_a]
+    - [p1.port_b, p3.port_a]
+    - [p1.port_b, p5.port_a]
+    - [p2.port_b, p4.port_a]
+    - [p2.port_b, p5.port_b]
+    - [p2.port_b, demand_s.port_a]
+    - [p3.port_b, p4.port_b]
+    - [p3.port_b, demand_n.port_a]
+    - [demand_n.port_b, out_n.port]
+    - [demand_s.port_b, out_s.port]
+  steps:
+  - op: solve
+    read: {tower_outflow: p2.volume_flow, pressure_c: demand_n.port_a.p}
+  - op: simulate
+    duration: 3.75 h
+    step: 30 s
+    events: []
+    read_final: {pressure_c_end: demand_n.port_a.p}
+    read_first_warning:
+      time_to_low: {warning: tower.low_level, unit: h}
+  expected: {tower_outflow: 135.1516318, pressure_c: 2.303901998, time_to_low: 3.508333333, pressure_c_end: 2.028270032}
+notes: |
+  Hand check at the start: the tower head at B is 25 + 6 = 31 m (3.035 bar) against 3.0 bar at the
+  plant, and both feed the north outlet at C. Solving the three node balances (Colebrook friction,
+  fsolve) gives tower outflow 135.3 m3/h, plant 47.0 m3/h, p_A = 2.82, p_B = 2.84, p_C = 2.307
+  bar, north 106.3 m3/h, south 75.8 m3/h. The tower (78.54 m2) loses about 1.7 m/h at first and
+  more slowly as its head falls; integrating A dh/dt = -Q_tower(h) (solve_ivp) crosses 0.8 m at
+  3.505 h, and at 3.75 h the depth is 0.48 m and p_C = 2.031 bar. The reference samples every 30
+  s. Time and end pressure depend on the whole trajectory, hence 5 %.

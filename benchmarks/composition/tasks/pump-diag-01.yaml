@@ -1,0 +1,77 @@
+id: pump-diag-01
+title: Raw-water pump delivering too little
+level: 1
+category: diagnosis
+domain: pumping
+prompt: |
+  A raw-water pump draws from an open sump through the sump's bottom outlet nozzle (Kv
+  300 m3/h, no suction pipe; the pump sits at the level of the sump bottom). It
+  discharges into a 320 m rising main, inner diameter 102.3 mm, absolute roughness 0.1
+  mm, rising 18 m to a free discharge into a reservoir, with minor losses totalling K =
+  9 including the exit. A discharge isolating valve just after the discharge pressure
+  gauge is normally fully open, with negligible loss. The sump level is normally 2.1 m.
+  The variable-speed drive should run the pump at its rated 2900 rpm.
+
+  Pump head at rated speed: 38 m at 0 m3/h, 36 m at 20 m3/h, 30 m at 40 m3/h and 20 m at
+  60 m3/h (fit a quadratic; affinity laws apply with speed).
+
+  Operators report low delivery. Measured now: suction 0.19 bar gauge, discharge 2.38
+  bar gauge, flow 37.5 m3/h. Exactly one fault is present: low_sump_level (the sump is
+  far below normal), throttled_discharge_valve (the isolating valve is partly closed) or
+  pump_running_slow (the drive runs below rated speed). Which fault explains the
+  measurements, and at what speed does the pump actually run?
+
+  Water: density 998.2 kg/m3, viscosity 1.002e-3 Pa s; g = 9.80665 m/s2. Pipes:
+  Darcy-Weisbach. A Kv element drops (Q/Kv)^2 x 0.9982 bar (Q in m3/h).
+answers:
+  - key: fault
+    description: The fault that explains the measurements
+    kind: choice
+    choices: [low_sump_level, throttled_discharge_valve, pump_running_slow]
+  - key: speed
+    description: Actual pump speed
+    unit: rpm
+    rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: raw-water pump with a slow drive
+    components:
+      - name: sump
+        type: tank
+        parameters: {diameter: 3.5, height: 3.0, initial_level: 2.1, initial_temperature: 15, port_kv: 300}
+      - name: pump
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 38], [20, 36], [40, 30], [60, 20]]
+          power_curve: [[0, 2.6], [20, 3.9], [40, 5.0], [60, 5.9]]
+          npsh_curve: [[20, 2.0], [40, 2.8], [60, 4.4]]
+          motor_power: 7.5
+        inputs: {speed: 0.88}
+      - name: main
+        type: pipe
+        parameters: {length: 320, diameter: 102.3, roughness: 0.1, height_difference: 18, minor_loss: 9}
+      - name: reservoir
+        type: drain
+    connections:
+      - [sump.outlet, pump.inlet]
+      - [pump.outlet, main.port_a]
+      - [main.port_b, reservoir.port]
+  steps:
+    - op: solve
+      read: {speed: pump.speed_rpm}
+    - op: answer
+      values: {fault: pump_running_slow}
+  expected: {speed: 2552, fault: pump_running_slow}
+notes: |
+  The measurements are the reference operating point at speed 0.88 (37.53 m3/h, suction
+  0.190 bar, discharge 2.381 bar) rounded to the gauge resolution. The head curve is exactly
+  H = 38 - 0.005 Q^2. Healthy point (2900 rpm, 2.1 m sump): 48.2 m3/h, discharge 2.76 bar,
+  suction 0.18 bar. Discrimination: the suction reading equals the normal 2.1 m level less
+  the nozzle loss at 37.5 m3/h (0.19 bar), so the sump level is normal. The measured head
+  (2.38 - 0.19) bar = 22.37 m lies 8.6 m below the rated curve at 37.5 m3/h (30.97 m); a
+  throttled valve would keep the pump on its rated curve and raise the discharge pressure
+  to about 3.2 bar. The discharge reading matches the unchanged pipe: 18 m + (f L/D + 9)
+  v^2/2g at 37.5 m3/h (v = 1.27 m/s, f = 0.0216, loss 6.27 m) = 24.27 m = 2.376 bar. So the drive runs
+  slow: 38 s^2 - 0.005 x 37.5^2 = 22.37 gives s = 0.8796, 2551 rpm (2549 rpm from the flow
+  alone); reference 2552 rpm. Independent Python check reproduces these numbers.

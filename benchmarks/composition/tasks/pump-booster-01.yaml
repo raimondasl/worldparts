@@ -1,0 +1,79 @@
+id: pump-booster-01
+title: Zone booster speed for a transfer flow
+level: 1
+category: sizing
+domain: pumping
+prompt: |
+  A variable-speed booster pump takes water from a low-pressure zone main held at 1.5
+  bar gauge and pushes it through a 420 m transfer main into a high-pressure zone main
+  held at 3.0 bar gauge. The pump suction connects directly to the low zone. The
+  transfer main has an inner diameter of 99.4 mm and an absolute roughness of 0.02 mm,
+  rises 14 m from the pump to the high zone connection, and has minor losses totalling K
+  = 8. Both zone pressures stay constant whatever the flow.
+
+  Pump data at rated speed (2900 rpm): head 55 m at 0 m3/h, 52 m at 10 m3/h, 45 m at 20
+  m3/h and 34 m at 30 m3/h; shaft power 1.8 kW at 0 m3/h, 2.7 kW at 10 m3/h, 3.4 kW at
+  20 m3/h and 3.9 kW at 30 m3/h. Fit quadratic curves through these points and scale
+  them with speed n by the affinity laws (flow ~ n, head ~ n^2, power ~ n^3).
+
+  Water: density 998.2 kg/m3, viscosity 1.002e-3 Pa s; g = 9.80665 m/s2. Pipes:
+  Darcy-Weisbach. A Kv element drops (Q/Kv)^2 x 0.9982 bar (Q in m3/h).
+
+  The operator wants a transfer of exactly 25 m3/h. At what speed must the pump run, and
+  what are its head and shaft power there?
+answers:
+  - key: speed
+    description: Pump speed that gives 25 m3/h
+    unit: rpm
+    rel_tol: 0.03
+  - key: head
+    description: Pump head at that speed
+    unit: m
+    rel_tol: 0.03
+  - key: pump_power
+    description: Pump shaft power at that speed
+    unit: kW
+    rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: zone booster
+    components:
+      - name: low_zone
+        type: supply
+        parameters: {pressure: 1.5, temperature: 20}
+      - name: pump
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 55], [10, 52], [20, 45], [30, 34]]
+          power_curve: [[0, 1.8], [10, 2.7], [20, 3.4], [30, 3.9]]
+          npsh_curve: [[5, 1.2], [15, 1.8], [30, 3.6]]
+          motor_power: 5.5
+      - name: main
+        type: pipe
+        parameters: {length: 420, diameter: 99.4, roughness: 0.02, height_difference: 14, minor_loss: 8}
+      - name: high_zone
+        type: supply
+        parameters: {pressure: 3.0, temperature: 20}
+    connections:
+      - [low_zone.port, pump.inlet]
+      - [pump.outlet, main.port_a]
+      - [main.port_b, high_zone.port]
+  steps:
+    - op: solve_for
+      target: pump.volume_flow
+      value: 25 m3/h
+      vary: pump.speed
+      lower: 0.5
+      upper: 1.2
+      read: {speed: pump.speed_rpm, head: pump.head, pump_power: pump.shaft_power}
+  expected: {speed: 2704.357202, head: 32.99733508, pump_power: 3.050951131}
+notes: |
+  The points lie exactly on H = 55 - 0.1 Q - 0.02 Q^2 and P = 1.8 + 0.1 Q - 0.001 Q^2.
+  Hand check: required head 14 m + (3.0 - 1.5) bar / (rho g) = 14 + 15.32 m, plus friction
+  at 25 m3/h (v = 0.895 m/s, Re = 8.87e4, f = 0.0194, (f L/D + 8) v^2/2g = 90.0 x 0.0408 =
+  3.68 m) = 33.00 m. Speed from 55 s^2 - 2.5 s - 12.5 = 33.00: s = 0.9325, 2704 rpm. Power
+  1.8 s^3 + 2.5 s^2 - 0.625 s = 3.05 kW (73.5 % efficiency). Independent Python check:
+  2704.4 rpm, 33.00 m, 3.051 kW. At full speed the pump would deliver 29.7 m3/h (121 % of
+  its best-efficiency flow, flagged as outside the preferred region); at the answer it is
+  inside it.

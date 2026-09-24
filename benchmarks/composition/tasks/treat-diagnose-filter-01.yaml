@@ -1,0 +1,100 @@
+id: treat-diagnose-filter-01
+title: Why did the filtration plant lose flow
+level: 2
+category: diagnosis
+domain: treatment
+prompt: |
+  A filtration plant pumps from an open raw-water tank (2.5 m of water above the pump inlet,
+  suction losses negligible) through a sand filter, a control valve (normally fully open) and a UV
+  reactor, then through a 250 m pipe (100 mm inner diameter, roughness 0.05 mm, total K = 8
+  including the exit) that rises 26 m and discharges freely to atmosphere into a clearwell. Pump,
+  filter, valve and reactor are at the level of the tank bottom.
+
+  Pump at rated speed, flow (m3/h) : head (m): 0 : 48, 25 : 43, 45 : 33; fit a quadratic head-flow
+  curve through these points. Filter: rated 35 m3/h, clean pressure drop 0.35 bar at rated flow;
+  75 % of it is linear in flow and scales with 1/(1 - c) for clogging fraction c, 25 % is
+  proportional to flow squared. Valve: Kv = 80 m3/h fully open. Kv convention: Q = Kv sqrt(dp/SG),
+  Q in m3/h, dp in bar, SG = 0.9982. UV reactor: 0.15 bar at 35 m3/h, proportional to flow
+  squared. Use Darcy-Weisbach friction (Colebrook or equivalent). Water: density 998.2 kg/m3,
+  viscosity 1.002 mPa s; g = 9.80665 m/s2.
+
+  Measured: flow 33.8 m3/h, pump discharge 4.09 bar gauge, filter differential pressure 0.81 bar,
+  UV intensity 97 % of new. Exactly one fault is present: clogged_filter, worn_pump,
+  partly_closed_valve or uv_lamp_degradation. Identify it, give the filter's current clogging
+  fraction c (0 if the filter is clean) and the flow once the fault is corrected.
+answers:
+- key: fault
+  description: The fault that explains the measurements
+  kind: choice
+  choices: [clogged_filter, worn_pump, partly_closed_valve, uv_lamp_degradation]
+- key: clogging
+  description: Current clogging fraction c of the filter (0 if clean)
+  kind: number
+  unit: '1'
+  rel_tol: 0.05
+  abs_tol: 0.03
+- key: corrected_flow
+  description: Plant flow once the fault is corrected
+  kind: number
+  unit: m3/h
+  rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: '0.1'
+    name: filter plant diagnosis
+    components:
+    - name: raw
+      type: tank
+      parameters: {diameter: 4, height: 4, initial_level: 2.5, port_kv: 1000000}
+    - name: pump
+      type: centrifugal_pump
+      parameters:
+        head_curve: [[0, 48], [25, 43], [45, 33]]
+        power_curve: [[0, 3.0], [25, 5.6], [45, 7.2]]
+        npsh_curve: [[10, 1.6], [30, 2.6], [50, 4.4]]
+        motor_power: 7.5
+    - name: filter
+      type: media_filter
+      parameters: {rated_flow: 35, clean_pressure_drop: 0.35, housing_fraction: 0.25, change_pressure_drop: 1.2}
+    - name: valve
+      type: valve
+      parameters: {kv: 80, leakage: 1.0e-08}
+    - name: uv
+      type: uv_reactor
+      parameters: {rated_flow: 35, rated_pressure_drop: 0.15, volume: 30, fluence_rate: 18, required_dose: 40}
+    - name: line
+      type: pipe
+      parameters: {length: 250, diameter: 100, roughness: 0.05, height_difference: 26, minor_loss: 8}
+    - {name: clearwell, type: drain}
+    connections:
+    - [raw.outlet, pump.inlet]
+    - [pump.outlet, filter.inlet]
+    - [filter.outlet, valve.port_a]
+    - [valve.port_b, uv.inlet]
+    - [uv.outlet, line.port_a]
+    - [line.port_b, clearwell.port]
+  steps:
+  - op: answer
+    values: {fault: clogged_filter}
+  - op: solve_for
+    target: pump.volume_flow
+    value: 33.8 m3/h
+    vary: filter.clogging
+    lower: 0.0
+    upper: 0.95
+    read: {clogging: filter.clogging}
+  - op: set
+    values: {filter.clogging: 0.0}
+  - op: solve
+    read: {corrected_flow: pump.volume_flow}
+  expected: {fault: clogged_filter, clogging: 0.6524001524, corrected_flow: 38.22261532}
+notes: |
+  Hand check: the head points give H = 48 - 0.03333 Q - 0.006667 Q^2. At 33.8 m3/h the healthy
+  pump makes 39.26 m, so its discharge pressure is (39.26 + 2.5) m x 9789 Pa/m = 4.088 bar: the
+  measured 4.09 bar says the pump is on its curve (not worn). A clean filter at 33.8 m3/h drops
+  0.35 (0.75 x 0.9657 + 0.25 x 0.9326) = 0.335 bar, far below the measured 0.81 bar, so a partly
+  closed valve (clean filter) cannot explain it and the UV lamp does not change the flow. Clogged
+  filter: media part 0.81 - 0.0816 = 0.728 bar against 0.2535 bar clean gives 1/(1 - c) = 2.87, c
+  = 0.652; matching the measured flow gives c = 0.653 (independent Python, Colebrook). Clean
+  again, the plant returns to 38.24 m3/h (independent 38.244). The measured values are the
+  reference solution rounded (4.0855 bar, 0.807 bar).

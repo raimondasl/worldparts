@@ -1,0 +1,70 @@
+id: treat-filter-clog-01
+title: Sand filter output as the bed clogs
+level: 1
+category: what_if
+domain: treatment
+prompt: |
+  A pressure sand filter takes water from a raw-water header held at 1.6 bar gauge and delivers it
+  through a transfer pipe to an open basin.
+
+  Filter: rated flow 30 m3/h with a clean pressure drop of 0.25 bar at that flow. 60 % of the
+  clean drop is a media loss that is linear in flow and scales with 1/(1 - c) as the bed clogs (c
+  = clogging fraction); 40 % is a housing loss proportional to flow squared that does not change
+  with clogging. In other words dp = 0.15 (Q/30) / (1 - c) + 0.10 (Q/30)^2 bar.
+
+  Transfer pipe: 80 m long, 80 mm inner diameter, roughness 0.05 mm, outlet 12 m above the filter,
+  total minor-loss coefficient K = 3.5 (including the exit into the basin, which is at atmospheric
+  pressure). Use Darcy-Weisbach friction (Colebrook or equivalent). Water: density 998.2 kg/m3,
+  viscosity 1.002 mPa s; g = 9.80665 m/s2.
+
+  Find the flow with a clean filter (c = 0). Before backwash the bed reaches c = 0.8: find the
+  flow and the filter pressure drop then.
+answers:
+- key: clean_flow
+  description: Flow with the clean filter
+  kind: number
+  unit: m3/h
+  rel_tol: 0.03
+- key: clogged_flow
+  description: Flow at clogging fraction 0.8
+  kind: number
+  unit: m3/h
+  rel_tol: 0.03
+- key: clogged_filter_dp
+  description: Filter pressure drop at clogging fraction 0.8
+  kind: number
+  unit: bar
+  rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: '0.1'
+    name: filter clogging
+    components:
+    - name: header
+      type: supply
+      parameters: {pressure: 1.6}
+    - name: filter
+      type: media_filter
+      parameters: {rated_flow: 30, clean_pressure_drop: 0.25, housing_fraction: 0.4, change_pressure_drop: 1.0}
+    - name: line
+      type: pipe
+      parameters: {length: 80, diameter: 80, roughness: 0.05, height_difference: 12, minor_loss: 3.5}
+    - {name: basin, type: drain}
+    connections:
+    - [header.port, filter.inlet]
+    - [filter.outlet, line.port_a]
+    - [line.port_b, basin.port]
+  steps:
+  - op: solve
+    read: {clean_flow: filter.volume_flow}
+  - op: set
+    values: {filter.clogging: 0.8}
+  - op: solve
+    read: {clogged_flow: filter.volume_flow, clogged_filter_dp: filter.pressure_drop}
+  expected: {clean_flow: 25.00800792, clogged_flow: 13.38181182, clogged_filter_dp: 0.3544422831}
+notes: |
+  Hand check: 1.6 bar = filter dp + pipe loss + 12 m static (1.1747 bar). Clean, at 25.0 m3/h:
+  filter 0.125 + 0.069 = 0.194 bar; pipe v = 1.382 m/s, Re = 1.10e5, f = 0.0205, (f L/D + K) v^2/2
+  = (20.5 + 3.5) x 953 Pa = 0.230 bar; total 1.60 bar. At c = 0.8 the media term is 5 x 0.15
+  (Q/30): Q = 13.39 m3/h, filter dp = 0.3346 + 0.0199 = 0.3545 bar. Independent Python (Colebrook)
+  gives 25.049, 13.389 m3/h and 0.3547 bar, within 0.2 %.

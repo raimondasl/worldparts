@@ -1,0 +1,96 @@
+id: pump-tower-01
+title: Water tower fill and draw over three hours
+level: 3
+category: transient
+domain: storage
+prompt: |
+  A pump at the level of the ground-tank bottom draws from the bottom nozzle of an open
+  ground tank (6.0 m diameter, water 2.5 m deep, no inflow) and pushes water through a
+  non-return valve (Kv 60 m3/h) into a rising main: 400 m, inner diameter 102.3 mm,
+  absolute roughness 0.05 mm, rising 30 m into the bottom of a water tower tank, K = 6
+  including the entry. The tower tank is an open cylinder 5.0 m in diameter and 4.0 m
+  high, water 1.0 m deep at the start. From its bottom a distribution main (600 m, same
+  pipe, falling 28 m, K = 8) feeds the village, whose demand acts as one orifice of Kv 8
+  m3/h discharging to atmosphere at the end of that main. Every tank nozzle has Kv 300
+  m3/h.
+
+  Pump at rated speed: head 48 m at 0 m3/h, 46.5 m at 15 m3/h, 42 m at 30 m3/h, 34.5 m
+  at 45 m3/h; fit a quadratic. It runs at rated speed throughout; once the ground tank
+  is empty it delivers nothing and the non-return valve holds the rising main.
+
+  Water: density 998.2 kg/m3, viscosity 1.002e-3 Pa s; g = 9.80665 m/s2. Pipes:
+  Darcy-Weisbach. A Kv element drops (Q/Kv)^2 x 0.9982 bar (Q in m3/h). Treat the flow
+  as quasi-steady.
+
+  Over the first 3 hours: when does the ground tank run empty, what is the highest tower
+  level reached, and what is the tower level at 3 hours?
+answers:
+  - key: ground_empty_time
+    description: Time from the start until the ground tank is empty
+    unit: min
+    rel_tol: 0.05
+  - key: max_tower_level
+    description: Highest water depth in the tower tank during the 3 hours
+    unit: m
+    rel_tol: 0.05
+  - key: tower_level_3h
+    description: Water depth in the tower tank at 3 hours
+    unit: m
+    rel_tol: 0.05
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: water tower
+    components:
+      - name: ground
+        type: tank
+        parameters: {diameter: 6.0, height: 3.0, initial_level: 2.5, initial_temperature: 15, port_kv: 300}
+      - name: pump
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 48], [15, 46.5], [30, 42], [45, 34.5]]
+          power_curve: [[0, 2.6], [15, 3.9], [30, 5.0], [45, 5.9]]
+          npsh_curve: [[15, 1.8], [30, 2.6], [45, 3.9]]
+          motor_power: 7.5
+      - name: nrv
+        type: check_valve
+        parameters: {kv: 60}
+      - name: rising_main
+        type: pipe
+        parameters: {length: 400, diameter: 102.3, roughness: 0.05, height_difference: 30, minor_loss: 6}
+      - name: tower
+        type: tank
+        parameters: {diameter: 5.0, height: 4.0, initial_level: 1.0, initial_temperature: 15, port_kv: 300}
+      - name: distribution
+        type: pipe
+        parameters: {length: 600, diameter: 102.3, roughness: 0.05, height_difference: -28, minor_loss: 8}
+      - name: demand
+        type: valve
+        parameters: {kv: 8}
+      - name: village
+        type: drain
+    connections:
+      - [ground.outlet, pump.inlet]
+      - [pump.outlet, nrv.port_a]
+      - [nrv.port_b, rising_main.port_a]
+      - [rising_main.port_b, tower.inlet]
+      - [tower.outlet, distribution.port_a]
+      - [distribution.port_b, demand.port_a]
+      - [demand.port_b, village.port]
+  steps:
+    - op: simulate
+      duration: 3 h
+      step: 10 s
+      read_first_warning: {ground_empty_time: {warning: ground.tank_empty, unit: min}}
+      read_max: {max_tower_level: tower.level}
+      read_final: {tower_level_3h: tower.level}
+  expected: {tower_level_3h: 2.542942385, max_tower_level: 3.185855904, ground_empty_time: 124.1666667}
+notes: |
+  Quasi-steady ODEs for the two depths: pump flow from 48 - 0.006667 Q^2 = 30 m + h_tower -
+  h_ground + rising-main loss + two nozzles + non-return valve (36.6 m3/h at the start);
+  demand from h_tower + 28 m = distribution loss + nozzle + (Q/8)^2 drop (13.1 m3/h at the
+  start). The ground tank (28.27 m2, 70.7 m3) empties at about 124 min, when the tower
+  peaks at 3.19 m (no overflow). After that only the demand draws on the tower, which falls
+  to 2.54 m at 3 h. Reference: explicit Euler with a 10 s step; the empty time is the first
+  sample at which the ground tank reports empty. Independent Python check (solve_ivp,
+  Colebrook): 124.1 min, 3.188 m, 2.544 m, within 0.1 %.

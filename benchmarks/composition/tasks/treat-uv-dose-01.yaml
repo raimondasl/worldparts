@@ -1,0 +1,64 @@
+id: treat-uv-dose-01
+title: Well-water UV unit dose check
+level: 1
+category: operating_point
+domain: treatment
+prompt: |
+  A small groundwater system disinfects well water in a UV reactor. Water comes from a pressurised
+  header held at 1.5 bar gauge whatever the flow, passes a fully open valve with Kv = 30 m3/h,
+  then the UV reactor, whose outlet discharges directly to atmosphere into a contact basin.
+  Everything is at one elevation and the connecting pipework losses are negligible. Kv convention:
+  Q = Kv sqrt(dp/SG), Q in m3/h, dp in bar, SG = 0.9982.
+
+  UV reactor: pressure drop 0.20 bar at its rated flow of 30 m3/h, proportional to flow squared;
+  internal water volume 22 L; average UV fluence rate 16 mW/cm2 at full lamp output. Use the
+  plug-flow dose convention: UV dose = average fluence rate x reactor volume / flow (mW/cm2 x s =
+  mJ/cm2). The permit requires at least 40 mJ/cm2.
+
+  Water density 998.2 kg/m3. Find the flow through the reactor, the UV dose it delivers and
+  whether the unit meets the required dose.
+answers:
+- key: flow
+  description: Flow through the UV reactor
+  kind: number
+  unit: m3/h
+  rel_tol: 0.03
+- key: dose
+  description: UV dose delivered
+  kind: number
+  unit: mJ/cm2
+  rel_tol: 0.03
+- key: meets_dose
+  description: Whether the dose is at least 40 mJ/cm2
+  kind: boolean
+reference:
+  system:
+    worldparts_system: '0.1'
+    name: well uv unit
+    components:
+    - name: main
+      type: supply
+      parameters: {pressure: 1.5}
+    - name: valve
+      type: valve
+      parameters: {kv: 30, leakage: 1.0e-08}
+    - name: uv
+      type: uv_reactor
+      parameters: {rated_flow: 30, rated_pressure_drop: 0.2, volume: 22, fluence_rate: 16, required_dose: 40}
+    - {name: out, type: drain}
+    connections:
+    - [main.port, valve.port_a]
+    - [valve.port_b, uv.inlet]
+    - [uv.outlet, out.port]
+  steps:
+  - op: solve
+    read: {flow: uv.volume_flow, dose: uv.dose}
+  - op: answer
+    values: {meets_dose: false}
+  expected: {flow: 33.56620376, dose: 37.75225846, meets_dose: false}
+notes: |
+  Hand check: 1.5 bar = 0.9982 (Q/30)^2 + 0.20 (Q/30)^2, so Q = 30 sqrt(1.5 / 1.1982) = 33.566
+  m3/h; dose = 16 x 22 L / (33.566/3600 m3/s) = 16 x 2.3596 s = 37.75 mJ/cm2 < 40, so the unit
+  underdoses (the problem the task is about: no throttling, reactor above its rated flow).
+  Independent Python (no worldparts) gives 33.566 m3/h and 37.752 mJ/cm2. Pure algebra, so 3 % is
+  generous.

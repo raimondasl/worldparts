@@ -1,0 +1,101 @@
+id: pump-station-01
+title: Unequal booster pumps feeding a pressure zone
+level: 3
+category: operating_point
+domain: pumping
+prompt: |
+  A booster station lifts water from a trunk main into a hillside pressure zone. A large
+  and a small pump run in parallel at rated speed; both suctions connect directly to the
+  trunk main, held at 2.0 bar gauge. Each pump discharges through its own non-return
+  valve (large: Kv 120 m3/h, small: Kv 45 m3/h) into a common header. From the header a
+  zone main runs 1200 m (inner diameter 152 mm, absolute roughness 0.1 mm, rising 8 m, K
+  = 10) to the zone entry point, where the whole zone's demand acts like one orifice of
+  Kv 60 m3/h discharging to atmosphere. Pumps, valves and header are at one elevation.
+
+  Large pump at rated speed: head 50 m at 0 m3/h, 48 m at 30 m3/h, 42 m at 60 m3/h, 32 m
+  at 90 m3/h. Small pump: head 46 m at 0 m3/h, 43.75 m at 15 m3/h, 37 m at 30 m3/h, 30 m
+  at 40 m3/h. Fit a quadratic through each set of points.
+
+  Water: density 998.2 kg/m3, viscosity 1.002e-3 Pa s; g = 9.80665 m/s2. Pipes:
+  Darcy-Weisbach. A Kv element drops (Q/Kv)^2 x 0.9982 bar (Q in m3/h).
+
+  Find the flow of each pump, the gauge pressure in the discharge header and the gauge
+  pressure at the zone entry point.
+answers:
+  - key: flow_large
+    description: Flow of the large pump
+    unit: m3/h
+    rel_tol: 0.03
+  - key: flow_small
+    description: Flow of the small pump
+    unit: m3/h
+    rel_tol: 0.03
+  - key: header_pressure
+    description: Gauge pressure in the common discharge header
+    unit: bar
+    rel_tol: 0.03
+  - key: zone_pressure
+    description: Gauge pressure at the zone entry point
+    unit: bar
+    rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: booster station
+    components:
+      - name: trunk
+        type: supply
+        parameters: {pressure: 2.0, temperature: 15}
+      - name: large
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 50], [30, 48], [60, 42], [90, 32]]
+          power_curve: [[0, 5.0], [30, 7.6], [60, 9.8], [90, 11.6]]
+          npsh_curve: [[30, 2.2], [60, 3.2], [90, 5.0]]
+          motor_power: 15
+      - name: small
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 46], [15, 43.75], [30, 37], [40, 30]]
+          power_curve: [[0, 1.2], [15, 3.05], [30, 4.65], [40, 5.6]]
+          npsh_curve: [[10, 1.5], [20, 2.0], [30, 2.9]]
+          motor_power: 7.5
+      - name: nrv_large
+        type: check_valve
+        parameters: {kv: 120}
+      - name: nrv_small
+        type: check_valve
+        parameters: {kv: 45}
+      - name: zone_main
+        type: pipe
+        parameters: {length: 1200, diameter: 152, roughness: 0.1, height_difference: 8, minor_loss: 10}
+      - name: zone
+        type: valve
+        parameters: {kv: 60}
+      - name: atmosphere
+        type: drain
+    connections:
+      - [trunk.port, large.inlet]
+      - [trunk.port, small.inlet]
+      - [large.outlet, nrv_large.port_a]
+      - [small.outlet, nrv_small.port_a]
+      - [nrv_large.port_b, nrv_small.port_b]
+      - [nrv_large.port_b, zone_main.port_a]
+      - [zone_main.port_b, zone.port_a]
+      - [zone.port_b, atmosphere.port]
+  steps:
+    - op: solve
+      read:
+        flow_large: large.volume_flow
+        flow_small: small.volume_flow
+        header_pressure: zone_main.port_a.p
+        zone_pressure: zone.port_a.p
+  expected: {flow_large: 71.99762749, flow_small: 27.28213057, header_pressure: 5.407352807, zone_pressure: 2.732980198}
+notes: |
+  Curves exactly H = 50 - 0.002222 Q^2 (large) and H = 46 - 0.01 Q^2 (small). Solve for the
+  header head h (m, gauge): Q_i(h) from 20.40 m (2 bar) + H_i(Q_i) - (Q_i/Kv_i)^2 drop = h,
+  and the zone Q(h) from h = 8 m + (f L/D + 10) v^2/2g + (Q/60)^2 drop; Q_large + Q_small =
+  Q. Result h = 55.2 m = 5.41 bar, 72.0 + 27.3 = 99.3 m3/h (v = 1.52 m/s, f = 0.0194,
+  main loss 19.2 m), zone entry pressure (99.3/60)^2 x 0.9982 = 2.73 bar. Both pumps run
+  near their best-efficiency flows (71 and 27 m3/h). Independent Python check: 72.07 and
+  27.32 m3/h, 5.405 and 2.739 bar, within 0.3 %.

@@ -1,0 +1,90 @@
+id: treat-skid-duty-01
+title: Filtration skid duty point
+level: 2
+category: operating_point
+domain: treatment
+prompt: |
+  A packaged filtration skid lifts water from an open raw-water tank through a sand filter and a
+  UV reactor to a clearwell. The pump draws directly from the tank bottom with 2.2 m of water
+  above its inlet (suction losses negligible); pump, filter and UV reactor are at the level of the
+  tank bottom.
+
+  Pump at rated speed, flow (m3/h) : head (m): 0 : 42, 20 : 37, 35 : 28; flow (m3/h) : shaft power
+  (kW): 0 : 2.0, 20 : 3.6, 35 : 4.5. Fit a quadratic head-flow curve through the head points and a
+  quadratic power-flow curve through the power points.
+
+  Filter (clean): rated 30 m3/h, pressure drop 0.30 bar at rated flow, of which 70 % is linear in
+  flow and 30 % proportional to flow squared. UV reactor: 0.12 bar at its rated 30 m3/h,
+  proportional to flow squared; volume 25 L; fluence rate 18 mW/cm2; UV dose = fluence rate x
+  volume / flow (mW/cm2 x s = mJ/cm2).
+
+  From the UV outlet a pipe 120 m long, 80 mm inner diameter, roughness 0.05 mm, rising 24 m,
+  total K = 6 including the exit, discharges freely to atmosphere into the clearwell. Use
+  Darcy-Weisbach friction (Colebrook or equivalent). Water: density 998.2 kg/m3, viscosity 1.002
+  mPa s; g = 9.80665 m/s2.
+
+  Find the pump flow, head and shaft power and the UV dose.
+answers:
+- key: flow
+  description: Pump flow
+  kind: number
+  unit: m3/h
+  rel_tol: 0.03
+- key: head
+  description: Pump head
+  kind: number
+  unit: m
+  rel_tol: 0.03
+- key: pump_power
+  description: Pump shaft power
+  kind: number
+  unit: kW
+  rel_tol: 0.03
+- key: dose
+  description: UV dose
+  kind: number
+  unit: mJ/cm2
+  rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: '0.1'
+    name: filtration skid
+    components:
+    - name: raw
+      type: tank
+      parameters: {diameter: 3, height: 3.5, initial_level: 2.2, port_kv: 1000000}
+    - name: pump
+      type: centrifugal_pump
+      parameters:
+        head_curve: [[0, 42], [20, 37], [35, 28]]
+        power_curve: [[0, 2.0], [20, 3.6], [35, 4.5]]
+        npsh_curve: [[10, 1.5], [25, 2.4], [40, 3.8]]
+        motor_power: 5.5
+    - name: filter
+      type: media_filter
+      parameters: {rated_flow: 30, clean_pressure_drop: 0.3, housing_fraction: 0.3, change_pressure_drop: 1.0}
+    - name: uv
+      type: uv_reactor
+      parameters: {rated_flow: 30, rated_pressure_drop: 0.12, volume: 25, fluence_rate: 18, required_dose: 40}
+    - name: line
+      type: pipe
+      parameters: {length: 120, diameter: 80, roughness: 0.05, height_difference: 24, minor_loss: 6}
+    - {name: clearwell, type: drain}
+    connections:
+    - [raw.outlet, pump.inlet]
+    - [pump.outlet, filter.inlet]
+    - [filter.outlet, uv.inlet]
+    - [uv.outlet, line.port_a]
+    - [line.port_b, clearwell.port]
+  steps:
+  - op: solve
+    read: {flow: pump.volume_flow, head: pump.head, pump_power: pump.shaft_power, dose: uv.dose}
+  expected: {flow: 30.24939075, head: 31.33641723, pump_power: 4.242786788, dose: 53.55479763}
+notes: |
+  Hand check: the three head points give H = 42 - 0.05 Q - 0.01 Q^2 (Q in m3/h); power P = 2.0 +
+  0.09857 Q - 0.001714 Q^2 kW. System at 30.25 m3/h: static 24 - 2.2 = 21.8 m; filter 0.3 (0.7 x
+  1.008 + 0.3 x 1.017) = 0.303 bar = 3.10 m; UV 0.122 bar = 1.25 m; pipe v = 1.672 m/s, Re =
+  1.33e5, f = 0.0202, (30.3 + 6) x 0.1425 m = 5.17 m; total 31.3 m, and the pump gives 42 - 1.51 -
+  9.15 = 31.3 m. Power 4.24 kW (efficiency 61 %), dose 18 x 0.025 / (30.25/3600) = 53.6 mJ/cm2.
+  Independent Python (Colebrook) gives 30.272 m3/h, 31.32 m, 4.244 kW and 53.51 mJ/cm2, within 0.1
+  %.

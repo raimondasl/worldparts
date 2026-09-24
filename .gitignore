@@ -17,3 +17,6 @@ htmlcov/
 *.inp
 *.rpt
 *.bin
+
+# Benchmark run output (raw streams and per-run files); summaries are copied to benchmarks/composition/reports/
+benchmarks/composition/results/

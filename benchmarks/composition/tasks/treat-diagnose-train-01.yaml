@@ -1,0 +1,107 @@
+id: treat-diagnose-train-01
+title: Treatment train flow loss diagnosis
+level: 3
+category: diagnosis
+domain: treatment
+prompt: |
+  A treatment train pumps from an open raw-water tank (3.0 m of water above the pump inlet, no
+  suction losses) through a header pipe (30 m, K = 5), a sand filter, a control valve, a UV
+  reactor and a transfer main (300 m, K = 4) that rises 28 m and enters an open clearwell through
+  its floor at 2.0 m depth (hydrostatic back-pressure). Both pipes: 125 mm inner diameter,
+  roughness 0.05 mm. The other equipment is at the raw-tank floor level.
+
+  Pump at rated speed, flow (m3/h) : head (m): 0 : 55, 30 : 50, 60 : 37; fit a quadratic through
+  these points. Filter: rated 55 m3/h, clean drop 0.35 bar at rated flow, 70 % linear in flow and
+  scaling with 1/(1 - c) for clogging fraction c, 30 % quadratic in flow. Valve: Kv = 120 m3/h
+  fully open, Kv_eff = Kv x opening, normally fully open. Kv convention: Q = Kv sqrt(dp/SG), Q in
+  m3/h, dp in bar, SG = 0.9982. UV reactor: 0.18 bar at 55 m3/h, quadratic in flow. Use
+  Darcy-Weisbach friction (Colebrook or equivalent). Water: density 998.2 kg/m3, viscosity 1.002
+  mPa s; g = 9.80665 m/s2.
+
+  Measured: flow 43.9 m3/h, pump discharge 4.70 bar gauge, filter differential pressure 0.26 bar,
+  UV intensity 96 % of new. Exactly one fault is present: clogged_filter, worn_pump,
+  partly_closed_valve or uv_lamp_degradation. Identify it, give the valve's current opening (1 if
+  fully open) and the flow once the fault is corrected.
+answers:
+- key: fault
+  description: The fault that explains the measurements
+  kind: choice
+  choices: [clogged_filter, worn_pump, partly_closed_valve, uv_lamp_degradation]
+- key: opening
+  description: Current valve opening (0 to 1; 1 if fully open)
+  kind: number
+  unit: '1'
+  rel_tol: 0.05
+  abs_tol: 0.02
+- key: corrected_flow
+  description: Flow once the fault is corrected
+  kind: number
+  unit: m3/h
+  rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: '0.1'
+    name: treatment train diagnosis
+    components:
+    - name: raw
+      type: tank
+      parameters: {diameter: 5, height: 4.5, initial_level: 3.0, port_kv: 1000000}
+    - name: pump
+      type: centrifugal_pump
+      parameters:
+        head_curve: [[0, 55], [30, 50], [60, 37]]
+        power_curve: [[0, 4.5], [30, 8.0], [60, 10.5]]
+        npsh_curve: [[15, 1.8], [40, 3.0], [65, 5.2]]
+        motor_power: 11
+    - name: header
+      type: pipe
+      parameters: {length: 30, diameter: 125, roughness: 0.05, minor_loss: 5}
+    - name: filter
+      type: media_filter
+      parameters: {rated_flow: 55, clean_pressure_drop: 0.35, housing_fraction: 0.3, change_pressure_drop: 1.2}
+    - name: valve
+      type: valve
+      parameters: {kv: 120, leakage: 1.0e-08}
+    - name: uv
+      type: uv_reactor
+      parameters: {rated_flow: 55, rated_pressure_drop: 0.18, volume: 50, fluence_rate: 22, required_dose: 40}
+    - name: transfer
+      type: pipe
+      parameters: {length: 300, diameter: 125, roughness: 0.05, height_difference: 28, minor_loss: 4}
+    - name: clearwell
+      type: tank
+      parameters: {diameter: 10, height: 4, initial_level: 2.0, port_kv: 1000000}
+    connections:
+    - [raw.outlet, pump.inlet]
+    - [pump.outlet, header.port_a]
+    - [header.port_b, filter.inlet]
+    - [filter.outlet, valve.port_a]
+    - [valve.port_b, uv.inlet]
+    - [uv.outlet, transfer.port_a]
+    - [transfer.port_b, clearwell.inlet]
+  steps:
+  - op: answer
+    values: {fault: partly_closed_valve}
+  - op: solve_for
+    target: pump.volume_flow
+    value: 43.9 m3/h
+    vary: valve.opening
+    lower: 0.1
+    upper: 1.0
+    read: {opening: valve.opening}
+  - op: set
+    values: {valve.opening: 1.0}
+  - op: solve
+    read: {corrected_flow: pump.volume_flow}
+  expected: {fault: partly_closed_valve, opening: 0.3509021706, corrected_flow: 55.55697226}
+notes: |
+  Hand check: the head points give H = 55 - 0.03333 Q - 0.004444 Q^2. At 43.9 m3/h a healthy pump
+  makes 44.97 m, discharge (44.97 + 3.0) x 9789 Pa/m = 4.696 bar: matches 4.70, so the pump is not
+  worn (a worn pump at 43.9 m3/h with the valve open would only need the system head, a discharge
+  of 3.74 bar). A clean filter at 43.9 m3/h drops 0.35 (0.7 x 0.798 + 0.3 x 0.637) = 0.262 bar:
+  matches 0.26, so the filter is clean. The lamp cannot change the flow. The valve takes the rest
+  of the pump head: header 0.49 m, transfer main 2.54 m, filter 2.68 m, UV 1.17 m and static 28 +
+  2 - 3 = 27 m leave 11.10 m (1.086 bar), so Kv_eff = 43.9 sqrt(0.9982/1.086) = 42.09 m3/h,
+  opening 0.351. Independent Python (Colebrook) gives opening 0.3507 and, with the valve reopened,
+  55.58 m3/h. The measurements are the reference solution at opening 0.35 rounded (43.85 m3/h,
+  4.698 bar, 0.262 bar).

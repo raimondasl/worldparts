@@ -1,0 +1,74 @@
+id: pump-lift-01
+title: Rooftop lift operating point
+level: 1
+category: operating_point
+domain: pumping
+prompt: |
+  A pump lifts water from a ground-level tank to a free discharge on a roof. The tank is
+  an open cylinder 3.0 m in diameter and 2.5 m high, holding water 1.8 m deep. The pump
+  sits at the level of the tank bottom and draws straight from its bottom outlet nozzle
+  (Kv 250 m3/h; no suction pipe). The discharge riser is 85 m of steel pipe, inner
+  diameter 80.8 mm, absolute roughness 0.05 mm, rising 32 m from the pump to the open
+  outlet, with minor losses totalling K = 6.5 (bends, valves and the exit loss of the
+  free discharge).
+
+  Pump data at rated speed (2900 rpm): head 46 m at 0 m3/h, 42 m at 20 m3/h, 37 m at 30
+  m3/h and 30 m at 40 m3/h; shaft power 2.4 kW at 0 m3/h, 3.74 kW at 20 m3/h, 4.29 kW at
+  30 m3/h and 4.76 kW at 40 m3/h. Fit a quadratic head-flow curve and a quadratic
+  power-flow curve through these points.
+
+  Water: density 998.2 kg/m3, viscosity 1.002e-3 Pa s; g = 9.80665 m/s2. Pipes:
+  Darcy-Weisbach. A Kv element drops (Q/Kv)^2 x 0.9982 bar (Q in m3/h).
+
+  Find the steady operating point with the pump at full speed: flow, head and shaft
+  power.
+answers:
+  - key: flow
+    description: Pump flow
+    unit: m3/h
+    rel_tol: 0.03
+  - key: head
+    description: Pump head
+    unit: m
+    rel_tol: 0.03
+  - key: pump_power
+    description: Pump shaft power
+    unit: kW
+    rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: rooftop lift
+    components:
+      - name: tank
+        type: tank
+        parameters: {diameter: 3.0, height: 2.5, initial_level: 1.8, initial_temperature: 20, port_kv: 250}
+      - name: pump
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 46], [20, 42], [30, 37], [40, 30]]
+          power_curve: [[0, 2.4], [20, 3.74], [30, 4.29], [40, 4.76]]
+          npsh_curve: [[10, 1.5], [25, 2.4], [40, 4.0]]
+          motor_power: 5.5
+      - name: riser
+        type: pipe
+        parameters: {length: 85, diameter: 80.8, roughness: 0.05, height_difference: 32, minor_loss: 6.5}
+      - name: roof
+        type: drain
+    connections:
+      - [tank.outlet, pump.inlet]
+      - [pump.outlet, riser.port_a]
+      - [riser.port_b, roof.port]
+  steps:
+    - op: solve
+      read: {flow: pump.volume_flow, head: pump.head, pump_power: pump.shaft_power}
+  expected: {flow: 33.23955981, head: 34.95037511, pump_power: 4.451019651}
+notes: |
+  The curve points lie exactly on H = 46 - 0.01 Q^2 and P = 2.4 + 0.075 Q - 0.0004 Q^2
+  (Q in m3/h), so any quadratic fit gives the same curves. Hand check at the reference flow
+  33.24 m3/h: static lift 32 - 1.8 = 30.2 m; v = 1.80 m/s, Re = 1.45e5, pipe
+  loss (f L/D + 6.5) v^2/2g = 4.55 m (f = 0.0200); nozzle (33.24/250)^2 x 0.9982
+  bar = 0.18 m; system head 34.95 m = pump head 46 - 0.01 x 33.24^2. Power 2.4 + 0.075 Q -
+  0.0004 Q^2 = 4.45 kW (efficiency 71 %, at the best-efficiency flow). Independent Python
+  check (Colebrook, numpy.polyfit, brentq; no worldparts): 33.26 m3/h, 34.94 m, 4.452 kW,
+  within 0.1 %. No warnings at the reference point.

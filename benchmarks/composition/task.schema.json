@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/raimondasl/worldparts/benchmarks/composition/task.schema.json",
+  "title": "worldparts composition benchmark task",
+  "description": "One task of the v0.2 composition benchmark: a fully specified prompt, the answers the agent must return and the reference steps that produce them on a worldparts system. Cross-field rules (every answer key produced exactly once, expected equal to what the steps produce, level matching the component count) are checked by the harness loader.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "title", "level", "category", "domain", "prompt", "answers", "reference"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "Kebab-case, unique, equal to the file name without .yaml."
+    },
+    "title": {"type": "string", "minLength": 1},
+    "level": {
+      "type": "integer",
+      "enum": [1, 2, 3],
+      "description": "1: 2-4 components, 2: 5-7 components, 3: 8 or more (in the reference system)."
+    },
+    "category": {
+      "type": "string",
+      "enum": ["operating_point", "sizing", "what_if", "transient", "diagnosis"]
+    },
+    "domain": {
+      "type": "string",
+      "enum": ["pumping", "storage", "treatment", "distribution"]
+    },
+    "prompt": {"type": "string", "minLength": 20},
+    "answers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/answer"}
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["system", "steps"],
+      "properties": {
+        "system": {
+          "type": "object",
+          "required": ["worldparts_system", "components"],
+          "description": "A worldparts system document (validated by worldparts itself)."
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/step"}
+        },
+        "expected": {
+          "type": "object",
+          "description": "Frozen reference values in each answer's unit; written by regen.",
+          "additionalProperties": {"type": ["number", "string", "boolean"]}
+        }
+      }
+    },
+    "notes": {"type": "string"}
+  },
+  "$defs": {
+    "key": {"type": "string", "pattern": "^[a-z][a-z0-9]*(_[a-z0-9]+)*$"},
+    "path": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$",
+      "description": "A worldparts variable path, e.g. pump.volume_flow or tank.outlet.p."
+    },
+    "quantity": {
+      "description": "A number in the declared unit, or a string with a unit ('15 m3/h').",
+      "type": ["number", "string"]
+    },
+    "answer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "description"],
+      "properties": {
+        "key": {"$ref": "#/$defs/key"},
+        "description": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "enum": ["number", "choice", "boolean"], "default": "number"},
+        "unit": {"type": "string", "minLength": 1},
+        "rel_tol": {"type": "number", "minimum": 0, "maximum": 1},
+        "abs_tol": {"type": "number", "minimum": 0},
+        "choices": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/key"}
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {"not": {"required": ["kind"]}},
+              {"properties": {"kind": {"const": "number"}}, "required": ["kind"]}
+            ]
+          },
+          "then": {
+            "required": ["unit"],
+            "anyOf": [{"required": ["rel_tol"]}, {"required": ["abs_tol"]}],
+            "not": {"required": ["choices"]}
+          }
+        },
+        {
+          "if": {"properties": {"kind": {"const": "choice"}}, "required": ["kind"]},
+          "then": {
+            "required": ["choices"],
+            "properties": {"unit": false, "rel_tol": false, "abs_tol": false}
+          }
+        },
+        {
+          "if": {"properties": {"kind": {"const": "boolean"}}, "required": ["kind"]},
+          "then": {
+            "properties": {"unit": false, "rel_tol": false, "abs_tol": false, "choices": false}
+          }
+        }
+      ]
+    },
+    "reads": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "#/$defs/key"},
+      "additionalProperties": {"$ref": "#/$defs/path"}
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at"],
+      "properties": {
+        "at": {"$ref": "#/$defs/quantity"},
+        "set": {"type": "object", "minProperties": 1},
+        "ramp": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {"$ref": "#/$defs/quantity"}
+          }
+        },
+        "over": {"$ref": "#/$defs/quantity"}
+      },
+      "oneOf": [{"required": ["set"]}, {"required": ["ramp", "over"]}]
+    },
+    "step": {
+      "type": "object",
+      "required": ["op"],
+      "properties": {
+        "op": {"type": "string", "enum": ["solve", "set", "solve_for", "simulate", "answer"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"op": {"const": "solve"}}},
+          "then": {
+            "additionalProperties": false,
+            "properties": {"op": true, "read": {"$ref": "#/$defs/reads"}},
+            "required": ["read"]
+          }
+        },
+        {
+          "if": {"properties": {"op": {"const": "set"}}},
+          "then": {
+            "additionalProperties": false,
+            "properties": {"op": true, "values": {"type": "object", "minProperties": 1}},
+            "required": ["values"]
+          }
+        },
+        {
+          "if": {"properties": {"op": {"const": "solve_for"}}},
+          "then": {
+            "additionalProperties": false,
+            "properties": {
+              "op": true,
+              "target": {"$ref": "#/$defs/path"},
+              "value": {"$ref": "#/$defs/quantity"},
+              "vary": {"$ref": "#/$defs/path"},
+              "lower": {"$ref": "#/$defs/quantity"},
+              "upper": {"$ref": "#/$defs/quantity"},
+              "read": {"$ref": "#/$defs/reads"}
+            },
+            "required": ["target", "value", "vary", "lower", "upper"]
+          }
+        },
+        {
+          "if": {"properties": {"op": {"const": "simulate"}}},
+          "then": {
+            "additionalProperties": false,
+            "properties": {
+              "op": true,
+              "duration": {"$ref": "#/$defs/quantity"},
+              "step": {"$ref": "#/$defs/quantity"},
+              "events": {"type": "array", "items": {"$ref": "#/$defs/event"}},
+              "restore": {"type": "boolean"},
+              "read_final": {"$ref": "#/$defs/reads"},
+              "read_min": {"$ref": "#/$defs/reads"},
+              "read_max": {"$ref": "#/$defs/reads"},
+              "read_first_warning": {
+                "type": "object",
+                "minProperties": 1,
+                "propertyNames": {"$ref": "#/$defs/key"},
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["warning"],
+                  "properties": {
+                    "warning": {"$ref": "#/$defs/path"},
+                    "unit": {"type": "string"}
+                  }
+                }
+              }
+            },
+            "required": ["duration"]
+          }
+        },
+        {
+          "if": {"properties": {"op": {"const": "answer"}}},
+          "then": {
+            "additionalProperties": false,
+            "properties": {
+              "op": true,
+              "values": {
+                "type": "object",
+                "minProperties": 1,
+                "propertyNames": {"$ref": "#/$defs/key"},
+                "additionalProperties": {"type": ["number", "string", "boolean"]}
+              }
+            },
+            "required": ["values"]
+          }
+        }
+      ]
+    }
+  }
+}

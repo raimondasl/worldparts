@@ -36,9 +36,12 @@ from __future__ import annotations
 import functools
 import inspect
 import itertools
+import json
 import math
+import os
 import threading
 from collections.abc import Callable, Iterable, Mapping
+from pathlib import Path
 from typing import Annotated, Any, Literal, ParamSpec, TypeVar
 
 import yaml
@@ -59,6 +62,7 @@ from worldparts.manifest import Manifest, VariableSpec, load_yaml
 from worldparts.units import parse_duration, parse_value
 
 __all__ = [
+    "AUTOSAVE_ENV",
     "EXTRA_TOOL_REGISTRARS",
     "INSTRUCTIONS",
     "RESOURCE_PREFIX",
@@ -70,6 +74,10 @@ __all__ = [
 ]
 
 RESOURCE_PREFIX = "worldparts://components/"
+
+#: Environment variable naming a directory; when set, every system's document is written
+#: to ``<dir>/<system_id>.json`` after each tool call that changes it.
+AUTOSAVE_ENV = "WORLDPARTS_AUTOSAVE_DIR"
 
 INSTRUCTIONS = """\
 worldparts gives you tested physical component models (supplies, drains, pipes, valves, \
@@ -95,7 +103,9 @@ every matching path in one unit. solve_for finds the value of one input or param
 gives a target result (e.g. the pump speed for 15 m3/h). describe_component is brief by \
 default; detail='full' adds scenario systems, contract rules and provenance.
 Systems live only as long as this server process: keep a system with get_system and \
-restore it in a new session with load_system.\
+restore it in a new session with load_system. (Operators only: when the environment \
+variable WORLDPARTS_AUTOSAVE_DIR is set, the server also writes each changed system \
+document to <dir>/<system_id>.json.)\
 """
 
 _P = ParamSpec("_P")
@@ -507,14 +517,20 @@ Units = Annotated[
 class SystemStore:
     """In-process store of systems keyed by short ids (``s1``, ``s2``, ...).
 
-    Tool calls run on worker threads; :attr:`lock` serialises them.
+    Tool calls run on worker threads; :attr:`lock` serialises them. With an
+    ``autosave_dir``, :meth:`autosave` writes the document of every system that changed
+    since the last save to ``<autosave_dir>/<system_id>.json``.
     """
 
-    def __init__(self, catalog: Catalog | None = None) -> None:
+    def __init__(
+        self, catalog: Catalog | None = None, autosave_dir: str | os.PathLike[str] | None = None
+    ) -> None:
         self.catalog = catalog if catalog is not None else default_catalog()
         self.lock = threading.RLock()
         self._systems: dict[str, wp.System] = {}
         self._ids = itertools.count(1)
+        self.autosave_dir = Path(autosave_dir) if autosave_dir else None
+        self._saved: dict[str, str] = {}
 
     def __len__(self) -> int:
         return len(self._systems)
@@ -549,6 +565,32 @@ class SystemStore:
             )
             raise UnknownSystemError(f"Unknown system_id '{system_id}'. {hint}")
         return system
+
+    def autosave(self) -> list[str]:
+        """Write the document of every system that changed since it was last saved.
+
+        Does nothing without an ``autosave_dir``. Never raises: a system whose document
+        cannot be produced or written is skipped (autosave must not break a tool call).
+        Returns the ids written.
+        """
+        if self.autosave_dir is None:
+            return []
+        written = []
+        for system_id, system in self._systems.items():
+            try:
+                text = json.dumps(system.to_dict(), indent=2, sort_keys=False, default=str)
+                if self._saved.get(system_id) == text:
+                    continue
+                self.autosave_dir.mkdir(parents=True, exist_ok=True)
+                target = self.autosave_dir / f"{system_id}.json"
+                tmp = target.with_name(target.name + ".tmp")
+                tmp.write_text(text, encoding="utf-8")
+                os.replace(tmp, target)
+            except Exception:  # best effort by design
+                continue
+            self._saved[system_id] = text
+            written.append(system_id)
+        return written
 
 
 #: Functions ``(server, store) -> None`` that register extra tools (e.g. export_system).
@@ -833,6 +875,7 @@ def manifest_text(m: Manifest) -> str:
 def create_server(
     catalog: Catalog | None = None,
     registrars: Iterable[Callable[[MCPServer, SystemStore], None]] | None = None,
+    autosave_dir: str | os.PathLike[str] | None = None,
 ) -> MCPServer:
     """Build the worldparts MCP server with a fresh, empty system store.
 
@@ -840,11 +883,16 @@ def create_server(
         catalog: Catalogue to serve (default: the package catalogue).
         registrars: Extra tool registrars (default: :data:`EXTRA_TOOL_REGISTRARS`), e.g.
             the future ``export_system`` tool of the WNTR adapter.
+        autosave_dir: Directory for system documents written after every tool call that
+            changes a system (default: the ``WORLDPARTS_AUTOSAVE_DIR`` environment
+            variable; unset or empty disables autosave).
 
     Returns:
         The server; its store is available as ``server.store``.
     """
-    store = SystemStore(catalog)
+    if autosave_dir is None:
+        autosave_dir = os.environ.get(AUTOSAVE_ENV) or None
+    store = SystemStore(catalog, autosave_dir)
     cat = store.catalog
     server = MCPServer(
         name="worldparts",
@@ -863,7 +911,10 @@ def create_server(
         def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
             try:
                 with store.lock:
-                    return fn(*args, **kwargs)
+                    try:
+                        return fn(*args, **kwargs)
+                    finally:
+                        store.autosave()
             except WorldpartsError as exc:
                 raise ToolError(f"[{exc.code}] {exc}") from exc
 

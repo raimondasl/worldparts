@@ -1,0 +1,95 @@
+id: pump-parallel-01
+title: Second pump in parallel on a rising main
+level: 2
+category: what_if
+domain: pumping
+prompt: |
+  A stormwater pumping station has two identical pumps in parallel. Both draw from a
+  common suction header on the bottom outlet of an open wet well (water 2.5 m deep;
+  outlet nozzle Kv 400 m3/h, shared by both pumps; pumps at the level of the well
+  bottom). Each pump discharges through its own non-return valve (Kv 90 m3/h when open,
+  no reverse flow) into a common rising main: 650 m long, inner diameter 152 mm,
+  absolute roughness 0.1 mm, rising 17 m to a free discharge, minor losses K = 12
+  including the exit.
+
+  Each pump at rated speed: head 32 m at 0 m3/h, 30 m at 25 m3/h, 24 m at 50 m3/h and 14
+  m at 75 m3/h; fit a quadratic through these points. Running pumps run at rated speed.
+
+  Water: density 998.2 kg/m3, viscosity 1.002e-3 Pa s; g = 9.80665 m/s2. Pipes:
+  Darcy-Weisbach. A Kv element drops (Q/Kv)^2 x 0.9982 bar (Q in m3/h).
+
+  Today one pump runs and the other stands by. How much does the station deliver with
+  one pump, how much with both pumps running, and what is each pump's head with both
+  running?
+answers:
+  - key: flow_one_pump
+    description: Station flow with one pump running
+    unit: m3/h
+    rel_tol: 0.03
+  - key: flow_two_pumps
+    description: Station flow with both pumps running
+    unit: m3/h
+    rel_tol: 0.03
+  - key: head_two_pumps
+    description: Head of each pump with both running
+    unit: m
+    rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: "0.1"
+    name: parallel pumps
+    components:
+      - name: well
+        type: tank
+        parameters: {diameter: 5.0, height: 4.0, initial_level: 2.5, initial_temperature: 15, port_kv: 400}
+      - name: pump1
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 32], [25, 30], [50, 24], [75, 14]]
+          power_curve: [[0, 2.2], [25, 3.4], [50, 4.4], [75, 5.2]]
+          npsh_curve: [[25, 2.0], [50, 3.0], [75, 5.0]]
+          motor_power: 7.5
+      - name: pump2
+        type: centrifugal_pump
+        parameters:
+          head_curve: [[0, 32], [25, 30], [50, 24], [75, 14]]
+          power_curve: [[0, 2.2], [25, 3.4], [50, 4.4], [75, 5.2]]
+          npsh_curve: [[25, 2.0], [50, 3.0], [75, 5.0]]
+          motor_power: 7.5
+      - name: nrv1
+        type: check_valve
+        parameters: {kv: 90}
+      - name: nrv2
+        type: check_valve
+        parameters: {kv: 90}
+      - name: main
+        type: pipe
+        parameters: {length: 650, diameter: 152, roughness: 0.1, height_difference: 17, minor_loss: 12}
+      - name: outfall
+        type: drain
+    connections:
+      - [well.outlet, pump1.inlet]
+      - [well.outlet, pump2.inlet]
+      - [pump1.outlet, nrv1.port_a]
+      - [pump2.outlet, nrv2.port_a]
+      - [nrv1.port_b, nrv2.port_b]
+      - [nrv1.port_b, main.port_a]
+      - [main.port_b, outfall.port]
+  steps:
+    - op: set
+      values: {pump2.speed: 0}
+    - op: solve
+      read: {flow_one_pump: main.volume_flow}
+    - op: set
+      values: {pump2.speed: 1}
+    - op: solve
+      read: {flow_two_pumps: main.volume_flow, head_two_pumps: pump1.head}
+  expected: {flow_one_pump: 55.33757749, flow_two_pumps: 86.68020196, head_two_pumps: 25.98800644}
+notes: |
+  Head curve exactly H = 32 - 0.0032 Q^2 for each pump. One pump: 2.5 m (well) + H(Q) -
+  nozzle - non-return valve = 17 m + (f L/D + 12) v^2/2g; Q = 55.3 m3/h (113 % of the
+  best-efficiency flow). Two pumps: each carries Q/2 through its own pump and valve, the
+  nozzle and main carry Q; Q = 86.7 m3/h (43.3 m3/h per pump, 89 % of best efficiency), head
+  26.0 m. The second pump adds only 57 % because the main is friction dominated (v = 1.33 m/s
+  over 650 m). The standby pump's non-return valve keeps reverse flow out of it. Independent
+  Python check (Colebrook, no worldparts): 55.37, 86.81 m3/h and 25.97 m, within 0.2 %.

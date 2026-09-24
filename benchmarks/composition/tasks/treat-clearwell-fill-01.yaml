@@ -1,0 +1,88 @@
+id: treat-clearwell-fill-01
+title: Refilling a clearwell after cleaning
+level: 2
+category: transient
+domain: treatment
+prompt: |
+  A clearwell is refilled after cleaning. Filtered water comes from a header held at 1.2 bar gauge
+  through a fully open valve (Kv = 25 m3/h), a UV reactor and a 60 m pipe (80 mm inner diameter,
+  roughness 0.05 mm, total K = 3) that enters the clearwell through a bottom inlet. The clearwell
+  floor is 1.5 m below the header, valve and UV reactor. Kv convention: Q = Kv sqrt(dp/SG), Q in
+  m3/h, dp in bar, SG = 0.9982.
+
+  UV reactor: 0.10 bar at its rated 25 m3/h, proportional to flow squared; volume 18 L; fluence
+  rate 20 mW/cm2; UV dose = fluence rate x volume / flow (mW/cm2 x s = mJ/cm2).
+
+  The clearwell is an open vertical cylinder of 4.0 m inner diameter with its overflow rim 3.5 m
+  above the floor; the initial water depth is 0.4 m. The pressure at the bottom inlet is the
+  hydrostatic pressure of the current depth, so the flow falls as the clearwell fills; treat the
+  flow as quasi-steady. Use Darcy-Weisbach friction (Colebrook or equivalent). Water: density
+  998.2 kg/m3, viscosity 1.002 mPa s; g = 9.80665 m/s2.
+
+  Find the initial flow and the UV dose at that flow, the time until the water reaches the
+  overflow rim, and the flow once the clearwell is full.
+answers:
+- key: initial_flow
+  description: Flow at the start (depth 0.4 m)
+  kind: number
+  unit: m3/h
+  rel_tol: 0.03
+- key: initial_dose
+  description: UV dose at the start
+  kind: number
+  unit: mJ/cm2
+  rel_tol: 0.03
+- key: fill_time
+  description: Time from the start until the water reaches the rim
+  kind: number
+  unit: min
+  rel_tol: 0.05
+- key: full_flow
+  description: Flow once the clearwell is full (depth 3.5 m)
+  kind: number
+  unit: m3/h
+  rel_tol: 0.03
+reference:
+  system:
+    worldparts_system: '0.1'
+    name: clearwell filling
+    components:
+    - name: header
+      type: supply
+      parameters: {pressure: 1.2}
+    - name: valve
+      type: valve
+      parameters: {kv: 25, leakage: 1.0e-08}
+    - name: uv
+      type: uv_reactor
+      parameters: {rated_flow: 25, rated_pressure_drop: 0.1, volume: 18, fluence_rate: 20, required_dose: 40}
+    - name: line
+      type: pipe
+      parameters: {length: 60, diameter: 80, roughness: 0.05, height_difference: -1.5, minor_loss: 3}
+    - name: clearwell
+      type: tank
+      parameters: {diameter: 4, height: 3.5, initial_level: 0.4, port_kv: 1000000}
+    connections:
+    - [header.port, valve.port_a]
+    - [valve.port_b, uv.inlet]
+    - [uv.outlet, line.port_a]
+    - [line.port_b, clearwell.inlet]
+  steps:
+  - op: solve
+    read: {initial_flow: uv.volume_flow, initial_dose: uv.dose}
+  - op: simulate
+    duration: 2 h
+    step: 10 s
+    events: []
+    read_final: {full_flow: uv.volume_flow}
+    read_first_warning:
+      fill_time: {warning: clearwell.tank_overflow, unit: min}
+  expected: {initial_flow: 25.3228387, initial_dose: 51.17909629, fill_time: 98.5, full_flow: 22.17117581}
+notes: |
+  Hand check: the head available is 1.2 bar (12.26 m) + 1.5 m - depth. At depth 0.4 m and 25.33
+  m3/h: valve 10.47 m, UV 1.05 m, pipe (v = 1.400 m/s, f = 0.0203, (15.2 + 3) x 0.0999 m) = 1.84
+  m; total 13.36 m + 0.4 m = 13.76 m. Dose 20 x 0.018 / (25.33/3600) = 51.2 mJ/cm2. Full (3.5 m):
+  22.18 m3/h. The level obeys A dh/dt = Q(h) with A = 12.566 m2, 3.1 m x 12.566 = 38.96 m3 at a
+  mean of about 23.8 m3/h: about 98 min. Independent Python (Colebrook, solve_ivp) gives 25.33
+  m3/h, 51.16 mJ/cm2, 98.40 min and 22.18 m3/h. The reference samples every 10 s (first sample at
+  or above the rim), so its time can be up to 10 s late; 5 % covers that and integration choices.
