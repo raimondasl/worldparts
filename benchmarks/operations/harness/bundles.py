@@ -468,20 +468,45 @@ def truth_problems(task: OpsTask, truth: Any) -> list[str]:
             problems.append(f"{where}: kind {t.get('kind')!r} is not {spec.kind!r}")
             continue
         problems += [f"{where}: {p}" for p in _truth_key_problems(spec, t)]
-    reals = truth.get("realisations")
-    if not isinstance(reals, dict):
-        problems.append("realisations must be an object (r1, r2, ...)")
-    else:
-        for name, r in reals.items():
-            if not isinstance(r, dict):
-                problems.append(f"realisation {name}: must be an object")
-                continue
-            ref = r.get("reference_pass")
-            if not isinstance(ref, dict) or not all(
-                v is None or isinstance(v, bool) for v in ref.values()
-            ):
-                problems.append(f"realisation {name}: reference_pass maps estimators to bool/null")
+    problems += _realisation_problems(task, truth.get("realisations"))
     return problems
+
+
+def _realisation_problems(task: OpsTask, reals: Any) -> list[str]:
+    """The truth's ``realisations`` must hold exactly the bundle's r1..rK, each with
+    ``oracle_pass`` true (INTERFACE.md: they are realisations the oracle passes) and a
+    non-empty ``reference_pass`` mapping estimators to true, false or null (the Stage 0
+    headroom rule reads r1's)."""
+    want = [f"r{k}" for k in task.realisations]
+    if not isinstance(reals, dict):
+        return [f"realisations must be an object with {', '.join(want)}"]
+    out: list[str] = []
+    missing = [n for n in want if n not in reals]
+    if missing:
+        out.append(f"realisations {missing} are missing (the bundle has {', '.join(want)})")
+    extra = sorted(str(n) for n in reals if n not in want)
+    if extra:
+        out.append(f"realisations {extra} are not in the bundle ({', '.join(want)})")
+    for name in want:
+        r = reals.get(name)
+        if name not in reals:
+            continue
+        if not isinstance(r, dict):
+            out.append(f"realisation {name}: must be an object")
+            continue
+        if r.get("oracle_pass") is not True:
+            out.append(f"realisation {name}: oracle_pass must be true")
+        ref = r.get("reference_pass")
+        if (
+            not isinstance(ref, dict)
+            or not ref
+            or not all(v is None or isinstance(v, bool) for v in ref.values())
+        ):
+            out.append(
+                f"realisation {name}: reference_pass must map one or more estimators to "
+                "true, false or null"
+            )
+    return out
 
 
 def _truth_key_problems(spec: KeySpec, t: dict[str, Any]) -> list[str]:

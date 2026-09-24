@@ -572,20 +572,44 @@ uv run python -m benchmarks.operations.harness manifest --set dev --check
 
   `code-skill`, `lib`, `lib-directed` and `mcp-hybrid` are registered in `harness/arms.py`,
   but they refuse to run before freeze-1.
+- **Sessions.** Sessions of the same task never run at the same time (`--jobs` runs
+  different tasks in parallel), so no session can read another arm's work on its task. A
+  tool input that names another session's temporary directory, or a tool result that
+  shows a path inside one, counts as contamination. The session environment has no
+  `WPBENCH*`, `PWD`, `OLDPWD` or `INIT_CWD` variable, and no variable whose value names
+  the repository, the bundle folder or the truth folder.
 - **Infrastructure errors** (`harness/infra.py`). The pre-registered signatures are
   `harness_interrupted`, `harness_start`, `authentication`, `mcp_not_connected`,
   `no_model_turn`, `api_or_cli_error`, `permission_denied` and `killed`. They are read from
   `stream.jsonl`, `stderr.txt` and `outcome.json` only.
-  - These count as failures instead: a timeout after a model turn, the turn limit, a
-    context overflow and an exception in the agent's code.
+  - These count as failures instead: a timeout after a model turn, the turn limit, the
+    budget cap, a context overflow and an exception in the agent's code. An earlier 401
+    retry or permission denial that the session got past does not change that.
   - A flagged session is re-run at most twice and never excluded.
+  - `run` stops launching sessions after a harness start failure, an authentication
+    failure, or an API error before any model turn (a usage limit, a rate limit or an
+    outage). Resume with the same `--out` once the cause is fixed or the limit has reset.
 - **Grading** (`harness/grading.py`) covers every answer kind and the diagnosis table of
-  section 6.6. Records hold no truth values. `run` never grades, and `grade` runs the audit
-  first.
+  section 6.6. `run` never grades, and `grade` runs the audit first.
+  - The final reply is the `result` of a success result message. A session that ended
+    without one (a timeout or a kill before the result, the turn limit, the budget cap, an
+    error) fails, whatever it wrote earlier.
+  - The answer is the last `json` block of the final reply (without one, the last untagged
+    block, then the last block with another tag, then the last bare object). If that block
+    is not a JSON object, the reply has no answer; an earlier draft is never graded.
+- **Records are for the owner only.** A record holds no truth value, but the truth of a
+  numeric key can be worked out from the answer, its error and its interval score. A
+  firewalled session (section 7) gets only `grade RUN --pass-fail`, which prints pass or
+  fail per session, writes no record and logs each evaluation in `<run>/pass-fail.log`.
+- **Cost per pass.** The CLI reports a cost only in its result message. A timed-out or
+  killed session is counted at its arm's cost per wall-clock second times its wall-clock
+  time, and the number of such estimates is reported.
 - **Headroom** (`harness/headroom.py`) prints the rule verbatim with F(Sonnet 5) and
   F(Opus 5.5). It refuses to compute while any of these holds:
   - a re-run is pending;
   - a code-hint session is missing;
-  - more than 5 % of an arm's sessions are contaminated.
+  - more than 5 % of an arm's sessions are contaminated;
+  - a task's truth has no realisation-1 reference result. The loader also refuses a truth
+    file whose realisations are not the bundle's r1 to rK, each with `oracle_pass` true.
 - **Power**: `uv run python -m benchmarks.operations.analysis.power --write` reproduces the
   operating characteristics of section 8 and writes `analysis/power-tables.md`.

@@ -1,17 +1,36 @@
 """The grader of the operations benchmark (PREREGISTRATION.md section 6.6, INTERFACE.md).
 
-The final reply ends with one fenced ``json`` object (parsed by the v0.2 parser,
-:func:`benchmarks.composition.harness.grading.parse_final_json`, which also accepts and
-records an untagged block, a bare object, trailing commas, comments and Python literals).
+**The final reply** (:func:`final_reply`) is the ``result`` text of the session's result
+message when that message is a success that is not an error. A session without one has no
+final reply and fails: a timeout or a kill (no result message), the turn limit
+(``error_max_turns``), the budget cap (``error_max_budget_usd``) and any error result.
+Text the agent wrote in an earlier message is never graded.
+
+**The answer** (:func:`parse_answer`) is read from exactly one place in the final reply,
+the first that exists of: the last fenced ``json`` block; the last untagged fenced block
+holding ``{``; the last fenced block with another tag holding ``{``; the last bare
+``{...}`` object. Anything but a ``json`` block is recorded as a format issue. If that
+one candidate is not a JSON object (after the v0.2 repairs of
+:func:`benchmarks.composition.harness.grading._loads_lenient`: trailing commas, comments,
+Python literals, or an object with stray text inside its block), the reply has no answer:
+an earlier block, such as a draft, is never graded instead.
+
 Keys are matched exactly, then after normalisation (case, spaces, hyphens), which is
-recorded as a format issue; extra keys are recorded and ignored. A missing key fails.
+recorded as a format issue; an exact key always wins over a normalised variant, and a
+variant that is not read (the key is already given) is recorded. The same holds for the
+fields of an estimate and of a diagnosis and for the names in ``magnitudes``. Extra keys
+are recorded and ignored. A missing key fails.
 
 Answer kinds:
 
 - ``estimate``: ``{"value": x, "lo90": a, "hi90": b}``, or a bare number (a point with no
   interval). It passes when ``|value - truth| <= tol``. The interval never affects a point's
   pass; a malformed interval (``lo90 > hi90``, one bound missing, a bound that is not a
-  number) is recorded and left out of the interval metrics.
+  number) is recorded and left out of the interval metrics. A number given as a string is
+  read (with a format issue) only when the whole string is one number, optionally
+  followed by a unit (``"8.9"``, ``"8.9 pp"``, ``"1,250 MWh/yr"``); a range, a hedge, an
+  approximation or a decimal comma (``"8 to 12"``, ``"8.4-9.0"``, ``"~8.4"``,
+  ``"7.5 (or 12)"``, ``"8,4"``) is not a number.
 - ``estimate_or_undetermined``: an estimate or ``"cannot_determine"`` (also accepted, with
   a format issue: other spellings such as "Cannot determine", "cannot be determined",
   "undetermined", "not determinable", "indeterminate", and the string as an object's value).
@@ -31,32 +50,43 @@ value exactly at ``truth +/- tol`` is not failed by floating-point rounding.
 
 Diagnosis categories: ``pass``, ``wrong_magnitude``, ``under_commitment``,
 ``confident_wrong``, ``incomplete``, ``wrong_set``, and, outside the table, ``malformed``
-(the answer is not a diagnosis object, its verdict is not one of the three, or an
-``identified`` or ``ambiguous`` verdict's ``faults`` is not a list of names) and
-``missing``. Neither of the last two is a confident wrong verdict. A fault name outside
-the vocabulary is a name like any other: it never matches a true fault. Two cases that
-the table does not list are resolved as follows:
+(the answer is not a diagnosis object, or its verdict is not one of the three) and
+``missing`` (no answer). Neither of the last two is a confident wrong verdict. The verdict
+governs: an ``identified`` verdict on an ambiguous or no-fault truth is confident wrong
+whatever its ``faults`` hold (the table's "identified (anything)"), and a ``faults`` that
+is missing, null or not a list of names is read, with a format issue, as naming no fault,
+under every verdict and truth (so an ``identified`` verdict with such a list is confident
+wrong on a single fault or a pair as well: it is not [X], [X, Y] or one of the pair). A
+fault name outside the vocabulary is a name like any other: it never matches a true
+fault. Two cases that the table does not list are resolved as follows:
 
 - truth a single fault X, answer ``ambiguous`` with a set that does not contain X:
   ``wrong_set`` (an ambiguous verdict is never confident, and its set is wrong);
 - truth a pair {X, Y}, answer ``identified`` [X, Y] with a magnitude outside tol:
   ``wrong_magnitude`` (the verdict and fault set are right; as for a single fault).
 
-Records never hold truth values, only the pass, the category, the absolute error and the
-tolerance.
+Records hold no truth value as such, but they are **for the owner only**: a numeric key's
+truth can be worked out from what they do hold (the answer, the absolute error, and the
+coverage and interval score of an interval that misses it), for a non-determinable key
+as well. A firewalled session (PREREGISTRATION.md section 7) receives only the pass or
+fail of ``grade RUN --pass-fail``, which writes no record.
 """
 
 from __future__ import annotations
 
+import json
 import math
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from benchmarks.composition.harness.grading import (
+    _FENCE,
+    ParsedAnswer,
     _as_bool,
-    _as_number,
+    _balanced_objects,
+    _loads_lenient,
     numbers_in,
-    parse_final_json,
     traceable,
 )
 
@@ -111,6 +141,130 @@ def _within(err: float, tol: float, *scale: float) -> bool:
     return err <= tol + _EPS * max(1.0, abs(tol), *(abs(s) for s in scale))
 
 
+# ----------------------------------------------------------------------------------------
+# the final reply and the answer object
+# ----------------------------------------------------------------------------------------
+def final_reply(
+    stream_text: str, outcome: dict[str, Any] | None = None
+) -> tuple[str | None, str | None]:
+    """``(final reply, None)``, or ``(None, why the session has no final reply)``.
+
+    The final reply is the ``result`` text of the stream's (last) result message when its
+    subtype is ``success`` and it is not an error. A timeout or a kill leaves no result
+    message; the turn limit, the budget cap and an error end with a result that has no
+    reply. Those sessions have no final reply, so they fail (section 6.6).
+    """
+    result: dict[str, Any] | None = None
+    for line in stream_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(msg, dict) and msg.get("type") == "result":
+            result = msg
+    if result is None:
+        if (outcome or {}).get("timed_out"):
+            return None, "the session timed out (no result message)"
+        return None, "no result message (the session was stopped or crashed)"
+    subtype = result.get("subtype")
+    if subtype != "success":
+        return None, f"the session ended with {subtype}"
+    if result.get("is_error"):
+        return None, "the session ended with an error result"
+    text = result.get("result")
+    if not isinstance(text, str) or not text.strip():
+        return None, "the result message has no reply text"
+    return text, None
+
+
+def parse_answer(text: str | None) -> ParsedAnswer:
+    """The answer object of a final reply (see the module docstring): one candidate only,
+    the last ``json`` block, else the last untagged block, else the last block with another
+    tag (blocks holding ``{``), else the last bare object."""
+    if not text or not text.strip():
+        return ParsedAnswer(None, error="empty final reply")
+    fences = list(_FENCE.finditer(text))
+    tagged = [m for m in fences if m.group(1).lower() == "json"]
+    untagged = [m for m in fences if not m.group(1) and "{" in m.group(2)]
+    other = [m for m in fences if m.group(1) and m.group(1).lower() != "json" and "{" in m.group(2)]
+    issues: list[str] = []
+    chosen = (tagged or untagged or other or [None])[-1]
+    if chosen is not None:
+        body = chosen.group(2).strip()
+        if not tagged:
+            issues.append(f"code block tagged '{chosen.group(1) or 'none'}' instead of json")
+        if chosen is not fences[-1]:
+            issues.append("code block(s) after the answer block ignored")
+        elif text[chosen.end() :].strip():
+            issues.append("text after the final code block")
+    else:
+        objects = _balanced_objects(text)
+        if not objects:
+            return ParsedAnswer(None, error="no JSON object found in the final reply")
+        body = objects[-1]
+        issues.append("no fenced json block (bare object)")
+    try:
+        value, repairs = _loads_lenient(body)
+    except ValueError as exc:
+        inner = _balanced_objects(body)
+        if not inner or inner[-1] == body:
+            return ParsedAnswer(None, issues, error=f"the answer block is not JSON ({exc})")
+        try:
+            value, repairs = _loads_lenient(inner[-1])
+        except ValueError:
+            return ParsedAnswer(None, issues, error=f"the answer block is not JSON ({exc})")
+        repairs = [*repairs, "text around the object in its block"]
+    if not isinstance(value, dict):
+        return ParsedAnswer(None, issues, error="the answer block is not a JSON object")
+    return ParsedAnswer(value, issues + repairs)
+
+
+_NUMBER_TEXT = r"[-+]?(?:\d{1,3}(?:,\d{3})+(?:\.\d*)?|\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
+#: A unit after a number: one word starting with a letter, %, ° or µ (``pp``, ``%``,
+#: ``MWh/yr``, ``m3/h``, ``°C``); no spaces, signs, dashes, commas or brackets.
+_UNIT_TEXT = r"(?:[%°µ]|[^\W\d_])(?:[^\W_]|[%°µ/·^³²])*"
+_NUMBER_STRING = re.compile(rf"({_NUMBER_TEXT})(?:\s*{_UNIT_TEXT})?")
+
+
+def as_number(v: Any) -> tuple[float | None, str | None]:
+    """(number, issue) from a JSON value. A string is a number only when all of it is one
+    number, optionally with a unit (thousands separators ``1,250`` allowed); the issue is
+    set then. Booleans, ranges, hedges and decimal commas are not numbers."""
+    if isinstance(v, bool) or v is None:
+        return None, None
+    if isinstance(v, (int, float)):
+        return (float(v), None) if math.isfinite(float(v)) else (None, None)
+    if isinstance(v, str):
+        m = _NUMBER_STRING.fullmatch(v.strip())
+        if m:
+            x = float(m.group(1).replace(",", ""))
+            if math.isfinite(x):
+                return x, f"number given as a string ({v!r})"
+    return None, None
+
+
+def _pick(
+    d: dict[str, Any], canonical: str, names: tuple[str, ...], issues: list[str], what: str
+) -> tuple[Any, bool]:
+    """(value, present) of ``canonical`` in ``d``: the exact key, else the first key whose
+    normalised spelling is one of ``names`` (a format issue). Other spellings that are
+    present are recorded as ignored."""
+    hits = [k for k in d if k == canonical]
+    hits += [k for k in d if k != canonical and norm_token(k) in names]
+    if not hits:
+        return None, False
+    first = hits[0]
+    if first != canonical:
+        issues.append(f"{what} {first!r} read as {canonical}")
+    for k in hits[1:]:
+        other = ", with another value" if d[k] != d[first] else ""
+        issues.append(f"{what} {k!r} ignored ({canonical} is already given{other})")
+    return d[first], True
+
+
 def is_cannot_determine(v: Any) -> tuple[bool, str | None]:
     """(True, issue) when ``v`` spells cannot_determine (issue None for the exact string)."""
     if not isinstance(v, str):
@@ -147,13 +301,7 @@ def _field(
     d: dict[str, Any], names: tuple[str, ...], canonical: str, issues: list[str]
 ) -> tuple[Any, bool]:
     """(value, present) of the field ``canonical`` or one of its accepted spellings."""
-    if canonical in d:
-        return d[canonical], True
-    for k, v in d.items():
-        if norm_token(k) in names:
-            issues.append(f"field {k!r} read as {canonical}")
-            return v, True
-    return None, False
+    return _pick(d, canonical, names, issues, "field")
 
 
 def parse_estimate(given: Any) -> Estimate:
@@ -176,7 +324,7 @@ def parse_estimate(given: Any) -> Estimate:
                 e.issues.append(issue)
             return e
         if has_value and raw_value is not None:
-            e.value, issue = _as_number(raw_value)
+            e.value, issue = as_number(raw_value)
             if e.value is None:
                 e.issues.append(f"value {raw_value!r} is not a number")
             elif issue:
@@ -185,13 +333,13 @@ def parse_estimate(given: Any) -> Estimate:
         raw_hi, has_hi = _field(given, _HI_FIELDS, "hi90", e.issues)
         lo = hi = None
         if has_lo and raw_lo is not None:
-            lo, issue = _as_number(raw_lo)
+            lo, issue = as_number(raw_lo)
             if lo is None:
                 e.issues.append(f"lo90 {raw_lo!r} is not a number")
             elif issue:
                 e.issues.append(f"lo90: {issue}")
         if has_hi and raw_hi is not None:
-            hi, issue = _as_number(raw_hi)
+            hi, issue = as_number(raw_hi)
             if hi is None:
                 e.issues.append(f"hi90 {raw_hi!r} is not a number")
             elif issue:
@@ -207,7 +355,7 @@ def parse_estimate(given: Any) -> Estimate:
             e.valid = False
             e.issues.append("no value and no valid interval")
         return e
-    value, issue = _as_number(given)
+    value, issue = as_number(given)
     if value is None:
         return Estimate(valid=False, issues=[f"not an estimate ({type(given).__name__})"])
     return Estimate(value=value, issues=[issue] if issue else [])
@@ -223,7 +371,9 @@ def interval_score(lo: float, hi: float, x: float, alpha: float = ALPHA) -> floa
 # ----------------------------------------------------------------------------------------
 @dataclass
 class KeyResult:
-    """The grade of one answer key (no truth values)."""
+    """The grade of one answer key. It holds no truth value, but the truth of a numeric key
+    follows from ``value`` and ``error`` (and ``covered`` and ``interval_score``): for the
+    owner only (see the module docstring)."""
 
     key: str
     kind: str
@@ -363,18 +513,13 @@ def grade_set(spec: KeySpec, truth: dict[str, Any], given: Any) -> KeyResult:
 # diagnosis (the table of section 6.6)
 # ----------------------------------------------------------------------------------------
 def _diag_field(d: dict[str, Any], name: str, issues: list[str]) -> Any:
-    if name in d:
-        return d[name]
-    for k, v in d.items():
-        if norm_token(k) == name:
-            issues.append(f"field {k!r} read as {name}")
-            return v
-    return None
+    return _pick(d, name, (name,), issues, "field")[0]
 
 
-def _fault_names(raw: Any, known: tuple[str, ...], issues: list[str]) -> list[str] | None:
-    """The fault names of an answer (normalised to the vocabulary where possible), or None
-    when ``faults`` is not a list of strings (a format error, not a verdict)."""
+def _fault_names(raw: Any, known: tuple[str, ...], issues: list[str]) -> list[str]:
+    """The fault names of an answer (normalised to the vocabulary where possible). A
+    ``faults`` that is missing, null or not a list of strings names no fault (recorded as a
+    format issue when it is given but is not a list of names): the verdict governs."""
     if raw is None:
         return []
     items = raw
@@ -382,8 +527,8 @@ def _fault_names(raw: Any, known: tuple[str, ...], issues: list[str]) -> list[st
         items = [raw]
         issues.append("faults given as a single string")
     if not isinstance(items, (list, tuple)) or not all(isinstance(i, str) for i in items):
-        issues.append(f"faults is not a list of fault names ({raw!r:.80})")
-        return None
+        issues.append(f"faults is not a list of fault names, read as no fault ({raw!r:.80})")
+        return []
     out: list[str] = []
     for item in items:
         name, issue = match_option(item, known)
@@ -406,10 +551,20 @@ def _magnitudes(
     issues: list[str] = []
     given: dict[str, Any] = {}
     if isinstance(raw, dict):
+        # Exact names first, so that a normalised variant never overrides one.
         for k, v in raw.items():
+            if isinstance(k, str) and k in known:
+                given[k] = v
+        for k, v in raw.items():
+            if isinstance(k, str) and k in known:
+                continue
             name, issue = match_option(k, known)
             if name is None:
                 issues.append(f"magnitude of an unknown fault {k!r} ignored")
+                continue
+            if name in given:
+                other = ", with another value" if v != given[name] else ""
+                issues.append(f"magnitude key {k!r} ignored ({name!r} is already given{other})")
                 continue
             if issue:
                 issues.append(f"magnitude key {issue}")
@@ -466,11 +621,10 @@ def grade_diagnosis(spec: KeySpec, truth: dict[str, Any], given: Any) -> KeyResu
         return r
     if isinstance(raw_verdict, str) and raw_verdict != verdict:
         r.issues.append(f"verdict {raw_verdict!r} read as {verdict!r}")
-    faults = _fault_names(_diag_field(given, "faults", r.issues), known, r.issues)
-    if faults is None and verdict != "no_fault":
-        r.category = MALFORMED
-        return r
-    answer = set(faults or [])
+    raw_faults = _diag_field(given, "faults", r.issues)
+    if raw_faults is None and verdict != "no_fault":
+        r.issues.append("faults missing, read as no fault")
+    answer = set(_fault_names(raw_faults, known, r.issues))
     rm_raw = _diag_field(given, "resolving_measurement", r.issues)
     r.value = {"verdict": verdict, "faults": sorted(answer)}
 
@@ -478,22 +632,21 @@ def grade_diagnosis(spec: KeySpec, truth: dict[str, Any], given: Any) -> KeyResu
         if answer - {NO_FAULT}:
             r.issues.append("faults listed with a no_fault verdict are ignored")
         r.category = PASS if label == "no_fault" else CONFIDENT_WRONG
-    elif label == "no_fault":
-        r.category = UNDER_COMMITMENT if verdict == "ambiguous" else CONFIDENT_WRONG
-    elif label == "ambiguous":
-        if verdict == "identified":
-            r.category = CONFIDENT_WRONG
-        else:
-            options = tuple(dict.fromkeys([*spec.resolving_options, *truth["resolving"]]))
-            rm, issue = match_option(rm_raw, options) if rm_raw is not None else (None, None)
-            if rm_raw is None:
-                r.issues.append("resolving_measurement missing")
-            elif issue:
-                r.issues.append(f"resolving_measurement: {issue}")
-            r.value["resolving_measurement"] = rm
-            good_set = answer >= true_set and len(answer) <= len(true_set) + 1
-            good_rm = rm is not None and rm in truth["resolving"]
-            r.category = PASS if good_set and good_rm else WRONG_SET
+    elif verdict == "identified" and label in ("no_fault", "ambiguous"):
+        r.category = CONFIDENT_WRONG  # "identified (anything)", whatever faults holds
+    elif label == "no_fault":  # an ambiguous verdict
+        r.category = UNDER_COMMITMENT
+    elif label == "ambiguous":  # an ambiguous verdict
+        options = tuple(dict.fromkeys([*spec.resolving_options, *truth["resolving"]]))
+        rm, issue = match_option(rm_raw, options) if rm_raw is not None else (None, None)
+        if rm_raw is None:
+            r.issues.append("resolving_measurement missing")
+        elif issue:
+            r.issues.append(f"resolving_measurement: {issue}")
+        r.value["resolving_measurement"] = rm
+        good_set = answer >= true_set and len(answer) <= len(true_set) + 1
+        good_rm = rm is not None and rm in truth["resolving"]
+        r.category = PASS if good_set and good_rm else WRONG_SET
     else:  # identified truth: one fault or a pair
         if verdict == "ambiguous":
             if len(true_set) == 2 or true_set <= answer:
@@ -617,15 +770,21 @@ def grade_answer(
     ``tool_numbers`` (every number in the session's tool results) sets the traceability of
     numeric answers, as in v0.2: a point within 0.5 % of such a number. None leaves it unset.
     """
-    parsed = parse_final_json(final_text)
+    parsed = parse_answer(final_text)
     issues = list(parsed.issues)
     data = parsed.data or {}
+    # Exact keys first, so that a normalised variant never overrides one.
     mapped: dict[str, Any] = {k: v for k, v in data.items() if k in task.keys}
     for k, v in data.items():
         nk = norm_token(k)
-        if k not in task.keys and nk in task.keys and nk not in mapped:
-            mapped[nk] = v
-            issues.append(f"key {k!r} read as {nk!r}")
+        if k in task.keys or nk not in task.keys:
+            continue
+        if nk in mapped:
+            other = ", with another value" if v != mapped[nk] else ""
+            issues.append(f"key {k!r} ignored ({nk!r} is already given{other})")
+            continue
+        mapped[nk] = v
+        issues.append(f"key {k!r} read as {nk!r}")
     extra = [k for k in data if k not in task.keys and norm_token(k) not in task.keys]
     if extra:
         issues.append("extra keys ignored: " + ", ".join(map(str, extra)))

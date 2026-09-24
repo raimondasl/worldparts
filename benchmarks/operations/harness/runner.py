@@ -16,8 +16,11 @@ with the prompt (task.md, the arm's preamble, the answer-format instruction) on 
 a wall-clock limit of 2,400 s. The CLI's environment is the v0.2 scrubbed environment
 (no parent CLAUDE*/ANTHROPIC* variables except credentials, no repository virtual
 environment, :data:`_DROP_EXACT`), without any ``WPBENCH*`` variable (so neither the truth
-folder nor the bundle folder is named), with the arm's Python environment first on PATH
-and ``MPLBACKEND=Agg``.
+folder nor the bundle folder is named), without the variables that name the directory
+the harness was started from (:data:`DROP_CWD`: a shell passes ``OLDPWD`` on, and ``cd -``
+would lead into the repository), without any other variable whose value names the
+repository, the bundle folder or the truth folder (PATH loses such entries instead), with
+the arm's Python environment first on PATH and ``MPLBACKEND=Agg``.
 
 Run directory::
 
@@ -38,6 +41,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -47,6 +51,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from benchmarks.composition.harness.grading import _normalise, _path_forms, _path_pattern
 from benchmarks.composition.harness.runner import (
     ISOLATION_ENV,
     SETTINGS,
@@ -75,6 +80,8 @@ RECORD_FILE = "record.json"
 TMP_PREFIX = "wpbench-ops-"
 #: Parent variables never passed to a session (truth and bundle locations, the CLI path).
 DROP_PREFIXES = ("WPBENCH",)
+#: Parent variables naming the directory the harness was started from (shells, npm).
+DROP_CWD = ("PWD", "OLDPWD", "INIT_CWD")
 #: At most this many files (each at most 1 MB) the agent wrote are kept per attempt.
 KEEP_FILES, KEEP_BYTES = 200, 1_000_000
 
@@ -189,17 +196,49 @@ def session_mcp_config(arm: Arm | str, systems_dir: Path) -> dict[str, Any]:
     return mcp_config("mcp" if a.mcp else "code", systems_dir)
 
 
-def child_env(env_dir: Path) -> tuple[dict[str, str], dict[str, str]]:
-    """(full environment of the CLI, the variables the harness set or changed)."""
-    env = {k: v for k, v in _clean_parent_env().items() if not k.upper().startswith(DROP_PREFIXES)}
-    changed = dict(ISOLATION_ENV)
-    path_key = next((k for k in env if k.upper() == "PATH"), "PATH")
+def _names_any(value: str, patterns: list[re.Pattern[str]]) -> bool:
+    norm = _normalise(value)
+    return any(p.search(norm) for p in patterns)
+
+
+def child_env(
+    env_dir: Path, forbidden_roots: list[Path] | None = None
+) -> tuple[dict[str, str], dict[str, str | None]]:
+    """(full environment of the CLI, the variables the harness set, changed or removed).
+
+    Removed variables map to None (their values are not recorded). A variable is removed
+    when it is a ``WPBENCH*`` or :data:`DROP_CWD` variable or when its value names the
+    repository or one of ``forbidden_roots`` (the bundle and truth folders) in any
+    spelling; PATH instead loses the entries that name them.
+    """
+    parent = _clean_parent_env()
+    patterns = [
+        _path_pattern(form) for root in [REPO_ROOT, *(forbidden_roots or [])]
+        for form in _path_forms(root)
+    ]  # fmt: skip
+    path_key = next((k for k in parent if k.upper() == "PATH"), "PATH")
+    env: dict[str, str] = {}
+    removed: list[str] = []
+    for k, v in parent.items():
+        drop = k.upper().startswith(DROP_PREFIXES) or k.upper() in DROP_CWD
+        if drop or (k != path_key and _names_any(v, patterns)):
+            removed.append(k)
+        else:
+            env[k] = v
+    if path_key in env:
+        env[path_key] = os.pathsep.join(
+            p for p in env[path_key].split(os.pathsep) if p and not _names_any(p, patterns)
+        )
+    changed: dict[str, str | None] = dict(ISOLATION_ENV)
     env[path_key] = session_path(env_dir, env.get(path_key, ""))
-    changed[path_key] = session_path(env_dir, "<parent PATH without the worldparts venv>")
+    changed[path_key] = session_path(
+        env_dir, "<parent PATH without the repository and benchmark folders>"
+    )
     extra = {"VIRTUAL_ENV": str(env_dir / ".venv"), **SESSION_ENV}
     env.update(extra)
     changed.update(extra)
     env.update(ISOLATION_ENV)
+    changed.update({k: None for k in removed if k not in env})
     return env, changed
 
 
@@ -292,7 +331,7 @@ def execute_session(
         cmd = build_command(
             arm, spec.model, mcp_path, settings_path, limits.max_turns, effort, max_budget_usd
         )
-        env, changed = child_env(env_dir)
+        env, changed = child_env(env_dir, forbidden_roots)
         write_json(
             attempt_dir / "command.json",
             {

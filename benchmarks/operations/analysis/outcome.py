@@ -8,6 +8,15 @@ task's sessions whose verdict counts as confident wrong) and the cost per pass (
 cost of the arm's gate sessions divided by its number of passing sessions; infinite
 without a pass). P(m, arm) is the mean of the task scores.
 
+**Unknown costs.** The CLI reports a session's cost only in its result message, so a
+session the harness stopped at the timeout, or one that was killed, has none (and no
+final reply, so it never passes). Such a session is counted at its (model, arm) cell's
+cost per wall-clock second (the reported costs over those sessions' wall-clock seconds)
+times its own wall-clock time, or at the cell's largest reported cost when its wall-clock
+time is unknown (:func:`arm_cost`); the number of estimated costs is reported with the
+cost per pass. An unknown cost is never a veto: only a cell in which no session reported
+a cost has no cost per pass, and condition 7 then fails saying so.
+
 Contrasts are paired by task: Δ(m) = mean over tasks of [score(m, a) - score(m, b)]
 (tasks with a NaN on either side are left out of that contrast). The lower bound is the
 2.5th percentile (numpy's linear interpolation) of the mean per-task difference over
@@ -80,6 +89,8 @@ class GateData:
     score: dict[tuple[str, str], np.ndarray]
     cw: dict[tuple[str, str], float | None] = field(default_factory=dict)
     cost_per_pass: dict[tuple[str, str], float | None] = field(default_factory=dict)
+    #: Per (model, arm): how many session costs were estimated (see "Unknown costs").
+    cost_estimated: dict[tuple[str, str], int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         n = len(self.tasks)
@@ -176,6 +187,15 @@ class Decision:
 
 def _pts(x: float | None) -> str:
     return "n/a" if x is None or math.isnan(x) else f"{100 * x:+.1f}"
+
+
+def _cpp(data: GateData, key: tuple[str, str]) -> str:
+    """A cost per pass as printed, with the number of estimated session costs."""
+    v = data.cost_per_pass.get(key)
+    n = data.cost_estimated.get(key, 0)
+    if v is None:
+        return f"n/a ({key[1]}: no session reported a cost)"
+    return f"${v:.3f}" + (f" ({n} session cost(s) estimated)" if n else "")
 
 
 def _require(data: GateData, pairs: Iterable[tuple[str, str]]) -> None:
@@ -289,11 +309,12 @@ def decide(
             Check(
                 "7 cost/pass(lib-directed) <= 3 x cost/pass(code-hint)",
                 bool(c7),
-                f"{cpp_l} vs {cpp_h}",
+                f"{_cpp(data, (m, LIB_DIRECTED))} vs {_cpp(data, (m, CODE_HINT))}",
             ),
         ]
     num["cw"] = {f"{m}/{a}": v for (m, a), v in data.cw.items()}
     num["cost_per_pass"] = {f"{m}/{a}": v for (m, a), v in data.cost_per_pass.items()}
+    num["cost_estimated"] = {f"{m}/{a}": v for (m, a), v in data.cost_estimated.items()}
 
     # PIVOT-skill: Sonnet 5, code-skill against code+.
     ds = data.score[(SONNET, CODE_SKILL)] - data.score[(SONNET, CODE_PLUS)]
@@ -331,7 +352,8 @@ def decide(
                 and cpp_mcp is not None
                 and cpp_son is not None
                 and cpp_mcp < cpp_son,
-                f"{100 * p_mcp:.1f} % vs {100 * p_sonnet:.1f} %; cost/pass {cpp_mcp} vs {cpp_son}",
+                f"{100 * p_mcp:.1f} % vs {100 * p_sonnet:.1f} %; cost/pass "
+                f"{_cpp(data, (HAIKU, MCP_HYBRID))} vs {_cpp(data, (SONNET, CODE_HINT))}",
             ),
         ]
 
@@ -352,20 +374,55 @@ def decide(
 # ----------------------------------------------------------------------------------------
 # from session records
 # ----------------------------------------------------------------------------------------
+def _known(x: Any) -> float | None:
+    if x is None or isinstance(x, bool):
+        return None
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
+def arm_cost(sessions: Iterable[Mapping[str, Any]]) -> tuple[float | None, int]:
+    """(total cost of one (model, arm) cell's sessions, how many of the costs are estimates).
+
+    Sessions carry ``cost_usd`` (None when the CLI reported none) and ``wall_s``. A session
+    without a cost is counted at the cell's reported cost per wall-clock second times its
+    wall-clock time, or at the cell's largest reported cost when its wall-clock time is
+    unknown (see "Unknown costs" in the module docstring). The total is None only when no
+    session of the cell reported a cost. The report uses the same rule.
+    """
+    rows = [(_known(s.get("cost_usd")), _known(s.get("wall_s"))) for s in sessions]
+    known = [c for c, _ in rows if c is not None]
+    unknown = [w for c, w in rows if c is None]
+    if not unknown:
+        return float(sum(known)), 0
+    if not known:
+        return None, len(unknown)
+    timed = [(c, w) for c, w in rows if c is not None and w is not None and w > 0]
+    rate = sum(c for c, _ in timed) / sum(w for _, w in timed) if timed else None
+    total = float(sum(known))
+    for w in unknown:
+        total += rate * w if rate is not None and w is not None else max(known)
+    return total, len(unknown)
+
+
 def gate_data_from_sessions(
     sessions: Iterable[Mapping[str, Any]], tasks: Mapping[str, tuple[str, str]]
 ) -> GateData:
     """Aggregate session records into :class:`GateData`.
 
     ``sessions``: mappings with ``model`` (a label such as "Sonnet 5"), ``arm``, ``task``,
-    ``passed``, ``cw_category`` (F3) and ``cost_usd``; contaminated sessions must already
-    be left out. ``tasks``: task id -> (family, generator), the gate tasks in order.
+    ``passed``, ``cw_category`` (F3), ``cost_usd`` and ``wall_s``; contaminated sessions
+    must already be left out. ``tasks``: task id -> (family, generator), the gate tasks in
+    order.
     """
     ids = tuple(tasks)
     pos = {t: i for i, t in enumerate(ids)}
     passes: dict[tuple[str, str], list[list[bool]]] = {}
     cws: dict[tuple[str, str], dict[str, list[bool]]] = {}
-    cost: dict[tuple[str, str], list[float | None]] = {}
+    cells: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
     for s in sessions:
         key = (str(s["model"]), str(s["arm"]))
         if s["task"] not in pos:
@@ -375,20 +432,18 @@ def gate_data_from_sessions(
             cws.setdefault(key, {}).setdefault(s["task"], []).append(
                 s.get("cw_category") == "confident_wrong"
             )
-        cost.setdefault(key, []).append(s.get("cost_usd"))
+        cells.setdefault(key, []).append(s)
     score = {
         k: np.array([sum(v) / len(v) if v else np.nan for v in per_task])
         for k, per_task in passes.items()
     }
     cw = {k: float(np.mean([np.mean(v) for v in d.values()])) for k, d in cws.items()}
     cpp: dict[tuple[str, str], float | None] = {}
-    for k, costs in cost.items():
+    estimated: dict[tuple[str, str], int] = {}
+    for k, rows in cells.items():
         n_pass = sum(sum(v) for v in passes[k])
-        if any(c is None for c in costs):
-            cpp[k] = None
-        else:
-            total = float(sum(costs))  # type: ignore[arg-type]
-            cpp[k] = total / n_pass if n_pass else math.inf
+        total, estimated[k] = arm_cost(rows)
+        cpp[k] = None if total is None else (total / n_pass if n_pass else math.inf)
     return GateData(
         tasks=ids,
         family=tuple(tasks[t][0] for t in ids),
@@ -396,4 +451,5 @@ def gate_data_from_sessions(
         score=score,
         cw=cw,
         cost_per_pass=cpp,
+        cost_estimated=estimated,
     )

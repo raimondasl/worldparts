@@ -264,7 +264,8 @@ def test_gate_data_from_sessions() -> None:
     assert list(g.score[(S, O.CODE_HINT)]) == [0.5, 0.5, 0.0]
     assert g.cw[(S, O.CODE_HINT)] == pytest.approx((0.5 + 0.0) / 2)
     assert g.cost_per_pass[(S, O.CODE_HINT)] == pytest.approx(7.0 / 2)
-    assert g.cost_per_pass[(S, O.CODE_PLUS)] is None
+    assert g.cost_per_pass[(S, O.CODE_PLUS)] is None  # no session of the cell has a cost
+    assert g.cost_estimated == {(S, O.CODE_HINT): 0, (S, O.CODE_PLUS): 1}
     assert np.isnan(g.score[(S, O.CODE_PLUS)][1])  # no session on b
     assert g.P(S, O.CODE_PLUS) == 0.0
     with pytest.raises(ValueError, match="unknown task"):
@@ -277,6 +278,66 @@ def test_zero_passes_cost_infinite() -> None:
         {"a": ("F1", "G-ind")},
     )
     assert g.cost_per_pass[(S, O.LIB_DIRECTED)] == float("inf")
+
+
+def test_arm_cost_estimates_unreported_costs_from_wall_time() -> None:
+    known = [{"cost_usd": 1.0, "wall_s": 100.0}, {"cost_usd": 3.0, "wall_s": 300.0}]
+    assert O.arm_cost(known) == (4.0, 0)
+    # 4 $ over 400 s: a timed-out session of 2,400 s is counted at 24 $
+    total, n = O.arm_cost([*known, {"cost_usd": None, "wall_s": 2400.0}])
+    assert total == pytest.approx(28.0) and n == 1
+    # without a wall-clock time, the cell's largest reported cost
+    total, n = O.arm_cost([*known, {"cost_usd": None}])
+    assert total == pytest.approx(7.0) and n == 1
+    # no reported cost at all: unknown (not zero)
+    assert O.arm_cost([{"cost_usd": None, "wall_s": 10.0}]) == (None, 1)
+    assert O.arm_cost([]) == (0.0, 0)
+
+
+def _stage1_sessions() -> tuple[list[dict[str, Any]], dict[str, tuple[str, str]]]:
+    """42 tasks x 3 repeats; Sonnet 5 lib-directed passes 70 % against 50 % for code-hint,
+    every session costs 1 $ over 600 s."""
+    tasks = {f"t{i}": (FAMILY[i], GENERATOR[i]) for i in range(N)}
+    rate = {O.CODE_PLUS: 0.4, O.CODE_HINT: 0.5, O.CODE_SKILL: 0.55, O.LIB_DIRECTED: 0.7}
+    sessions = []
+    for m in (S, OP):
+        for arm, p in rate.items():
+            for i in range(N):
+                for rep in range(3):
+                    passed = ((i * 3 + rep) % 20) < (p if m == S else 0.5) * 20
+                    sessions.append({"model": m, "arm": arm, "task": f"t{i}", "passed": passed,
+                                     "cost_usd": 1.0, "wall_s": 600.0})  # fmt: skip
+    return sessions, tasks
+
+
+def test_a_timed_out_session_does_not_veto_continue() -> None:
+    """A session the harness stopped at the timeout has no reported cost; it used to make
+    cost/pass None and fail condition 7 (a silent veto of CONTINUE)."""
+    sessions, tasks = _stage1_sessions()
+    assert O.decide(O.gate_data_from_sessions(sessions, tasks)).outcome == O.CONTINUE
+    for arm in (O.CODE_HINT, O.LIB_DIRECTED):
+        hung = next(s for s in sessions if s["model"] == S and s["arm"] == arm and not s["passed"])
+        hung.update(cost_usd=None, wall_s=2400.0)
+    data = O.gate_data_from_sessions(sessions, tasks)
+    assert data.cost_estimated[(S, O.CODE_HINT)] == 1
+    assert data.cost_estimated[(S, O.LIB_DIRECTED)] == 1
+    n_hint = sum(s["passed"] for s in sessions if s["model"] == S and s["arm"] == O.CODE_HINT)
+    assert data.cost_per_pass[(S, O.CODE_HINT)] == pytest.approx((125 + 4.0) / n_hint)
+    d = O.decide(data)
+    assert d.outcome == O.CONTINUE and d.model == S
+    c7 = d.continue_checks[S][6]
+    assert c7.ok and "1 session cost(s) estimated" in c7.detail
+    assert d.numbers["cost_estimated"][f"{S}/{O.CODE_HINT}"] == 1
+
+
+def test_a_cell_without_any_reported_cost_fails_condition_7_saying_so() -> None:
+    sessions, tasks = _stage1_sessions()
+    for s in sessions:
+        if s["model"] == S and s["arm"] == O.LIB_DIRECTED:
+            s["cost_usd"] = None
+    d = O.decide(O.gate_data_from_sessions(sessions, tasks))
+    c7 = d.continue_checks[S][6]
+    assert not c7.ok and "no session reported a cost" in c7.detail
 
 
 # ----------------------------------------------------------------------------------------

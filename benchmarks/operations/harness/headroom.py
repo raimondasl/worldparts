@@ -9,10 +9,11 @@ only if F(Sonnet 5) <= 3 and F(Opus 5.5) <= 3. ``code+`` does not enter the rule
 The rule is not computed (and says why) when a development task lacks its code-hint
 session for a model, a task has more than one such session, a session is waiting for an
 infrastructure re-run, a record is older than its latest attempt, more than 5 % of an arm's
-sessions are contaminated (section 6.6: the gate waits until that arm is re-run), or the
-development set does not have its pre-registered cells. A contaminated code-hint session
-within the 5 % allowance is left out, as in v0.2; the output says what F would be if it
-counted as a failure.
+sessions are contaminated (section 6.6: the gate waits until that arm is re-run), the
+development set does not have its pre-registered cells, or a task's truth has no r1
+reference result (a missing one is never read as "no estimator passes"). A contaminated
+code-hint session within the 5 % allowance is left out, as in v0.2; the output says what
+F would be if it counted as a failure.
 """
 
 from __future__ import annotations
@@ -37,10 +38,24 @@ HEADROOM_REALISATION = 1
 CONTAMINATION_LIMIT = 0.05
 
 
+def reference_result(truth: dict[str, Any], realisation: int = HEADROOM_REALISATION) -> bool | None:
+    """Whether at least one reference estimator passes the realisation; None when the
+    truth has no reference result for it (no such realisation, or an empty or malformed
+    ``reference_pass``): the rule is then not computed, never read as "no pass"."""
+    reals = truth.get("realisations")
+    r = reals.get(f"r{realisation}") if isinstance(reals, dict) else None
+    ref = r.get("reference_pass") if isinstance(r, dict) else None
+    if not isinstance(ref, dict) or not ref:
+        return None
+    if not all(v is None or isinstance(v, bool) for v in ref.values()):
+        return None
+    return any(v is True for v in ref.values())
+
+
 def reference_passes(truth: dict[str, Any], realisation: int = HEADROOM_REALISATION) -> bool:
-    """Whether at least one reference estimator passes the realisation."""
-    r = (truth.get("realisations") or {}).get(f"r{realisation}") or {}
-    return any(v is True for v in (r.get("reference_pass") or {}).values())
+    """Whether at least one reference estimator passes the realisation (False when the
+    truth has no reference result for it; :func:`headroom` refuses such a truth)."""
+    return bool(reference_result(truth, realisation))
 
 
 def contamination_shares(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -119,6 +134,8 @@ def headroom(
     for t in task_ids:
         if t not in truths:
             res.not_computed.append(f"no truth for {t}")
+        elif reference_result(truths[t]) is None:
+            res.not_computed.append(f"no r{HEADROOM_REALISATION} reference result for {t}")
     for label in FRONTIER:
         model = models[label]
         mine = [r for r in rel if r["model"] == model and r["arm"] == HEADROOM_ARM]
@@ -154,9 +171,7 @@ def headroom(
         res.failing[label] = failing
         res.contaminated_excluded[label] = excluded
         if excluded:
-            worst = len(failing) + sum(
-                1 for t in excluded if reference_passes(truths[t]) and t in truths
-            )
+            worst = len(failing) + sum(1 for t in excluded if reference_passes(truths[t]))
             res.warnings.append(
                 f"{label}: contaminated code-hint session(s) left out on {excluded}; "
                 f"F({label}) would be {worst} if they counted as failures"

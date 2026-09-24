@@ -4,10 +4,12 @@ Per model and arm: the pass rate with the task as the unit (a task's score is it
 pass over its sessions; the rate is the mean over tasks), by family and generator, the
 confident-wrong rate CW (the mean over F3 tasks of the share of the task's sessions whose
 diagnosis counts as confident wrong), under-commitment, abstentions, 90 % interval
-coverage, tokens, cost, turns and time, cost per pass, infrastructure errors and
-contamination. Contaminated sessions are left out of every rate (as in v0.2) and listed;
-sessions with an infrastructure error and no re-run left are graded as they are (never
-excluded); sessions still waiting for a re-run are listed and make the summary provisional.
+coverage, tokens, cost, turns and time, cost per pass (with the rule of
+:func:`benchmarks.operations.analysis.outcome.arm_cost` for sessions whose cost the CLI did
+not report, and their number), infrastructure errors and contamination. Contaminated
+sessions are left out of every rate (as in v0.2) and listed; sessions with an
+infrastructure error and no re-run left are graded as they are (never excluded); sessions
+still waiting for a re-run are listed and make the summary provisional.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from ..analysis.outcome import arm_cost
 from .headroom import CONTAMINATION_LIMIT, contamination_shares
 from .infra import attempt_dirs
 from .runner import RECORD_FILE, SESSIONS_DIR
@@ -72,7 +75,8 @@ def _group(records: list[dict[str, Any]]) -> dict[str, Any]:
     valid = [r for r in records if not r.get("contamination")]
     cost = [r.get("cost_usd") for r in valid]
     passes = sum(bool(r["passed"]) for r in valid)
-    total_cost = sum(float(c or 0) for c in cost)
+    # The rule of the outcome analysis: a session without a reported cost is estimated.
+    total_cost, n_estimated = arm_cost(valid)
     intervals = [r.get("intervals") or {} for r in valid]
     n_int = sum(int(i.get("n", 0)) for i in intervals)
     fam: dict[str, Any] = {}
@@ -97,8 +101,9 @@ def _group(records: list[dict[str, Any]]) -> dict[str, Any]:
         "median_cost_usd": _median(cost),
         "median_turns": _median([r.get("turns") for r in valid]),
         "median_duration_s": _median([r.get("duration_s") for r in valid]),
-        "total_cost_usd": round(total_cost, 4),
-        "cost_per_pass_usd": (total_cost / passes) if passes else None,
+        "total_cost_usd": None if total_cost is None else round(total_cost, 4),
+        "cost_per_pass_usd": (total_cost / passes) if passes and total_cost is not None else None,
+        "costs_estimated": n_estimated,
         "timeouts": sum(1 for r in valid if r.get("timed_out")),
         "turn_limit_hits": sum(1 for r in valid if r.get("result_subtype") == "error_max_turns"),
         "infra_errors_graded": sum(1 for r in valid if r.get("infra_error")),
@@ -196,7 +201,8 @@ def to_markdown(s: dict[str, Any]) -> str:
                 f"{_pct(g['rate'])} | {_pct(g['cw'])} | {_pct(g['under_commitment'])} | "
                 f"{_pct(g['interval_coverage'])} ({g['intervals']}) | {_num(g['median_tokens'])} | "
                 f"${_num(g['median_cost_usd'], 3)} | {_num(g['median_turns'])} | "
-                f"{_num(g['median_duration_s'])} s | ${_num(g['cost_per_pass_usd'], 3)} | "
+                f"{_num(g['median_duration_s'])} s | ${_num(g['cost_per_pass_usd'], 3)}"
+                f"{' (' + str(g['costs_estimated']) + ' est.)' if g['costs_estimated'] else ''} | "
                 f"{g['timeouts']} | {g['turn_limit_hits']} | {g['contaminated']} |"
             )
     lines += ["", "## By family (pass rate, task unit)", ""]

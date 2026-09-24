@@ -9,11 +9,17 @@ prompt, the command, the run index, the records or the grades.
 These are failures of the agent, never infrastructure errors: exceptions raised by
 worldparts or by the agent's own code (they are tool results), a timeout of a session in
 which the model took at least one turn, the turn limit (``error_max_turns``), the budget
-cap (``error_max_budget_usd``) and a context overflow ("prompt is too long").
+cap (``error_max_budget_usd``) and a context overflow ("prompt is too long"). An earlier
+401 retry or permission denial that the session got past does not change that: a 401
+retry counts only when the model took no turn after it, and a denial only when the
+session then ended normally (a success result) without an answer.
 
 A session with an infrastructure error is re-run with the same realisation, at most twice
 (:data:`MAX_ATTEMPTS` attempts in all), and never excluded: the latest attempt is graded
-whatever it holds.
+whatever it holds. ``run`` stops launching sessions after an attempt that
+:func:`stop_reason` names (the harness could not start a session, the CLI is not logged
+in, or an API error came before any model turn: a usage limit, a rate limit or an
+outage), so that the queued sessions do not use up their attempts.
 """
 
 from __future__ import annotations
@@ -25,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from benchmarks.composition.harness.grading import parse_final_json
+from .grading import parse_answer
 
 #: Attempts per session: the first run and at most two re-runs.
 MAX_ATTEMPTS = 3
@@ -54,9 +60,9 @@ SIGNATURES: tuple[Signature, ...] = (
     Signature(
         "authentication",
         "The CLI was not logged in or its credentials were rejected: an API retry with status "
-        "401 or an authentication error in a session that then has no result or an error "
-        "result, or an error result beginning 'Not logged in', 'Invalid API key', "
-        "'OAuth token' or 'Please run /login'.",
+        "401 or an authentication error after which the model took no turn, in a session "
+        "that then has no result or an error result, or an error result beginning 'Not "
+        "logged in', 'Invalid API key', 'OAuth token' or 'Please run /login'.",
     ),
     Signature(
         "mcp_not_connected",
@@ -64,8 +70,9 @@ SIGNATURES: tuple[Signature, ...] = (
     ),
     Signature(
         "no_model_turn",
-        "The stream has no assistant message: the model never took a turn (whether or not "
-        "the session then timed out).",
+        "The stream has no assistant message from the model (the CLI's own <synthetic> "
+        "messages that report an API error do not count): the model never took a turn "
+        "(whether or not the session then timed out).",
     ),
     Signature(
         "api_or_cli_error",
@@ -76,7 +83,8 @@ SIGNATURES: tuple[Signature, ...] = (
     Signature(
         "permission_denied",
         "The CLI's permission system denied a tool call (the result's permission_denials, or "
-        "a CLI denial message in a tool result) and the final reply has no JSON object.",
+        "a CLI denial message in a tool result) and the session then ended with a success "
+        "result whose reply has no JSON answer.",
     ),
     Signature(
         "killed",
@@ -103,12 +111,26 @@ _CLI_DENIAL = re.compile(
 class StreamFacts:
     """What the audit needs from a stream-json transcript."""
 
+    #: Assistant messages from the model (not the CLI's <synthetic> API-error messages).
     assistant_messages: int = 0
     result: dict[str, Any] | None = None
     mcp_servers: list[dict[str, Any]] = field(default_factory=list)
     api_retries: list[tuple[Any, str]] = field(default_factory=list)
+    #: API retries after the last assistant message (the model took no turn after them).
+    retries_after_last_turn: list[tuple[Any, str]] = field(default_factory=list)
     denial_texts: list[str] = field(default_factory=list)
     last_assistant_text: str | None = None
+
+
+def _is_auth_retry(retry: tuple[Any, str]) -> bool:
+    status, err = retry
+    return str(status) == "401" or "authentication" in err.lower()
+
+
+def _is_synthetic(msg: dict[str, Any]) -> bool:
+    """An assistant message the CLI writes itself to report an API error (model
+    ``<synthetic>``, a top-level ``error``), not a turn of the model."""
+    return (msg.get("message") or {}).get("model") == "<synthetic>" or bool(msg.get("error"))
 
 
 def _items(msg: dict[str, Any]) -> list[dict[str, Any]]:
@@ -129,15 +151,20 @@ def stream_facts(text: str) -> StreamFacts:
         if not isinstance(msg, dict):
             continue
         kind = msg.get("type")
+        if kind == "assistant" and _is_synthetic(msg):
+            continue  # an API error the CLI reports as a message: not a model turn
         if kind == "assistant":
             f.assistant_messages += 1
+            f.retries_after_last_turn = []
             texts = [str(c.get("text", "")) for c in _items(msg) if c.get("type") == "text"]
             if texts:
                 f.last_assistant_text = "\n".join(texts)
         elif kind == "system" and msg.get("subtype") == "init":
             f.mcp_servers = [m for m in msg.get("mcp_servers") or [] if isinstance(m, dict)]
         elif kind == "system" and msg.get("subtype") == "api_retry":
-            f.api_retries.append((msg.get("error_status"), str(msg.get("error") or "")))
+            retry = (msg.get("error_status"), str(msg.get("error") or ""))
+            f.api_retries.append(retry)
+            f.retries_after_last_turn.append(retry)
         elif kind == "user":
             for item in _items(msg):
                 if item.get("type") == "tool_result" and item.get("is_error"):
@@ -167,11 +194,12 @@ def audit_session(stream_text: str, stderr_text: str, outcome: dict[str, Any] | 
     result = f.result or {}
     result_text = str(result.get("result") or "").strip()
     is_error = bool(result.get("is_error"))
-    auth_retry = any(
-        str(status) == "401" or "authentication" in err.lower() for status, err in f.api_retries
-    )
-    # A 401 retry counts only when the session did not then finish normally.
-    auth = (auth_retry and (f.result is None or is_error)) or (
+    limit_exit = result.get("subtype") in _LIMIT_SUBTYPES
+    # A 401 retry counts only when the model took no turn after it (a retry the session got
+    # past is not an error, whatever happens later: a timeout or the turn limit is then the
+    # agent's) and the session did not then finish normally.
+    auth_retry = any(_is_auth_retry(r) for r in f.retries_after_last_turn)
+    auth = (auth_retry and not limit_exit and (f.result is None or is_error)) or (
         is_error and result_text.lower().startswith(_AUTH_TEXT)
     )
     if auth:
@@ -184,18 +212,46 @@ def audit_session(stream_text: str, stderr_text: str, outcome: dict[str, Any] | 
         f.result is not None
         and is_error
         and not auth
-        and result.get("subtype") not in _LIMIT_SUBTYPES
+        and not limit_exit
         and not _CONTEXT_OVERFLOW.search(result_text)
     ):
         found.append("api_or_cli_error")
+    # A denial counts only when the session then ended normally without an answer: after a
+    # timeout, the turn limit or the budget cap the session is the agent's failure.
     denied = bool(result.get("permission_denials")) or bool(f.denial_texts)
-    if denied:
-        final = result.get("result") if f.result is not None else f.last_assistant_text
-        if parse_final_json(final if isinstance(final, str) else None).data is None:
+    ended_normally = f.result is not None and result.get("subtype") == "success" and not is_error
+    if denied and ended_normally:
+        final = result.get("result")
+        if parse_answer(final if isinstance(final, str) else None).data is None:
             found.append("permission_denied")
     if f.assistant_messages > 0 and f.result is None and not outcome.get("timed_out"):
         found.append("killed")
     return found
+
+
+#: Signatures after which ``run`` launches no more sessions.
+STOP_SIGNATURES = ("harness_start", "authentication")
+
+
+def stop_reason(attempt_dir: Path) -> str | None:
+    """Why ``run`` should launch no more sessions after this attempt, or None.
+
+    It stops after :data:`STOP_SIGNATURES` and after an API error before any model turn
+    (``no_model_turn`` with an error result, or with API retries that no turn followed): a
+    usage limit, a rate limit or an outage, which would fail every queued session within
+    seconds and use up its attempts. Reads only :data:`AUDITED_FILES`.
+    """
+    sigs = audit_attempt(attempt_dir)
+    if any(s in STOP_SIGNATURES for s in sigs):
+        return ", ".join(sigs)
+    if "no_model_turn" in sigs:
+        f = stream_facts(_read(attempt_dir / "stream.jsonl"))
+        if "api_or_cli_error" in sigs or f.retries_after_last_turn:
+            return (
+                f"{', '.join(sigs)}: an API error before any model turn (a usage limit, a rate "
+                "limit or an outage?)"
+            )
+    return None
 
 
 # ----------------------------------------------------------------------------------------

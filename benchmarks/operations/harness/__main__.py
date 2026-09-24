@@ -14,7 +14,13 @@ Run from the repository root::
 
 ``run`` never grades: it runs sessions and then the blind audit. ``grade`` runs the audit
 again before it computes any grade. A real ``run`` starts paid Claude Code sessions; use
-``--dry-run`` first.
+``--dry-run`` first. Sessions of the same task never run at the same time (``--jobs``
+runs different tasks in parallel), so no session can read another arm's work on its task.
+
+``grade RUN --pass-fail`` is the only grader output a firewalled session may receive
+(PREREGISTRATION.md section 7): it prints pass or fail per session, writes no record and
+appends each evaluation to ``<run>/pass-fail.log``. Records and summaries are for the owner
+only, since a numeric key's truth can be worked out from a record.
 """
 
 from __future__ import annotations
@@ -25,6 +31,7 @@ import json
 import re
 import shutil
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -54,9 +61,16 @@ from .bundles import (
     truth_root,
 )
 from .env import default_code_plus_dir, ensure_code_plus_env, env_info
-from .grading import grade_answer, tool_numbers_of
+from .grading import final_reply, grade_answer, tool_numbers_of
 from .headroom import HEADROOM_SET, headroom, headroom_lines
-from .infra import MAX_ATTEMPTS, attempt_dirs, audit_attempt, audit_lines, audit_run
+from .infra import (
+    MAX_ATTEMPTS,
+    attempt_dirs,
+    audit_attempt,
+    audit_lines,
+    audit_run,
+    stop_reason,
+)
 from .markers import contamination
 from .report import load_records, to_markdown, write_report
 from .runner import (
@@ -78,6 +92,8 @@ from .runner import (
 
 #: Default models of ``run`` (aliases; the stream records the model id each resolved to).
 DEFAULT_MODELS = ("sonnet", "opus")
+#: Where ``grade --pass-fail`` logs every evaluation (the firewall's evaluation log).
+PASS_FAIL_LOG = "pass-fail.log"
 
 
 def utf8_stdout() -> None:
@@ -167,11 +183,14 @@ def dry_run(specs: list[SessionSpec], args: argparse.Namespace) -> int:
             args.max_budget_usd,
             claude=claude_executable(),
         )
-        _, changed = child_env(env_dir)
+        _, changed = child_env(env_dir, _forbidden_roots(args))
         print("=" * 88)
         print(f"session {spec.sid}: {spec.label()}")
         print(f"cwd: {tmp / 'work'}  (a copy of r{spec.realisation}/ without task.json)")
-        print("env: " + " ".join(f"{k}={v}" for k, v in changed.items()))
+        print("env: " + " ".join(f"{k}={v}" for k, v in changed.items() if v is not None))
+        removed = [k for k, v in changed.items() if v is None]
+        if removed:
+            print("env removed: " + " ".join(removed))
         print("mcp.json: " + json.dumps(session_mcp_config(arm, tmp / "systems")))
         print(f"limits: max-turns {limits.max_turns}, timeout {limits.timeout_s:g} s")
         print("command (prompt on stdin):")
@@ -290,6 +309,19 @@ def _run_id(set_name: str) -> str:
     return f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{set_name}"
 
 
+def interleave_by_task(todo: list[tuple[SessionSpec, int]]) -> list[tuple[SessionSpec, int]]:
+    """``todo`` reordered round-robin over tasks (each task's items keep their order), so
+    that parallel workers take different tasks."""
+    groups: dict[str, list[tuple[SessionSpec, int]]] = {}
+    for item in todo:
+        groups.setdefault(item[0].task.task_id, []).append(item)
+    out: list[tuple[SessionSpec, int]] = []
+    queues = list(groups.values())
+    for i in range(max((len(q) for q in queues), default=0)):
+        out += [q[i] for q in queues if i < len(q)]
+    return out
+
+
 def _execute_all(
     todo: list[tuple[SessionSpec, int]],
     run_dir: Path,
@@ -301,28 +333,33 @@ def _execute_all(
     stop: list[str] = []
     forbidden = _forbidden_roots(args)
     key = _env_key(env_info(env_dir))
+    # Sessions of one task never overlap: a session cannot read another's working
+    # directory on the same task (they are removed when a session ends).
+    locks = {spec.task.task_id: threading.Lock() for spec, _ in todo}
 
     def one(item: tuple[SessionSpec, int]) -> None:
         spec, attempt = item
-        if stop:
-            return
-        adir = session_dir(run_dir, spec.sid) / f"attempt-{attempt}"
-        prompt = build_prompt(spec.task, spec.arm, spec.realisation)
-        outcome = execute_session(
-            spec,
-            adir,
-            prompt,
-            limits,
-            env_dir,
-            args.effort,
-            args.max_budget_usd,
-            keep_tmp=args.keep_tmp,
-            forbidden_roots=forbidden,
-            env_key=key,
-        )
+        with locks[spec.task.task_id]:
+            if stop:
+                return
+            adir = session_dir(run_dir, spec.sid) / f"attempt-{attempt}"
+            prompt = build_prompt(spec.task, spec.arm, spec.realisation)
+            outcome = execute_session(
+                spec,
+                adir,
+                prompt,
+                limits,
+                env_dir,
+                args.effort,
+                args.max_budget_usd,
+                keep_tmp=args.keep_tmp,
+                forbidden_roots=forbidden,
+                env_key=key,
+            )
         sigs = audit_attempt(adir)
-        if {"authentication", "harness_start"} & set(sigs):
-            stop.append(f"{', '.join(sigs)} in {spec.sid}")
+        why = stop_reason(adir)
+        if why:
+            stop.append(f"{why} in {spec.sid}")
         s = parse_stream((adir / "stream.jsonl").read_text(encoding="utf-8", errors="replace"))
         cost = "n/a" if s.cost_usd is None else f"${s.cost_usd:.3f}"
         print(
@@ -333,9 +370,13 @@ def _execute_all(
         )
 
     with ThreadPoolExecutor(max_workers=max(1, int(args.jobs))) as pool:
-        list(pool.map(one, todo))
+        list(pool.map(one, interleave_by_task(todo)))
     if stop:
-        print(f"STOPPED after {stop[0]}: fix it, then resume with the same --out.")
+        print(
+            f"STOPPED after {stop[0]}: fix it (for a usage or rate limit, wait until it has "
+            "reset), then resume with the same --out (sessions not yet started run then; "
+            "flagged ones need --rerun-flagged)."
+        )
     doc = audit_run(run_dir)
     for line in audit_lines(doc):
         print(line)
@@ -406,8 +447,15 @@ def grade_session(
     audit_doc: dict[str, Any],
     bundles: Path | None,
     truth_dir: Path | None,
+    write: bool = True,
 ) -> dict[str, Any] | None:
-    """Grade the latest attempt of a session and write its record.json (None: not run)."""
+    """Grade the latest attempt of a session and write its record.json (None: not run).
+
+    The answer is read from the session's final reply only (:func:`final_reply`): a
+    session that ended without a success result (a timeout or a kill before the result,
+    the turn limit, the budget cap, an error) has none and fails. ``write=False`` writes
+    nothing (``grade --pass-fail``).
+    """
     attempts = attempt_dirs(session_dir(run_dir, sid))
     if not attempts:
         return None
@@ -415,9 +463,12 @@ def grade_session(
     text = (adir / "stream.jsonl").read_text(encoding="utf-8", errors="replace")
     s = parse_stream(text)
     outcome = read_json(adir / "outcome.json", {}) or {}
-    g = grade_answer(task, truth, s.final_text, tool_numbers_of(s.tool_result_texts))
+    final, no_reply = final_reply(text, outcome)
+    g = grade_answer(task, truth, final, tool_numbers_of(s.tool_result_texts))
+    if no_reply:
+        g.parse_error = f"no final reply: {no_reply}"
     a = audit_doc["sessions"].get(sid) or {}
-    reasons = contamination(s, entry["arm"], bundles, truth_dir)
+    reasons = contamination(s, entry["arm"], bundles, truth_dir, own_tmp=outcome.get("tmp_dir"))
     duration = (s.duration_ms / 1000.0) if s.duration_ms is not None else outcome.get("wall_s")
     gd = g.to_dict()
     gd.pop("task")
@@ -435,6 +486,8 @@ def grade_session(
         "realisation": int(entry["realisation"]),
         "attempt": len(attempts),
         **gd,
+        "final_reply": final is not None,
+        "no_final_reply": no_reply,
         "tokens": s.total_tokens,
         "usage": s.usage,
         "cost_usd": s.cost_usd,
@@ -450,8 +503,9 @@ def grade_session(
         "contamination": reasons or None,
         "attempt_dir": str(adir),
     }
-    (adir / "final.txt").write_text(s.final_text or "", encoding="utf-8")
-    write_json(session_dir(run_dir, sid) / RECORD_FILE, record)
+    if write:
+        (adir / "final.txt").write_text(final or "", encoding="utf-8")
+        write_json(session_dir(run_dir, sid) / RECORD_FILE, record)
     return record
 
 
@@ -473,6 +527,7 @@ def cmd_grade(args: argparse.Namespace) -> int:
     truths: dict[tuple[str, str], dict[str, Any]] = {}
     n = 0
     not_run = 0
+    verdicts: list[str] = []
     for sid, entry in sorted(index.items()):
         key = (entry["set"], entry["task"])
         try:
@@ -481,11 +536,24 @@ def cmd_grade(args: argparse.Namespace) -> int:
                 truths[key] = load_truth(tasks[key], troot)
         except BundleError as exc:
             raise _fail(str(exc)) from None
-        rec = grade_session(run_dir, sid, entry, tasks[key], truths[key], doc, broot, troot)
+        rec = grade_session(
+            run_dir, sid, entry, tasks[key], truths[key], doc, broot, troot,
+            write=not args.pass_fail,
+        )  # fmt: skip
         if rec is None:
             not_run += 1
             continue
         n += 1
+        verdicts.append(f"{sid} {'PASS' if rec['passed'] else 'FAIL'}")
+    if args.pass_fail:
+        # Pass or fail only (section 7, firewall): nothing else the grader computed.
+        for line in verdicts:
+            print(line)
+        stamp = datetime.now().isoformat(timespec="seconds")
+        with open(run_dir / PASS_FAIL_LOG, "a", encoding="utf-8") as log:
+            log.writelines(f"{stamp} {line}\n" for line in verdicts)
+        print(f"{n} session(s) evaluated; {not_run} not run; logged in {PASS_FAIL_LOG}")
+        return 0
     s = write_report(run_dir)
     print(f"graded {n} session(s); {not_run} not run; report: {run_dir / 'summary.md'}")
     if s["pending_reruns"]:
@@ -598,7 +666,12 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--max-budget-usd", type=float, default=None, help="Per session.")
     sp.add_argument("--bundles", default=None, help="Bundle folder ($WPBENCH_OPS_BUNDLES).")
     sp.add_argument("--code-env", type=Path, default=None, help="code-plus environment dir.")
-    sp.add_argument("--keep-tmp", action="store_true", help="Keep the temporary directories.")
+    sp.add_argument(
+        "--keep-tmp",
+        action="store_true",
+        help="Keep the temporary directories (debugging only: a later session could read "
+        "them; the contamination markers flag one that does).",
+    )
     sp.add_argument(
         "--rerun-flagged",
         action="store_true",
@@ -620,6 +693,12 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("run")
     sp.add_argument("--truth", default=None, help="Truth folder ($WPBENCH_OPS_TRUTH).")
     sp.add_argument("--bundles", default=None, help="Bundle folder (default: the run's).")
+    sp.add_argument(
+        "--pass-fail",
+        action="store_true",
+        help="Print only pass or fail per session, write no record and log the evaluation "
+        "(the only grader output a firewalled session may receive).",
+    )
     sp.set_defaults(fn=cmd_grade)
 
     sp = sub.add_parser("headroom", help="The Stage 0 headroom rule on graded run(s).")

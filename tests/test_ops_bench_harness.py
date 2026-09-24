@@ -25,6 +25,7 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from benchmarks.composition.harness import grading as grading_v02  # noqa: E402
 from benchmarks.composition.harness.grading import StreamSummary  # noqa: E402
 from benchmarks.operations.harness import __main__ as cli  # noqa: E402
 from benchmarks.operations.harness import (  # noqa: E402
@@ -395,6 +396,47 @@ def test_session_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     assert venv_bin not in parts
 
 
+def _git_bash(p: Path) -> str:
+    s = str(p).replace("\\", "/")
+    return f"/{s[0].lower()}{s[2:]}" if len(s) > 1 and s[1] == ":" else s
+
+
+def test_no_session_variable_names_the_repository_or_the_benchmark_folders(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A shell started in the checkout passes PWD and OLDPWD on: an innocent ``env`` would
+    then show the repository (and be flagged as contamination) and ``cd -`` lead into it."""
+    bundles_dir, truth_dir = tmp_path / "opsb", tmp_path / "secret-truth"
+    monkeypatch.setenv("PWD", _git_bash(REPO))
+    monkeypatch.setenv("OLDPWD", str(REPO))
+    monkeypatch.setenv("INIT_CWD", str(REPO / "benchmarks"))
+    monkeypatch.setenv("_", _git_bash(REPO / ".venv" / "Scripts" / "python"))
+    monkeypatch.setenv("MY_NOTES", f"see {REPO}\\notes.md")
+    monkeypatch.setenv("BUNDLE_COPY", str(bundles_dir / "dev"))
+    monkeypatch.setenv("TRUTH_HINT", _git_bash(truth_dir))
+    monkeypatch.setenv("SIBLING", str(REPO) + "-other")  # another directory: kept
+    path_key = next((k for k in os.environ if k.upper() == "PATH"), "PATH")
+    monkeypatch.setenv(
+        path_key,
+        os.pathsep.join([str(REPO / "scripts"), str(tmp_path / "bin"), os.environ[path_key]]),
+    )
+    full, changed = runner.child_env(tmp_path / "env", [bundles_dir, truth_dir])
+    removed = {k for k, v in changed.items() if v is None}
+    assert {"PWD", "OLDPWD", "INIT_CWD", "_", "MY_NOTES", "BUNDLE_COPY", "TRUTH_HINT"} <= removed
+    assert full["SIBLING"] == str(REPO) + "-other"
+    assert str(tmp_path / "bin") in full[path_key].split(os.pathsep)
+    patterns = [
+        grading_v02._path_pattern(form)
+        for root in (REPO, bundles_dir, truth_dir)
+        for form in grading_v02._path_forms(root)
+    ]
+    for k, v in full.items():
+        assert not any(p.search(grading_v02._normalise(v)) for p in patterns), (k, v)
+    assert not {"PWD", "OLDPWD"} & {k.upper() for k in full}
+    # the removed values are not recorded (command.json holds ``changed``)
+    assert "notes.md" not in json.dumps(changed)
+
+
 def test_dry_run_prints_everything_and_runs_nothing(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
@@ -679,6 +721,35 @@ ANSWER = {
 OK_RESULT = {"type": "result", "subtype": "success", "is_error": False,
              "result": '```json\n{"a": 1}\n```', "num_turns": 2}  # fmt: skip
 OK = {"exit_code": 0, "timed_out": False}
+TIMEOUT = {"exit_code": None, "timed_out": True}
+AUTH_RETRY = {"type": "system", "subtype": "api_retry", "error_status": 401,
+              "error": "authentication_failed"}  # fmt: skip
+TOOL_TURN = {"type": "assistant", "message": {"content": [
+    {"type": "tool_use", "id": "t", "name": "Bash",
+     "input": {"command": "python fit.py"}}]}}  # fmt: skip
+TOOL_RESULT = {"type": "user", "message": {"content": [
+    {"type": "tool_result", "tool_use_id": "t", "content": "fitting ..."}]}}  # fmt: skip
+DENIAL = {"type": "user", "message": {"content": [
+    {"type": "tool_result", "is_error": True,
+     "content": "Claude requested permissions to use WebFetch, but you haven't granted it "
+                "yet."}]}}  # fmt: skip
+MAX_TURNS = {"type": "result", "subtype": "error_max_turns", "is_error": True, "num_turns": 120}
+MAX_BUDGET = {"type": "result", "subtype": "error_max_budget_usd", "is_error": True}
+
+
+def _synthetic(text: str, error: str) -> dict[str, Any]:
+    """How the CLI reports an API error (as in a real transcript): an assistant message of
+    the model <synthetic> with a top-level error, which is not a turn of the model."""
+    return {"type": "assistant", "error": error, "message": {
+        "id": "4c9a38eb", "model": "<synthetic>", "role": "assistant",
+        "content": [{"type": "text", "text": text}]}}  # fmt: skip
+
+
+def _error_result(text: str) -> dict[str, Any]:
+    return {"type": "result", "subtype": "success", "is_error": True, "result": text}
+
+
+EXPIRED = 'API Error: 401 {"type":"error","error":{"type":"authentication_error"}}'
 
 
 @pytest.mark.parametrize(
@@ -735,10 +806,88 @@ OK = {"exit_code": 0, "timed_out": False}
                         "granted it yet."}]}}, TURN,
                  {"type": "result", "subtype": "success", "is_error": False,
                   "result": "Stopped."}), OK, ["permission_denied"]),
+        # a 401 retry or a denial the session got past does not turn the agent's own
+        # timeout or turn limit into an infrastructure error
+        (_stream(INIT, AUTH_RETRY, TOOL_TURN, TOOL_RESULT), TIMEOUT, []),
+        (_stream(INIT, AUTH_RETRY, TOOL_TURN, TOOL_RESULT, MAX_TURNS), OK, []),
+        (_stream(INIT, AUTH_RETRY, TOOL_TURN, TOOL_RESULT, MAX_BUDGET), OK, []),
+        (_stream(INIT, TOOL_TURN, DENIAL, TOOL_TURN, TOOL_RESULT), TIMEOUT, []),
+        (_stream(INIT, TOOL_TURN, DENIAL, TOOL_TURN, TOOL_RESULT, MAX_TURNS), OK, []),
+        (_stream(INIT, TOOL_TURN, DENIAL, TOOL_TURN, MAX_BUDGET), OK, []),
+        # ... but credentials that fail for good are an infrastructure error, even after
+        # earlier turns and whether the session then ends with an error or times out
+        (_stream(INIT, TOOL_TURN, TOOL_RESULT, AUTH_RETRY), TIMEOUT, ["authentication"]),
+        (_stream(INIT, TOOL_TURN, TOOL_RESULT, AUTH_RETRY,
+                 {"type": "result", "subtype": "success", "is_error": True,
+                  "result": "API Error: 401 authentication_error"}), OK, ["authentication"]),
+        (_stream(INIT, AUTH_RETRY), TIMEOUT, ["authentication", "no_model_turn"]),
+        # a denial with a success result that holds the answer is graded
+        (_stream(INIT, TOOL_TURN, DENIAL, TOOL_TURN, OK_RESULT), OK, []),
+        # the CLI's own <synthetic> error message is not a model turn (real transcripts)
+        (_stream(INIT, AUTH_RETRY,
+                 _synthetic("Not logged in · Please run /login", "authentication_failed"),
+                 _error_result("Not logged in · Please run /login")), OK,
+         ["authentication", "no_model_turn"]),
+        (_stream(INIT, TOOL_TURN, TOOL_RESULT, AUTH_RETRY,
+                 _synthetic(EXPIRED, "authentication_failed"), _error_result(EXPIRED)), OK,
+         ["authentication"]),
+        (_stream(INIT, _synthetic("Claude AI usage limit reached|1790000000", "rate_limit"),
+                 _error_result("Claude AI usage limit reached|1790000000")),
+         {"exit_code": 1, "timed_out": False}, ["no_model_turn", "api_or_cli_error"]),
+        (_stream(INIT, TURN, _synthetic("API Error: 529 overloaded", "server_error"),
+                 _error_result("API Error: 529 overloaded")), OK, ["api_or_cli_error"]),
     ],
 )  # fmt: skip
 def test_infrastructure_signatures(stream: str, outcome: Any, expected: list[str]) -> None:
     assert infra.audit_session(stream, "", outcome) == expected
+
+
+def _attempt(tmp_path: Path, stream: str, outcome: dict[str, Any] | None) -> Path:
+    adir = tmp_path / "attempt-1"
+    adir.mkdir()
+    (adir / "stream.jsonl").write_text(stream, "utf-8")
+    (adir / "stderr.txt").write_text("", "utf-8")
+    if outcome is not None:
+        (adir / "outcome.json").write_text(json.dumps(outcome), "utf-8")
+    return adir
+
+
+USAGE_LIMIT = {"type": "result", "subtype": "success", "is_error": True,
+               "result": "Claude AI usage limit reached|1790000000"}  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("stream", "outcome", "stops"),
+    [
+        (_stream(INIT, USAGE_LIMIT), {"exit_code": 1, "timed_out": False}, True),
+        (_stream(INIT, _synthetic("Claude AI usage limit reached|1790000000", "rate_limit"),
+                 USAGE_LIMIT), {"exit_code": 1, "timed_out": False}, True),
+        (_stream(INIT, TOOL_TURN, TOOL_RESULT, AUTH_RETRY,
+                 _synthetic(EXPIRED, "authentication_failed"), _error_result(EXPIRED)), OK,
+         True),
+        (_stream(INIT, {"type": "system", "subtype": "api_retry", "error_status": 529,
+                        "error": "overloaded"}), TIMEOUT, True),  # stuck in retries
+        (_stream(INIT, {"type": "system", "subtype": "api_retry", "error_status": 429,
+                        "error": "rate_limit"},
+                 {"type": "result", "subtype": "success", "is_error": True,
+                  "result": "API Error: 429"}), OK, True),
+        (_stream(INIT, AUTH_RETRY, {"type": "result", "subtype": "success", "is_error": True,
+                                    "result": "Not logged in"}), OK, True),
+        ("", {"error": "could not start claude"}, True),
+        # not a reason to stop the run: the agent's failures, a session that recovered,
+        # an API error after model turns, and a CLI that printed nothing once
+        (_stream(INIT, TOOL_TURN, TOOL_RESULT), TIMEOUT, False),
+        (_stream(INIT, {"type": "system", "subtype": "api_retry", "error_status": 529,
+                        "error": "overloaded"}, TURN, ANSWER, OK_RESULT), OK, False),
+        (_stream(INIT, TURN, {"type": "result", "subtype": "success", "is_error": True,
+                              "result": "API Error: 529"}), OK, False),
+        ("", {"exit_code": 1, "timed_out": False}, False),
+    ],
+)  # fmt: skip
+def test_the_run_stops_after_an_api_error_before_any_turn(
+    tmp_path: Path, stream: str, outcome: Any, stops: bool
+) -> None:
+    assert (infra.stop_reason(_attempt(tmp_path, stream, outcome)) is not None) is stops
 
 
 def test_signature_list_is_documented() -> None:
@@ -1006,3 +1155,321 @@ def test_code_plus_env_is_keyed_and_built_once(
         env.ensure_code_plus_env(REPO / "ops-env", log=lambda *a: None)
     with pytest.raises(ValueError, match="freeze-1"):
         env.python_env_for("lib")
+
+
+# ----------------------------------------------------------------------------------------
+# review fixes: other sessions' directories, same-task sessions never overlap
+# ----------------------------------------------------------------------------------------
+OWN_TMP = r"C:\Users\x\AppData\Local\Temp\wpbench-ops-abc_12"
+
+
+@pytest.mark.parametrize(
+    ("tool_input", "result", "flagged"),
+    [
+        ("cd /c/Users/x/AppData/Local/Temp/wpbench-ops-abc_12/work && python fit.py",
+         "/c/Users/x/AppData/Local/Temp/wpbench-ops-abc_12/work", None),  # its own
+        ("pwd", r"C:\Users\x\AppData\Local\Temp\wpbench-ops-abc_12\work", None),
+        ("ls ../..", "wpbench-ops-abc_12\nwpbench-ops-k3j9x\n", None),  # a bare listing
+        ("cat ../../wpbench-ops-k3j9x/work/fit.py", "import numpy", "tool input"),
+        ("find $TEMP -name '*.py'", "/tmp/wpbench-ops-k3j9x/work/fit.py\n", "tool result"),
+        ("dir ..\\..", r"C:\Users\x\AppData\Local\Temp\wpbench-ops-k3j9x\work", "tool result"),
+    ],
+)  # fmt: skip
+def test_another_sessions_directory_is_a_contamination_marker(
+    tool_input: str, result: str, flagged: str | None
+) -> None:
+    reasons = markers.contamination(_summary(tool_input, result), "code+", own_tmp=OWN_TMP)
+    if flagged is None:
+        assert reasons == []
+    else:
+        assert reasons == [f"{flagged} mentions another session's directory 'wpbench-ops-k3j9x'"]
+
+
+def _specs_of(tmp_path: Path, n_tasks: int = 3) -> tuple[list[Any], list[Any]]:
+    build_set(tmp_path / "b", tmp_path / "t")
+    tasks = bundles.load_tasks("dev", tmp_path / "b")[:n_tasks]
+    todo = [(runner.SessionSpec("dev", m, t, a, 1), 1)
+            for m in ("sonnet", "opus") for t in tasks for a in ("code+", "code-hint")]  # fmt: skip
+    return tasks, todo
+
+
+def test_interleave_by_task_keeps_each_tasks_order(tmp_path: Path) -> None:
+    tasks, todo = _specs_of(tmp_path)
+    out = cli.interleave_by_task(todo)
+    assert sorted(map(id, out)) == sorted(map(id, todo))
+    assert [s.task.task_id for s, _ in out[:3]] == [t.task_id for t in tasks]
+    for t in tasks:
+        mine = [item for item in todo if item[0].task is t]
+        assert [item for item in out if item[0].task is t] == mine
+
+
+def test_sessions_of_one_task_never_overlap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With --jobs, the code+ and code-hint sessions of a task (and its other models and
+    realisations) run one after the other, so none can read another's working directory."""
+    import threading
+    import time
+
+    tasks, todo = _specs_of(tmp_path)
+    lock = threading.Lock()
+    active: dict[str, int] = {}
+    most: dict[str, int] = {}
+    overall = [0, 0]
+
+    def fake_session(spec: Any, adir: Path, *a: Any, **k: Any) -> dict[str, Any]:
+        t = spec.task.task_id
+        with lock:
+            active[t] = active.get(t, 0) + 1
+            most[t] = max(most.get(t, 0), active[t])
+            overall[0] += 1
+            overall[1] = max(overall[1], overall[0])
+        time.sleep(0.2)
+        adir.mkdir(parents=True)
+        (adir / "stream.jsonl").write_text(_stream(INIT, TURN, ANSWER, OK_RESULT), "utf-8")
+        (adir / "stderr.txt").write_text("", "utf-8")
+        outcome = {"exit_code": 0, "timed_out": False, "wall_s": 0.2, "error": None}
+        (adir / "outcome.json").write_text(json.dumps(outcome), "utf-8")
+        with lock:
+            active[t] -= 1
+            overall[0] -= 1
+        return outcome
+
+    monkeypatch.setattr(cli, "execute_session", fake_session)
+    args = cli.parser().parse_args(["run", "--jobs", "6", "--bundles", str(tmp_path / "b")])
+    assert cli._execute_all(todo, tmp_path / "run", runner.PINNED_LIMITS, tmp_path, args) == 0
+    assert set(most) == {t.task_id for t in tasks} and set(most.values()) == {1}
+    assert overall[1] >= 2  # different tasks did run in parallel
+
+
+# ----------------------------------------------------------------------------------------
+# review fixes: a session without a final reply fails (grade_session)
+# ----------------------------------------------------------------------------------------
+def _single_fault_task(tmp_path: Path) -> tuple[Any, dict[str, Any]]:
+    build_set(tmp_path / "b", tmp_path / "t")
+    task = next(t for t in bundles.load_tasks("dev", tmp_path / "b") if t.stratum == "single")
+    return task, bundles.load_truth(task, tmp_path / "t")
+
+
+def _grade_one(tmp_path: Path, stream: str, outcome: dict[str, Any]) -> dict[str, Any]:
+    task, truth = _single_fault_task(tmp_path)
+    run, sid = tmp_path / "run", "0123456789abcdef"
+    adir = run / "sessions" / sid / "attempt-1"
+    adir.mkdir(parents=True)
+    (adir / "stream.jsonl").write_text(stream, "utf-8")
+    (adir / "stderr.txt").write_text("", "utf-8")
+    (adir / "outcome.json").write_text(json.dumps(outcome), "utf-8")
+    entry = {"set": "dev", "model": "sonnet", "task": task.task_id, "arm": "code-hint",
+             "realisation": 1}  # fmt: skip
+    doc = infra.audit_run(run)
+    rec = cli.grade_session(run, sid, entry, task, truth, doc, tmp_path / "b", tmp_path / "t")
+    assert rec is not None
+    rec["final_txt"] = (adir / "final.txt").read_text("utf-8")
+    return rec
+
+
+def _draft_turn(tmp_path: Path) -> dict[str, Any]:
+    """An assistant message holding the right answer as a draft, with a tool call."""
+    _, truth = _single_fault_task(tmp_path / "draft")
+    text = reply(correct_answer(truth["keys"]))
+    return {"type": "assistant", "message": {"content": [
+        {"type": "text", "text": text},
+        {"type": "tool_use", "id": "t", "name": "Bash",
+         "input": {"command": "python x.py"}}]}}  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("tail", "outcome", "why", "infra_sigs"),
+    [
+        ([], {"exit_code": None, "timed_out": True, "wall_s": 2400.0}, "timed out", None),
+        ([AUTH_RETRY, TOOL_TURN], {"exit_code": None, "timed_out": True, "wall_s": 2400.0},
+         "timed out", None),
+        ([MAX_TURNS], {"exit_code": 0, "timed_out": False, "wall_s": 900.0}, "error_max_turns",
+         None),
+        ([MAX_BUDGET], {"exit_code": 0, "timed_out": False, "wall_s": 900.0},
+         "error_max_budget_usd", None),
+        ([{"type": "result", "subtype": "error_during_execution", "is_error": True}],
+         {"exit_code": 1, "timed_out": False, "wall_s": 60.0}, "error_during_execution",
+         ["api_or_cli_error"]),
+        ([], {"exit_code": 137, "timed_out": False, "wall_s": 60.0}, "no result message",
+         ["killed"]),
+    ],
+)  # fmt: skip
+def test_limit_exits_are_failures_whatever_was_drafted(
+    tmp_path: Path, tail: list[Any], outcome: dict[str, Any], why: str, infra_sigs: Any
+) -> None:
+    draft = _draft_turn(tmp_path)
+    rec = _grade_one(tmp_path, _stream(INIT, AUTH_RETRY, draft, TOOL_RESULT, *tail), outcome)
+    assert rec["passed"] is False and rec["n_passed"] == 0
+    assert rec["cw_category"] == "missing" and rec["confident_wrong"] is False
+    assert rec["final_reply"] is False and why in rec["no_final_reply"]
+    assert rec["parse_error"].startswith("no final reply")
+    assert rec["infra_error"] == infra_sigs and rec["final_txt"] == ""
+
+
+def test_a_success_result_is_graded(tmp_path: Path) -> None:
+    draft = _draft_turn(tmp_path)
+    text = draft["message"]["content"][0]["text"]
+    ok = {"type": "result", "subtype": "success", "is_error": False, "result": text,
+          "total_cost_usd": 0.5}  # fmt: skip
+    rec = _grade_one(tmp_path, _stream(INIT, draft, TOOL_RESULT, ok),
+                     {"exit_code": 0, "timed_out": False, "wall_s": 60.0})  # fmt: skip
+    assert rec["passed"] is True and rec["final_reply"] is True and rec["no_final_reply"] is None
+    assert rec["final_txt"] == text and rec["cost_usd"] == 0.5
+
+
+# ----------------------------------------------------------------------------------------
+# review fixes: the headroom rule needs every r1 reference result
+# ----------------------------------------------------------------------------------------
+def test_headroom_refuses_truth_without_r1_reference_results(tmp_path: Path) -> None:
+    ids = build_set(tmp_path / "b", tmp_path / "t")
+    tasks = bundles.load_tasks("dev", tmp_path / "b")
+    truths = {t.task_id: bundles.load_truth(t, tmp_path / "t") for t in tasks}
+    recs = [
+        {"sid": f"{m}{i}", "set": "dev", "realisation": 1, "model": m, "arm": "code-hint",
+         "task": t, "passed": i >= 8, "model_id": m}
+        for m in ("sonnet", "opus") for i, t in enumerate(ids)
+    ]  # fmt: skip
+    res = headroom.headroom(recs, ids, truths, MODELS)
+    assert res.computed and res.F == {"Sonnet 5": 8, "Opus 5.5": 8} and res.closed is False
+    # the generator's format drifts: realisations keyed "1", "2", "3"
+    drifted = copy.deepcopy(truths)
+    for d in drifted.values():
+        d["realisations"] = {str(i): v for i, v in enumerate(d["realisations"].values(), 1)}
+    res = headroom.headroom(recs, ids, drifted, MODELS)
+    assert not res.computed and res.closed is None
+    assert sum("no r1 reference result" in p for p in res.not_computed) == 16
+    for bad in ({}, {"r1": {"oracle_pass": True, "reference_pass": {}}},
+                {"r1": {"oracle_pass": True, "reference_pass": {"R-a": "yes"}}}):  # fmt: skip
+        one = copy.deepcopy(truths)
+        one[ids[0]]["realisations"] = bad
+        res = headroom.headroom(recs, ids, one, MODELS)
+        assert res.not_computed == [f"no r1 reference result for {ids[0]}"]
+    # and the loader refuses such a truth file before the rule is reached
+    for t in tasks:
+        p = tmp_path / "t" / "dev" / f"{t.task_id}.truth.json"
+        p.write_text(json.dumps(drifted[t.task_id]), "utf-8")
+    with pytest.raises(SystemExit, match="are missing"):
+        cli.main(["headroom", str(tmp_path), "--bundles", str(tmp_path / "b"), "--truth",
+                  str(tmp_path / "t")])  # fmt: skip
+
+
+# ----------------------------------------------------------------------------------------
+# review fixes: whole runs through the fake CLI
+# ----------------------------------------------------------------------------------------
+class _FakeCli:
+    """Runs the harness against tests/fixtures/opsbench/fake_claude.py."""
+
+    def __init__(self, tmp: Path, mp: pytest.MonkeyPatch) -> None:
+        self.commands: list[list[str]] = []
+        self.broot, self.troot, self.run_dir = tmp / "bundles", tmp / "truth", tmp / "run"
+        self.ids = build_set(self.broot, self.troot)
+        self.plan_path, state = tmp / "plan.json", tmp / "state"
+        state.mkdir()
+        envdir = tmp / "env"
+        (envdir / ".venv" / ("Scripts" if os.name == "nt" else "bin")).mkdir(parents=True)
+        (envdir / "stamp.json").write_text(json.dumps(
+            {"request": {"python": "3.12", "packages": {}}, "installed": {}}), "utf-8")  # fmt: skip
+        real_popen = subprocess.Popen
+
+        def fake_popen(cmd: list[str], **kwargs: Any) -> Any:
+            if cmd[0] != str(FAKE):  # taskkill at a timeout (subprocess.run uses Popen)
+                return real_popen(cmd, **kwargs)
+            self.commands.append(cmd)
+            return real_popen([sys.executable, str(FAKE), *cmd[1:]], **kwargs)
+
+        mp.setattr(runner.subprocess, "Popen", fake_popen)
+        mp.setattr(cli, "ensure_code_plus_env", lambda d=None: envdir)
+        mp.setattr(cli, "claude_version", lambda: "2.1.280 (fake)")
+        mp.setenv("WPBENCH_CLAUDE", str(FAKE))
+        mp.setenv("WPBENCH_OPS_TRUTH", str(self.troot))
+        mp.setenv("OPSFAKE_PLAN", str(self.plan_path))
+        mp.setenv("OPSFAKE_STATE", str(state))
+
+    def plan(self, plan: dict[str, Any]) -> None:
+        self.plan_path.write_text(json.dumps(plan), "utf-8")
+
+    def good(self, tid: str) -> dict[str, Any]:
+        return {"reply": reply(correct_answer(truth_keys(self.troot, tid)))}
+
+    def run(self, *extra: str) -> int:
+        return cli.main(["run", "--set", "dev", "--models", "sonnet", "--out", str(self.run_dir),
+                         "--bundles", str(self.broot), "--no-manifest-check", *extra])  # fmt: skip
+
+
+def test_timeouts_after_a_recovered_401_or_a_denial_are_graded_failures(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """End to end: a session that recovered from a 401 retry, and one that worked past a
+    permission denial, then time out with the right answer drafted. The audit flags neither
+    (and the run does not stop), both fail on grading, the cost per pass counts the one
+    whose cost the CLI never reported, and ``grade --pass-fail`` prints only pass or fail."""
+    with pytest.MonkeyPatch.context() as mp:
+        f = _FakeCli(tmp_path, mp)
+        ta = next(t for t in f.ids if t.startswith("ops-f3-ind"))  # a single fault
+        tb = next(t for t in f.ids if t.startswith("ops-f1-"))
+        f.plan({
+            f"sonnet|{ta}|code-hint": [{**f.good(ta), "hang": 60, "retry401": True}],
+            f"sonnet|{ta}|code+": [f.good(ta)],
+            f"sonnet|{tb}|code+": [{**f.good(tb), "hang": 60, "denial": True}],
+            f"sonnet|{tb}|code-hint": [f.good(tb)],
+        })  # fmt: skip
+        assert f.run("--tasks", ta, tb, "--jobs", "4", "--timeout", "3") == 0
+        out = capsys.readouterr().out
+        assert out.count("TIMEOUT") == 2 and "STOPPED" not in out
+        assert "infrastructure signature" not in out
+        audit = json.loads((f.run_dir / "audit.json").read_text("utf-8"))
+        assert audit["flagged"] == [] and len(audit["sessions"]) == 4
+        # the firewall's view: pass or fail only, no record, a logged evaluation
+        assert cli.main(["grade", str(f.run_dir), "--pass-fail"]) == 0
+        out = capsys.readouterr().out
+        verdicts = re.findall(r"^([0-9a-f]{16}) (PASS|FAIL)$", out, re.M)
+        assert sorted(v for _, v in verdicts) == ["FAIL", "FAIL", "PASS", "PASS"]
+        assert not list(f.run_dir.glob("sessions/*/record.json"))
+        assert not (f.run_dir / "summary.json").exists()
+        for word in ("error", "interval", "8.4", "37.5", "cw_category"):
+            assert word not in out
+        log = (f.run_dir / cli.PASS_FAIL_LOG).read_text("utf-8").splitlines()
+        assert len(log) == 4 and all(line.endswith(("PASS", "FAIL")) for line in log)
+        # the owner's grade
+        assert cli.main(["grade", str(f.run_dir)]) == 0
+    recs = {(r["task"], r["arm"]): r for r in report.load_records([f.run_dir])}
+    hung = recs[(ta, "code-hint")]
+    assert hung["timed_out"] and hung["passed"] is False and hung["infra_error"] is None
+    assert hung["cw_category"] == "missing" and hung["confident_wrong"] is False
+    assert "timed out" in hung["no_final_reply"] and hung["cost_usd"] is None
+    denied = recs[(tb, "code+")]
+    assert denied["timed_out"] and denied["passed"] is False and denied["infra_error"] is None
+    assert recs[(ta, "code+")]["passed"] and recs[(tb, "code-hint")]["passed"]
+    summary = json.loads((f.run_dir / "summary.json").read_text("utf-8"))
+    g = summary["groups"]["sonnet"]["code-hint"]
+    ok = recs[(tb, "code-hint")]
+    rate = ok["cost_usd"] / ok["wall_s"]
+    assert g["costs_estimated"] == 1 and g["sessions_passed"] == 1
+    assert g["cost_per_pass_usd"] == pytest.approx(ok["cost_usd"] + rate * hung["wall_s"])
+    assert g["cost_per_pass_usd"] > ok["cost_usd"]
+
+
+def test_a_usage_limit_stops_the_run_and_it_resumes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.MonkeyPatch.context() as mp:
+        f = _FakeCli(tmp_path, mp)
+        ta, tb = f.ids[0], f.ids[-1]
+        keys = [f"sonnet|{t}|{a}" for t in (ta, tb) for a in ("code+", "code-hint")]
+        f.plan({k: ["usage_limit"] for k in keys})
+        assert f.run("--tasks", ta, tb, "--jobs", "1") == 0
+        out = capsys.readouterr().out
+        assert len(f.commands) == 1 and "STOPPED after no_model_turn, api_or_cli_error" in out
+        audit = json.loads((f.run_dir / "audit.json").read_text("utf-8"))
+        assert len(audit["sessions"]) == 1 and len(audit["pending_reruns"]) == 1
+        # the limit has reset: resuming runs the sessions not yet started, and the
+        # flagged one is re-run as its second attempt
+        f.plan({k: [f.good(k.split("|")[1])] * 2 for k in keys})
+        assert f.run("--tasks", ta, tb, "--jobs", "1") == 0
+        assert len(f.commands) == 4 and "STOPPED" not in capsys.readouterr().out
+        assert f.run("--rerun-flagged") == 0
+        assert len(f.commands) == 5
+        audit = json.loads((f.run_dir / "audit.json").read_text("utf-8"))
+    assert audit["flagged"] == [] and len(audit["sessions"]) == 4
+    assert sorted(s["attempt"] for s in audit["sessions"].values()) == [1, 1, 1, 2]

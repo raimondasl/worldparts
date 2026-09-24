@@ -130,11 +130,12 @@ def make_truth(diagnosis: dict[str, Any] | None = None, **over: Any) -> dict[str
         "task_id": "ops-f3-001",
         "keys": keys,
         "realisations": {
-            "r1": {
+            f"r{k}": {
                 "oracle_pass": True,
                 "reference_pass": {"R-a": True, "R-b": True, "R2": None},
                 "naive_pass": False,
             }
+            for k in (1, 2, 3)
         },
     }
 
@@ -215,6 +216,42 @@ def test_trailing_comma_and_key_spelling_are_tolerated(task: Any) -> None:
     assert any("read as 'first_to_trigger'" in i for i in g.format_issues)
 
 
+def test_exact_keys_win_over_normalised_variants_and_conflicts_are_recorded(task: Any) -> None:
+    # top level: the exact key wins; a variant of it is recorded as ignored
+    ans = dict(GOOD, **{"Deterioration Real": False})
+    g = grade(task, ans)
+    assert g.passed and g.keys["deterioration_real"].value is True
+    assert any("'Deterioration Real' ignored" in i and "another value" in i
+               for i in g.format_issues), g.format_issues  # fmt: skip
+    # two variants and no exact key: the first is read, the second recorded
+    ans = {k: v for k, v in GOOD.items() if k != "deterioration_real"}
+    ans.update({"Deterioration Real": True, "deterioration-real": False})
+    g = grade(task, ans)
+    assert g.keys["deterioration_real"].value is True
+    assert "key 'Deterioration Real' read as 'deterioration_real'" in g.format_issues
+    assert any("'deterioration-real' ignored" in i for i in g.format_issues), g.format_issues
+    # magnitudes: the exact fault name wins whatever the order
+    for mags in ({"worn_pump": 8, "Worn Pump": 20}, {"Worn Pump": 20, "worn_pump": 8}):
+        d = {"verdict": "identified", "faults": ["worn_pump"], "magnitudes": mags}
+        r = grade(task, dict(GOOD, diagnosis=d), make_truth(SINGLE)).keys["diagnosis"]
+        assert r.category == G.PASS, r.issues
+        assert any("'Worn Pump' ignored" in i for i in r.issues), r.issues
+    d = {"verdict": "identified", "faults": ["worn_pump"],
+         "magnitudes": {"Worn Pump": 8, "worn-pump": 20}}  # fmt: skip
+    r = grade(task, dict(GOOD, diagnosis=d), make_truth(SINGLE)).keys["diagnosis"]
+    assert r.category == G.PASS and any("'worn-pump' ignored" in i for i in r.issues)
+    # estimate fields and diagnosis fields
+    r = key(task, "extra_energy_mwh_per_yr", {"Value": 60, "value": 37, "lo": 30, "lower": 1,
+                                              "hi": 45})  # fmt: skip
+    assert r.passed and r.value == 37.0 and r.interval == [30.0, 45.0]
+    assert any("'Value' ignored" in i for i in r.issues), r.issues
+    assert any("'lower' ignored" in i for i in r.issues), r.issues
+    d = {"verdict": "identified", "Verdict": "no_fault", "faults": ["worn_pump"],
+         "magnitudes": {"worn_pump": 8}}  # fmt: skip
+    r = grade(task, dict(GOOD, diagnosis=d), make_truth(SINGLE)).keys["diagnosis"]
+    assert r.category == G.PASS and any("'Verdict' ignored" in i for i in r.issues)
+
+
 def test_missing_keys_unparseable_and_extra_keys(task: Any) -> None:
     g = grade(task, {k: v for k, v in GOOD.items() if k != "deterioration_real"})
     assert not g.passed and g.keys["deterioration_real"].issues == ["missing"]
@@ -228,9 +265,141 @@ def test_missing_keys_unparseable_and_extra_keys(task: Any) -> None:
 
 
 def test_records_hold_no_truth_values(task: Any) -> None:
+    """No truth value is stored as such; the truth can still be worked out from a record
+    (see the next test), which is why records are for the owner only."""
     truth = make_truth(head_deficit_bep_pp={"value": 8.4321})
     rec = json.dumps(G.grade_answer(task, truth, reply(GOOD)).to_dict())
     assert "8.4321" not in rec and "61.2" not in rec and "37.5" not in rec
+
+
+def test_a_record_reveals_the_truth_so_records_are_for_the_owner_only(task: Any) -> None:
+    """The documented reason for ``grade --pass-fail``: an interval that misses the truth
+    gives it away exactly, for a non-determinable key as well."""
+    r = key(task, "head_deficit_bep_pp", {"value": 7.9, "lo90": 8.6, "hi90": 9.5})
+    assert r.covered is False
+    assert 8.6 - (r.interval_score - 0.9) / 20 == pytest.approx(8.4)
+    r = key(task, "wire_to_water_efficiency_pct", {"lo90": 62, "hi90": 95})
+    assert 62 - (r.interval_score - 33) / 20 == pytest.approx(61.2)
+    assert "owner only" in G.__doc__ and "--pass-fail" in G.__doc__
+
+
+# ----------------------------------------------------------------------------------------
+# which block is the answer
+# ----------------------------------------------------------------------------------------
+def _block(values: Any, lang: str = "json") -> str:
+    body = values if isinstance(values, str) else json.dumps(values, indent=2)
+    return f"```{lang}\n{body}\n```"
+
+
+DRAFT = dict(GOOD, first_to_trigger="F-3")
+
+
+@pytest.mark.parametrize(
+    ("text", "passed", "issue"),
+    [
+        # the json block is the answer even when code follows it
+        (_block(GOOD) + "\nCode used:\n" + _block("cfg = {'a': 1}", "python"), True,
+         "code block(s) after the answer block ignored"),
+        (_block(GOOD) + "\n" + _block({"x": 1}, ""), True, "after the answer block"),
+        (_block(GOOD) + "\n" + _block({"x": 1}, "python"), True, "after the answer block"),
+        # the last json block: an earlier draft is never graded
+        ("Draft:\n" + _block(DRAFT) + "\nFinal:\n" + _block(GOOD), True, None),
+        ("Draft:\n" + _block(GOOD) + "\nFinal:\n" + _block(DRAFT), False, None),
+        # without a json block: the last untagged block, then another tag, then bare
+        (_block(DRAFT, "python") + "\n" + _block(GOOD, ""), True, "tagged 'none'"),
+        (_block(GOOD, "") + "\n" + _block(DRAFT, "python"), True, "tagged 'none'"),
+        (_block(GOOD, "javascript"), True, "tagged 'javascript'"),
+        ("Answer: " + json.dumps(DRAFT) + "\nNo, this one: " + json.dumps(GOOD), True,
+         "bare object"),
+    ],
+)  # fmt: skip
+def test_the_answer_is_the_last_json_block(
+    task: Any, text: str, passed: bool, issue: str | None
+) -> None:
+    g = G.grade_answer(task, make_truth(), text)
+    assert g.passed is passed, (g.parse_error, g.format_issues)
+    assert g.keys["first_to_trigger"].passed is passed
+    if issue:
+        assert any(issue in i for i in g.format_issues), g.format_issues
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # a truncated final json block: no answer, never the earlier draft
+        "Draft " + _block(GOOD) + " Final " + _block(json.dumps(GOOD)[:-20]),
+        _block(GOOD) + "\n" + _block("[1, 2]"),  # the last json block is not an object
+        _block(GOOD) + "\n" + _block("not json at all"),
+        _block(GOOD, "") + "\n" + _block("{broken", ""),  # the last untagged block
+        "Answer " + json.dumps(GOOD) + " and {broken}",  # the last bare object
+    ],
+)
+def test_an_unusable_last_candidate_means_no_answer(task: Any, text: str) -> None:
+    g = G.grade_answer(task, make_truth(), text)
+    assert not g.passed and g.parse_error
+    assert all(r.issues == ["missing"] for r in g.keys.values())
+    assert g.cw_category == G.MISSING and not g.confident_wrong
+
+
+def test_repairs_inside_the_answer_block_are_kept(task: Any) -> None:
+    body = json.dumps(GOOD, indent=2)
+    text = "```json\nHere it is:\n" + body[:-1] + ",\n}\n```"
+    g = G.grade_answer(task, make_truth(), text)
+    assert g.passed, g.parse_error
+    assert "text around the object in its block" in g.format_issues
+    assert "trailing comma" in g.format_issues
+
+
+# ----------------------------------------------------------------------------------------
+# the final reply of a session
+# ----------------------------------------------------------------------------------------
+def _stream(*msgs: dict[str, Any]) -> str:
+    return "\n".join(json.dumps(m) for m in msgs) + "\n"
+
+
+_INIT = {"type": "system", "subtype": "init", "model": "m", "tools": ["Bash"]}
+_DRAFT_TURN = {"type": "assistant", "message": {"content": [
+    {"type": "text", "text": reply(GOOD)},
+    {"type": "tool_use", "id": "t", "name": "Bash", "input": {"command": "ls"}}]}}  # fmt: skip
+_TOOL = {"type": "user", "message": {"content": [
+    {"type": "tool_result", "tool_use_id": "t", "content": "x"}]}}  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("tail", "outcome", "why"),
+    [
+        ([], {"timed_out": True}, "timed out"),
+        ([], {"timed_out": False, "exit_code": 137}, "no result message"),
+        ([{"type": "result", "subtype": "error_max_turns", "is_error": True, "num_turns": 120}],
+         {}, "error_max_turns"),
+        ([{"type": "result", "subtype": "error_max_budget_usd", "is_error": True}], {},
+         "error_max_budget_usd"),
+        ([{"type": "result", "subtype": "error_during_execution", "is_error": True}], {},
+         "error_during_execution"),
+        ([{"type": "result", "subtype": "success", "is_error": True,
+           "result": "Prompt is too long"}], {}, "error result"),
+        ([{"type": "result", "subtype": "success", "is_error": False, "result": ""}], {},
+         "no reply text"),
+    ],
+)  # fmt: skip
+def test_no_final_reply_after_a_limit_or_an_error(
+    task: Any, tail: list[dict[str, Any]], outcome: dict[str, Any], why: str
+) -> None:
+    """An answer written in an earlier message is not the final reply (section 6.6)."""
+    final, reason = G.final_reply(_stream(_INIT, _DRAFT_TURN, _TOOL, *tail), outcome)
+    assert final is None and why in (reason or ""), reason
+    g = G.grade_answer(task, make_truth(), final)
+    assert not g.passed and g.cw_category == G.MISSING and not g.confident_wrong
+
+
+def test_the_final_reply_is_the_success_result(task: Any) -> None:
+    ok = {"type": "result", "subtype": "success", "is_error": False, "result": reply(GOOD)}
+    final, reason = G.final_reply(_stream(_INIT, _DRAFT_TURN, _TOOL, ok), {"timed_out": False})
+    assert final == reply(GOOD) and reason is None
+    # the result was written before the harness stopped a process that did not exit
+    assert G.final_reply(_stream(_INIT, ok), {"timed_out": True}) == (reply(GOOD), None)
+    later = {"type": "result", "subtype": "success", "is_error": False, "result": "Stopped."}
+    assert G.final_reply(_stream(_INIT, ok, later))[0] == "Stopped."
 
 
 # ----------------------------------------------------------------------------------------
@@ -259,6 +428,55 @@ def test_determinable_estimate(task: Any, given: Any, passed: bool) -> None:
     r = key(task, "head_deficit_bep_pp", given)
     assert r.passed is passed, r
     assert r.determinable is True
+
+
+@pytest.mark.parametrize(
+    ("given", "value"),
+    [
+        ("8.9", 8.9),
+        (" 8.9 pp ", 8.9),
+        ("8.9pp", 8.9),
+        ("+8.9e0", 8.9),
+        ("9 %", 9.0),
+        ("8.4 pp/yr", 8.4),
+        ("1,250 MWh/yr", 1250.0),  # a thousands separator
+        ("-0.12 bar", -0.12),
+        ("8.9 m3/h", 8.9),
+        ("8.9 °C", 8.9),
+        # not one number: ranges, hedges, approximations, decimal commas, units in brackets
+        ("8 to 12", None),
+        ("8.4-9.0", None),
+        ("8.4 - 9.0", None),
+        ("8.4–9.0", None),
+        ("8.4 ± 0.5", None),
+        ("7.5 (or 12 if the meter is biased)", None),
+        ("8,4", None),
+        ("about 8.4", None),
+        ("~8.4", None),
+        ("≈8.4", None),
+        ("<9", None),
+        ("8.4 pp (approx.)", None),
+        ("8.4pp-9.0pp", None),
+        ("nan", None),
+        ("inf", None),
+        ("", None),
+    ],
+)
+def test_a_number_string_must_be_one_number(task: Any, given: str, value: float | None) -> None:
+    got, issue = G.as_number(given)
+    assert got == (pytest.approx(value) if value is not None else None), (given, got)
+    assert (issue is not None) is (value is not None)
+    r = key(task, "head_deficit_bep_pp", given)
+    assert r.passed is (value is not None and abs(value - 8.4) <= 1.0)
+    if value is None:
+        assert r.value is None and any("not an estimate" in i for i in r.issues), r.issues
+
+
+@pytest.mark.parametrize("given", ["8 to 12", "8.4-9.0", "7.5 (or 12)", "8,4"])
+def test_ranges_and_hedges_are_not_points_in_an_object_either(task: Any, given: str) -> None:
+    r = key(task, "head_deficit_bep_pp", {"value": given, "lo90": 7.0, "hi90": 10.0})
+    assert not r.passed and r.value is None
+    assert any("is not a number" in i for i in r.issues), r.issues
 
 
 def test_unjustified_abstention_is_recorded(task: Any) -> None:
@@ -541,20 +759,89 @@ def test_every_diagnosis_category_is_exercised() -> None:
             },
             G.WRONG_MAGNITUDE,
         ),
-        # a fault list that is not a list of names is a format error, not a verdict
+        # a fault list that is not a list of names names no fault: the verdict governs
         (
             {"verdict": "identified", "faults": [{"fault": "worn_pump", "magnitude": 8}]},
-            G.MALFORMED,
+            G.CONFIDENT_WRONG,
         ),
-        ({"verdict": "ambiguous", "faults": {"worn_pump": 1}}, G.MALFORMED),
-        ({"verdict": "identified", "faults": ["worn_pump", 3]}, G.MALFORMED),
-        ({"verdict": "no_fault", "faults": [{"x": 1}]}, G.CONFIDENT_WRONG),  # verdict governs
+        ({"verdict": "ambiguous", "faults": {"worn_pump": 1}}, G.WRONG_SET),
+        ({"verdict": "identified", "faults": ["worn_pump", 3]}, G.CONFIDENT_WRONG),
+        ({"verdict": "no_fault", "faults": [{"x": 1}]}, G.CONFIDENT_WRONG),
         ({"verdict": "identified", "faults": None}, G.CONFIDENT_WRONG),  # identified nothing
+        ({"verdict": "identified"}, G.CONFIDENT_WRONG),
     ],
 )
 def test_diagnosis_parsing(task: Any, answer: Any, category: str) -> None:
     r = grade(task, dict(GOOD, diagnosis=answer), make_truth(SINGLE)).keys["diagnosis"]
     assert r.category == category, r.issues
+
+
+BAD_FAULTS: list[Any] = [
+    [1],
+    [{"fault": "worn_pump", "magnitude": 8}],
+    {"worn_pump": 8},
+    ["worn_pump", 3],
+    None,
+    "<missing>",
+]
+
+
+def _with_faults(verdict: str, faults: Any, **extra: Any) -> dict[str, Any]:
+    d: dict[str, Any] = {"verdict": verdict, **extra}
+    if faults != "<missing>":
+        d["faults"] = faults
+    return d
+
+
+@pytest.mark.parametrize("faults", BAD_FAULTS, ids=[repr(f) for f in BAD_FAULTS])
+@pytest.mark.parametrize(
+    ("truth", "verdict", "category"),
+    [
+        # "identified (anything)" is confident wrong on an ambiguous or no-fault truth
+        (NONE, "identified", G.CONFIDENT_WRONG),
+        (AMBIGUOUS, "identified", G.CONFIDENT_WRONG),
+        # on a single fault or a pair an identified verdict naming no fault is not [X],
+        # [X, Y] or one of the pair: confident wrong, whether faults is absent or malformed
+        (SINGLE, "identified", G.CONFIDENT_WRONG),
+        (PAIR, "identified", G.CONFIDENT_WRONG),
+        # an ambiguous verdict is never confident wrong
+        (NONE, "ambiguous", G.UNDER_COMMITMENT),
+        (PAIR, "ambiguous", G.UNDER_COMMITMENT),
+        (SINGLE, "ambiguous", G.WRONG_SET),
+        (AMBIGUOUS, "ambiguous", G.WRONG_SET),
+        (SINGLE, "no_fault", G.CONFIDENT_WRONG),
+        (NONE, "no_fault", G.PASS),
+    ],
+    ids=lambda v: v["label"] if isinstance(v, dict) else str(v),
+)
+def test_badly_formed_or_missing_faults_follow_the_verdict(
+    task: Any, truth: dict[str, Any], verdict: str, category: str, faults: Any
+) -> None:
+    answer = _with_faults(
+        verdict, faults, magnitudes={"worn_pump": 8.0}, resolving_measurement="suction_pressure"
+    )
+    r = grade(task, dict(GOOD, diagnosis=answer), make_truth(truth)).keys["diagnosis"]
+    assert r.category == category, r.issues
+    assert r.category != G.MALFORMED
+    if verdict != "no_fault":
+        assert any("read as no fault" in i for i in r.issues), r.issues
+
+
+def test_identified_on_a_no_fault_or_ambiguous_truth_is_confident_wrong_whatever_faults(
+    task: Any,
+) -> None:
+    for truth in (NONE, AMBIGUOUS):
+        for faults in (["worn_pump"], [], S3, ["none"], [{"x": 1}], 7):
+            answer = {"verdict": "identified", "faults": faults}
+            g = grade(task, dict(GOOD, diagnosis=answer), make_truth(truth))
+            assert g.cw_category == G.CONFIDENT_WRONG and g.confident_wrong, (truth, faults)
+
+
+def test_only_a_bad_object_or_verdict_is_malformed(task: Any) -> None:
+    for answer in ("worn_pump", ["identified"], {"verdict": "likely"}, {"faults": ["x"]}):
+        for truth in (SINGLE, NONE, AMBIGUOUS):
+            r = grade(task, dict(GOOD, diagnosis=answer), make_truth(truth)).keys["diagnosis"]
+            assert r.category == G.MALFORMED, (answer, truth)
 
 
 def test_no_fault_verdict_spellings(task: Any) -> None:
@@ -599,6 +886,31 @@ def test_truth_problems_are_found(task: Any) -> None:
     t = make_truth()
     t["realisations"]["r1"]["reference_pass"]["R-a"] = "pass"
     assert any("reference_pass" in p for p in truth_problems(task, t))
+
+
+@pytest.mark.parametrize(
+    ("mutate", "needle"),
+    [
+        # the generator's format drifts: r1 is then missing, and the headroom rule would
+        # read "no reference estimator passes"
+        (lambda r: {str(i): v for i, v in enumerate(r.values(), 1)}, "['r1', 'r2', 'r3'] are"),
+        (lambda r: {}, "are missing"),
+        (lambda r: list(r.values()), "must be an object"),
+        (lambda r: {k: v for k, v in r.items() if k != "r1"}, "['r1'] are missing"),
+        (lambda r: {**r, "r4": r["r1"]}, "['r4'] are not in the bundle"),
+        (lambda r: {**r, "r1": {**r["r1"], "oracle_pass": False}}, "oracle_pass must be true"),
+        (lambda r: {**r, "r2": {k: v for k, v in r["r2"].items() if k != "oracle_pass"}},
+         "r2: oracle_pass"),
+        (lambda r: {**r, "r1": {**r["r1"], "reference_pass": {}}}, "r1: reference_pass"),
+        (lambda r: {**r, "r1": {**r["r1"], "reference_pass": None}}, "r1: reference_pass"),
+        (lambda r: {**r, "r3": "passed"}, "r3: must be an object"),
+    ],
+)  # fmt: skip
+def test_truth_realisations_must_be_the_bundles(task: Any, mutate: Any, needle: str) -> None:
+    t = make_truth()
+    t["realisations"] = mutate(t["realisations"])
+    problems = truth_problems(task, t)
+    assert any(needle in p for p in problems), problems
 
 
 @pytest.mark.parametrize(
