@@ -928,8 +928,18 @@ def test_truth_realisations_must_be_the_bundles(task: Any, mutate: Any, needle: 
         (lambda d: d["keys"]["deterioration_real"].update(kind="bool"), "kind 'bool'"),
         (lambda d: d["keys"].pop("diagnosis"), "exactly one diagnosis key"),
         (lambda d: d["keys"]["diagnosis"]["vocabulary"]["leak"].pop("m_min"), "m_min"),
+        # a fault without task-level bounds has m_min and range both null, never one alone
+        (lambda d: d["keys"]["diagnosis"]["vocabulary"]["leak"].update(m_min=None), "m_min"),
+        (lambda d: d["keys"]["diagnosis"]["vocabulary"]["leak"].update(range=None),
+         "range must be"),
+        (lambda d: d["keys"]["diagnosis"]["vocabulary"]["leak"].update(
+            m_min="2 x stated accuracy", range="+-6 x stated accuracy"), "numeric m_min"),
+        (lambda d: d["keys"]["diagnosis"]["vocabulary"]["leak"].update(
+            unit=None, m_min=None, range=None), "needs a unit"),
+        (lambda d: [d["keys"]["diagnosis"]["vocabulary"]["leak"].pop(k)
+                    for k in ("m_min", "range")], "m_min"),
     ],
-)
+)  # fmt: skip
 def test_task_json_validation(mutate: Any, needle: str) -> None:
     data = copy.deepcopy(TASK_JSON)
     mutate(data)

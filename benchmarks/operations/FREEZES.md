@@ -72,3 +72,30 @@ Logged fixes and orchestration changes after a freeze are dated entries below.
   - **What the mode does.** At most 6 workers run, at idle priority. While the owner uses the PC, one worker runs and the others are frozen.
   - **Files touched.** `generators/scheduler.py`, `generators/__main__.py`, `generators/status.py`, their tests, and appendix entry A6.14, which documents them.
   - **Content hash.** Unchanged, `787451b432963c1f`.
+- **2026-09-26, logged fix (loader) and logged fixes of the private writers: the task.json and truth.json formats.**
+  - **What was found.** An audit loaded the private generator's task.json and truth.json, as its writers produce them, through the loader and the grader. The loader refused every F2 and every F3 development bundle:
+    - The F2 keys were named `hours_to_trigger_F-1` and so on. The loader requires lower-case snake_case keys, and the grader's key normalisation relies on that rule.
+    - In the F3 vocabulary, `pressure_sensor_fault` had text bounds, and `reverse_rotation` (no magnitude) had a null `m_min` and `range`. INTERFACE.md said nothing about a fault without numeric bounds.
+    - The audit also found that F3 tickets did not state the sign of a sensor-fault magnitude, or that faults are named without their instrument. The grader follows 6.6 in both cases.
+  - **Private fixes** are logged bug fixes of the writers, on branch `interface-conformance`:
+    - commit `34602a4ef3b38ca4c490aa4882fff96c15fa303d` (fixes and tests) and commit `9f492dc9b725f69c0c85f83fca7abe4cad05c6e7` (sealed appendix A6.17), tree `8f19125f4ea5e77a9a9395006d6bddfb20f42236`;
+    - they are merged with the private generator stopped;
+    - only files outside the content hash changed, so it stays `ed64b3e257623db020ef374f1b776b04a464b7fe2d406f0dbd2bbca90246bf8b`.
+
+    The fixes:
+    - Keys are lower-case snake_case in task.json, task.md, the truth file and the validity report (`hours_to_trigger_f_1`).
+    - `pressure_sensor_fault` has `m_min` and `range` null, with its bounds as text in `bounds`. `flow_sensor_fault` has numeric bounds.
+    - F3 tickets state the sign convention and the naming rule.
+    - Short lists of resolving options are filled to three.
+    - A new command, `generators rewrite-texts`, rewrites task.md and task.json of the bundles already written. It does this from each bundle's own draw, with its data files checked byte-identical, and logs each rewritten realisation 1 as a new `r1_written`.
+  - **The public fix.** `harness/bundles.key_spec` accepts a vocabulary fault whose `m_min` and `range` are both null and whose unit is a string. It is kept with no bounds. Everything else is refused as before: `m_min` null alone, `range` null alone, and bounds given as text.
+    - INTERFACE.md now documents key names, null bounds and signed faults.
+    - The grader and the headroom rule never read the vocabulary bounds. An identified truth still needs a numeric magnitude.
+  - **Tests.**
+    - `tests/test_ops_bench_writer_conformance.py` loads, validates and grades `tests/fixtures/opsbench/writer-documents.json`: a task.json and truth.json for each family and F3 stratum, as the private writers write them. A private test keeps the fixture equal to their output.
+    - `test_task_json_validation` has new cases for the refused forms.
+  - **Scope.**
+    - The grader and the 6.6 semantics did not change. No Stage 0 session has run. The pilot's tasks (ops-f1-003, ops-f4-001) are unaffected.
+    - `bundles-dev.sha256` and `truth-dev.sha256` are unchanged. They list only ops-f1-003 and the F4 tasks, and the fixed writers reproduce those bundles byte for byte.
+    - The F2 and F3 realisation-1 bundles are rewritten before they are committed at freeze-0b.
+    - A rewrite of the 16 development bundles on a scratch copy changed only task.md and task.json of the 9 F2 and F3 tasks. The loader then loaded all 16 tasks, and `set_problems` was empty.

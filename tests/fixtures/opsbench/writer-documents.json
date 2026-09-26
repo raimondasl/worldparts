@@ -1,0 +1,1500 @@
+{
+ "about": "task.json and truth.json of synthetic tasks, one per family and F3 stratum, as the private generator's writers make them from the draw's own key specifications (generators.bundle.task_json, generators.truthfile.truth_document; the private test tests/test_interface_conformance.py checks that this file is what they write). keys_md lists the keys as the task.md key table prints them. No development or test task: the values are made up.",
+ "documents": {
+  "F1": {
+   "task": {
+    "task_id": "ops-f1-901",
+    "set": "dev",
+    "family": "F1",
+    "generator": "G-ind",
+    "cell": "F1/G-ind",
+    "stratum": null,
+    "keys": {
+     "head_deficit_bep_pp": {
+      "kind": "estimate_or_undetermined",
+      "unit": "pp",
+      "range": [
+       -10.0,
+       30.0
+      ]
+     },
+     "wire_to_water_efficiency_pct": {
+      "kind": "estimate_or_undetermined",
+      "unit": "%",
+      "range": [
+       20.0,
+       90.0
+      ]
+     },
+     "extra_energy_mwh_per_yr": {
+      "kind": "estimate",
+      "unit": "MWh/yr",
+      "range": [
+       0.0,
+       1000.0
+      ]
+     },
+     "deterioration_real": {
+      "kind": "boolean"
+     }
+    }
+   },
+   "truth": {
+    "task_id": "ops-f1-901",
+    "keys": {
+     "head_deficit_bep_pp": {
+      "kind": "estimate_or_undetermined",
+      "determinable": true,
+      "value": 8.4,
+      "tol": 1.0,
+      "range": [
+       -10.0,
+       30.0
+      ]
+     },
+     "wire_to_water_efficiency_pct": {
+      "kind": "estimate_or_undetermined",
+      "determinable": false,
+      "value": 61.2,
+      "tol": 2.0,
+      "range": [
+       20.0,
+       90.0
+      ]
+     },
+     "extra_energy_mwh_per_yr": {
+      "kind": "estimate",
+      "value": 37.5,
+      "tol": 3.75
+     },
+     "deterioration_real": {
+      "kind": "boolean",
+      "value": true
+     }
+    },
+    "r2_applies": true,
+    "realisations": {
+     "r1": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": true,
+       "R2": true
+      },
+      "naive_pass": false
+     },
+     "r2": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": false,
+       "R-b": false,
+       "R2": true
+      },
+      "naive_pass": false
+     },
+     "r3": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": true,
+       "R2": true
+      },
+      "naive_pass": false
+     }
+    }
+   },
+   "keys_md": [
+    "head_deficit_bep_pp",
+    "wire_to_water_efficiency_pct",
+    "extra_energy_mwh_per_yr",
+    "deterioration_real"
+   ]
+  },
+  "F2": {
+   "task": {
+    "task_id": "ops-f2-901",
+    "set": "dev",
+    "family": "F2",
+    "generator": "G-ind",
+    "cell": "F2/G-ind",
+    "stratum": null,
+    "keys": {
+     "hours_to_trigger_f_1": {
+      "kind": "estimate",
+      "unit": "h",
+      "range": [
+       0.0,
+       240.0
+      ]
+     },
+     "hours_to_trigger_f_2": {
+      "kind": "estimate",
+      "unit": "h",
+      "range": [
+       0.0,
+       240.0
+      ]
+     },
+     "hours_to_trigger_f_3": {
+      "kind": "estimate",
+      "unit": "h",
+      "range": [
+       0.0,
+       240.0
+      ]
+     },
+     "clean_bed_dp_bar": {
+      "kind": "estimate",
+      "unit": "bar",
+      "range": [
+       0.0,
+       1.0
+      ]
+     },
+     "fouling_real": {
+      "kind": "boolean"
+     },
+     "first_to_trigger": {
+      "kind": "choice",
+      "options": [
+       "F-1",
+       "F-2",
+       "F-3"
+      ]
+     }
+    }
+   },
+   "truth": {
+    "task_id": "ops-f2-901",
+    "keys": {
+     "hours_to_trigger_f_1": {
+      "kind": "estimate",
+      "value": 61.0,
+      "tol": 6.1
+     },
+     "hours_to_trigger_f_2": {
+      "kind": "estimate",
+      "value": 42.5,
+      "tol": 4.3
+     },
+     "hours_to_trigger_f_3": {
+      "kind": "estimate",
+      "value": 240.0,
+      "tol": 3.0
+     },
+     "clean_bed_dp_bar": {
+      "kind": "estimate",
+      "value": 0.12,
+      "tol": 0.01
+     },
+     "fouling_real": {
+      "kind": "boolean",
+      "value": true
+     },
+     "first_to_trigger": {
+      "kind": "choice",
+      "value": "F-2"
+     }
+    },
+    "r2_applies": false,
+    "realisations": {
+     "r1": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": true
+      },
+      "naive_pass": false
+     },
+     "r2": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": false,
+       "R-b": false
+      },
+      "naive_pass": false
+     },
+     "r3": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": true
+      },
+      "naive_pass": false
+     }
+    }
+   },
+   "keys_md": [
+    "hours_to_trigger_f_1",
+    "hours_to_trigger_f_2",
+    "hours_to_trigger_f_3",
+    "clean_bed_dp_bar",
+    "fouling_real",
+    "first_to_trigger"
+   ]
+  },
+  "F3-single": {
+   "task": {
+    "task_id": "ops-f3-901",
+    "set": "dev",
+    "family": "F3",
+    "generator": "G-ind",
+    "cell": "F3/G-ind",
+    "stratum": "single",
+    "keys": {
+     "diagnosis": {
+      "kind": "diagnosis",
+      "vocabulary": {
+       "none": {
+        "unit": "",
+        "m_min": null,
+        "range": null
+       },
+       "worn_pump": {
+        "unit": "pp of catalogue head",
+        "m_min": 5.0,
+        "range": [
+         0.0,
+         30.0
+        ]
+       },
+       "pump_running_slow": {
+        "unit": "% of expected speed",
+        "m_min": 3.0,
+        "range": [
+         0.0,
+         15.0
+        ]
+       },
+       "wrong_impeller_or_trim": {
+        "unit": "% of stated diameter",
+        "m_min": 4.0,
+        "range": [
+         0.0,
+         15.0
+        ]
+       },
+       "reverse_rotation": {
+        "unit": "identity",
+        "m_min": null,
+        "range": null
+       },
+       "blocked_suction_strainer": {
+        "unit": "m of extra suction loss",
+        "m_min": 0.3,
+        "range": [
+         0.0,
+         3.0
+        ]
+       },
+       "low_suction_level": {
+        "unit": "m",
+        "m_min": 0.5,
+        "range": [
+         0.0,
+         3.0
+        ]
+       },
+       "air_entrainment": {
+        "unit": "% gas by volume",
+        "m_min": 3.0,
+        "range": [
+         0.0,
+         6.0
+        ]
+       },
+       "throttled_valve": {
+        "unit": "% Kv reduction",
+        "m_min": 20.0,
+        "range": [
+         0.0,
+         80.0
+        ]
+       },
+       "check_valve_passing": {
+        "unit": "% of duty flow",
+        "m_min": 3.0,
+        "range": [
+         0.0,
+         20.0
+        ]
+       },
+       "clogged_filter": {
+        "unit": "x rated clean-bed drop",
+        "m_min": 1.3,
+        "range": [
+         1.0,
+         3.0
+        ]
+       },
+       "pipe_scaling": {
+        "unit": "x stated roughness",
+        "m_min": 8.0,
+        "range": [
+         1.0,
+         50.0
+        ]
+       },
+       "leak": {
+        "unit": "% of station flow",
+        "m_min": 2.0,
+        "range": [
+         0.0,
+         20.0
+        ]
+       },
+       "uv_lamp_degraded": {
+        "unit": "pp of new-lamp output",
+        "m_min": 20.0,
+        "range": [
+         0.0,
+         60.0
+        ]
+       },
+       "pressure_sensor_fault": {
+        "unit": "bar (signed)",
+        "m_min": null,
+        "range": null,
+        "bounds": "2 to 6 x the transmitter's stated accuracy, signed"
+       },
+       "flow_sensor_fault": {
+        "unit": "% of reading (signed)",
+        "m_min": 1.0,
+        "range": [
+         -3.0,
+         3.0
+        ]
+       }
+      },
+      "excluded_from_candidates": {
+       "clogged_filter": "no filter in this plant",
+       "uv_lamp_degraded": "no UV reactor in this plant"
+      },
+      "resolving_options": [
+       "suction_pressure",
+       "sump_level",
+       "motor_power",
+       "downstream_flow"
+      ]
+     }
+    }
+   },
+   "truth": {
+    "task_id": "ops-f3-901",
+    "keys": {
+     "diagnosis": {
+      "kind": "diagnosis",
+      "label": "identified",
+      "faults": [
+       "worn_pump"
+      ],
+      "magnitudes": {
+       "worn_pump": {
+        "value": 8.0,
+        "tol": 1.5
+       }
+      }
+     }
+    },
+    "r2_applies": true,
+    "realisations": {
+     "r1": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": true,
+       "R2": true
+      },
+      "naive_pass": false
+     },
+     "r2": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": false,
+       "R-b": false,
+       "R2": true
+      },
+      "naive_pass": false
+     },
+     "r3": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": true,
+       "R2": true
+      },
+      "naive_pass": false
+     }
+    }
+   },
+   "keys_md": [
+    "diagnosis"
+   ]
+  },
+  "F3-double": {
+   "task": {
+    "task_id": "ops-f3-902",
+    "set": "dev",
+    "family": "F3",
+    "generator": "G-ind",
+    "cell": "F3/G-ind",
+    "stratum": "double",
+    "keys": {
+     "diagnosis": {
+      "kind": "diagnosis",
+      "vocabulary": {
+       "none": {
+        "unit": "",
+        "m_min": null,
+        "range": null
+       },
+       "worn_pump": {
+        "unit": "pp of catalogue head",
+        "m_min": 5.0,
+        "range": [
+         0.0,
+         30.0
+        ]
+       },
+       "pump_running_slow": {
+        "unit": "% of expected speed",
+        "m_min": 3.0,
+        "range": [
+         0.0,
+         15.0
+        ]
+       },
+       "wrong_impeller_or_trim": {
+        "unit": "% of stated diameter",
+        "m_min": 4.0,
+        "range": [
+         0.0,
+         15.0
+        ]
+       },
+       "reverse_rotation": {
+        "unit": "identity",
+        "m_min": null,
+        "range": null
+       },
+       "blocked_suction_strainer": {
+        "unit": "m of extra suction loss",
+        "m_min": 0.3,
+        "range": [
+         0.0,
+         3.0
+        ]
+       },
+       "low_suction_level": {
+        "unit": "m",
+        "m_min": 0.5,
+        "range": [
+         0.0,
+         3.0
+        ]
+       },
+       "air_entrainment": {
+        "unit": "% gas by volume",
+        "m_min": 3.0,
+        "range": [
+         0.0,
+         6.0
+        ]
+       },
+       "throttled_valve": {
+        "unit": "% Kv reduction",
+        "m_min": 20.0,
+        "range": [
+         0.0,
+         80.0
+        ]
+       },
+       "check_valve_passing": {
+        "unit": "% of duty flow",
+        "m_min": 3.0,
+        "range": [
+         0.0,
+         20.0
+        ]
+       },
+       "clogged_filter": {
+        "unit": "x rated clean-bed drop",
+        "m_min": 1.3,
+        "range": [
+         1.0,
+         3.0
+        ]
+       },
+       "pipe_scaling": {
+        "unit": "x stated roughness",
+        "m_min": 8.0,
+        "range": [
+         1.0,
+         50.0
+        ]
+       },
+       "leak": {
+        "unit": "% of station flow",
+        "m_min": 2.0,
+        "range": [
+         0.0,
+         20.0
+        ]
+       },
+       "uv_lamp_degraded": {
+        "unit": "pp of new-lamp output",
+        "m_min": 20.0,
+        "range": [
+         0.0,
+         60.0
+        ]
+       },
+       "pressure_sensor_fault": {
+        "unit": "bar (signed)",
+        "m_min": null,
+        "range": null,
+        "bounds": "2 to 6 x the transmitter's stated accuracy, signed"
+       },
+       "flow_sensor_fault": {
+        "unit": "% of reading (signed)",
+        "m_min": 1.0,
+        "range": [
+         -3.0,
+         3.0
+        ]
+       }
+      },
+      "excluded_from_candidates": {
+       "clogged_filter": "no filter in this plant",
+       "uv_lamp_degraded": "no UV reactor in this plant"
+      },
+      "resolving_options": [
+       "suction_pressure",
+       "sump_level",
+       "motor_power",
+       "downstream_flow"
+      ]
+     }
+    }
+   },
+   "truth": {
+    "task_id": "ops-f3-902",
+    "keys": {
+     "diagnosis": {
+      "kind": "diagnosis",
+      "label": "identified",
+      "faults": [
+       "throttled_valve",
+       "leak"
+      ],
+      "magnitudes": {
+       "throttled_valve": {
+        "value": 35.0,
+        "tol": 5.0
+       },
+       "leak": {
+        "value": 6.0,
+        "tol": 1.2
+       }
+      }
+     }
+    },
+    "r2_applies": true,
+    "realisations": {
+     "r1": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": true,
+       "R2": true
+      },
+      "naive_pass": false
+     },
+     "r2": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": false,
+       "R-b": false,
+       "R2": true
+      },
+      "naive_pass": false
+     },
+     "r3": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": true,
+       "R2": true
+      },
+      "naive_pass": false
+     }
+    }
+   },
+   "keys_md": [
+    "diagnosis"
+   ]
+  },
+  "F3-ambiguous": {
+   "task": {
+    "task_id": "ops-f3-903",
+    "set": "dev",
+    "family": "F3",
+    "generator": "G-ind",
+    "cell": "F3/G-ind",
+    "stratum": "ambiguous",
+    "keys": {
+     "diagnosis": {
+      "kind": "diagnosis",
+      "vocabulary": {
+       "none": {
+        "unit": "",
+        "m_min": null,
+        "range": null
+       },
+       "worn_pump": {
+        "unit": "pp of catalogue head",
+        "m_min": 5.0,
+        "range": [
+         0.0,
+         30.0
+        ]
+       },
+       "pump_running_slow": {
+        "unit": "% of expected speed",
+        "m_min": 3.0,
+        "range": [
+         0.0,
+         15.0
+        ]
+       },
+       "wrong_impeller_or_trim": {
+        "unit": "% of stated diameter",
+        "m_min": 4.0,
+        "range": [
+         0.0,
+         15.0
+        ]
+       },
+       "reverse_rotation": {
+        "unit": "identity",
+        "m_min": null,
+        "range": null
+       },
+       "blocked_suction_strainer": {
+        "unit": "m of extra suction loss",
+        "m_min": 0.3,
+        "range": [
+         0.0,
+         3.0
+        ]
+       },
+       "low_suction_level": {
+        "unit": "m",
+        "m_min": 0.5,
+        "range": [
+         0.0,
+         3.0
+        ]
+       },
+       "air_entrainment": {
+        "unit": "% gas by volume",
+        "m_min": 3.0,
+        "range": [
+         0.0,
+         6.0
+        ]
+       },
+       "throttled_valve": {
+        "unit": "% Kv reduction",
+        "m_min": 20.0,
+        "range": [
+         0.0,
+         80.0
+        ]
+       },
+       "check_valve_passing": {
+        "unit": "% of duty flow",
+        "m_min": 3.0,
+        "range": [
+         0.0,
+         20.0
+        ]
+       },
+       "clogged_filter": {
+        "unit": "x rated clean-bed drop",
+        "m_min": 1.3,
+        "range": [
+         1.0,
+         3.0
+        ]
+       },
+       "pipe_scaling": {
+        "unit": "x stated roughness",
+        "m_min": 8.0,
+        "range": [
+         1.0,
+         50.0
+        ]
+       },
+       "leak": {
+        "unit": "% of station flow",
+        "m_min": 2.0,
+        "range": [
+         0.0,
+         20.0
+        ]
+       },
+       "uv_lamp_degraded": {
+        "unit": "pp of new-lamp output",
+        "m_min": 20.0,
+        "range": [
+         0.0,
+         60.0
+        ]
+       },
+       "pressure_sensor_fault": {
+        "unit": "bar (signed)",
+        "m_min": null,
+        "range": null,
+        "bounds": "2 to 6 x the transmitter's stated accuracy, signed"
+       },
+       "flow_sensor_fault": {
+        "unit": "% of reading (signed)",
+        "m_min": 1.0,
+        "range": [
+         -3.0,
+         3.0
+        ]
+       }
+      },
+      "excluded_from_candidates": {
+       "clogged_filter": "no filter in this plant",
+       "uv_lamp_degraded": "no UV reactor in this plant"
+      },
+      "resolving_options": [
+       "suction_pressure",
+       "sump_level",
+       "motor_power",
+       "downstream_flow"
+      ]
+     }
+    }
+   },
+   "truth": {
+    "task_id": "ops-f3-903",
+    "keys": {
+     "diagnosis": {
+      "kind": "diagnosis",
+      "label": "ambiguous",
+      "faults": [
+       "low_suction_level",
+       "blocked_suction_strainer"
+      ],
+      "magnitudes": {},
+      "resolving": [
+       "sump_level"
+      ]
+     }
+    },
+    "r2_applies": true,
+    "realisations": {
+     "r1": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": true,
+       "R2": true
+      },
+      "naive_pass": false
+     },
+     "r2": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": false,
+       "R-b": false,
+       "R2": true
+      },
+      "naive_pass": false
+     },
+     "r3": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": true,
+       "R2": true
+      },
+      "naive_pass": false
+     }
+    }
+   },
+   "keys_md": [
+    "diagnosis"
+   ]
+  },
+  "F3-no_fault": {
+   "task": {
+    "task_id": "ops-f3-904",
+    "set": "dev",
+    "family": "F3",
+    "generator": "G-ind",
+    "cell": "F3/G-ind",
+    "stratum": "no_fault",
+    "keys": {
+     "diagnosis": {
+      "kind": "diagnosis",
+      "vocabulary": {
+       "none": {
+        "unit": "",
+        "m_min": null,
+        "range": null
+       },
+       "worn_pump": {
+        "unit": "pp of catalogue head",
+        "m_min": 5.0,
+        "range": [
+         0.0,
+         30.0
+        ]
+       },
+       "pump_running_slow": {
+        "unit": "% of expected speed",
+        "m_min": 3.0,
+        "range": [
+         0.0,
+         15.0
+        ]
+       },
+       "wrong_impeller_or_trim": {
+        "unit": "% of stated diameter",
+        "m_min": 4.0,
+        "range": [
+         0.0,
+         15.0
+        ]
+       },
+       "reverse_rotation": {
+        "unit": "identity",
+        "m_min": null,
+        "range": null
+       },
+       "blocked_suction_strainer": {
+        "unit": "m of extra suction loss",
+        "m_min": 0.3,
+        "range": [
+         0.0,
+         3.0
+        ]
+       },
+       "low_suction_level": {
+        "unit": "m",
+        "m_min": 0.5,
+        "range": [
+         0.0,
+         3.0
+        ]
+       },
+       "air_entrainment": {
+        "unit": "% gas by volume",
+        "m_min": 3.0,
+        "range": [
+         0.0,
+         6.0
+        ]
+       },
+       "throttled_valve": {
+        "unit": "% Kv reduction",
+        "m_min": 20.0,
+        "range": [
+         0.0,
+         80.0
+        ]
+       },
+       "check_valve_passing": {
+        "unit": "% of duty flow",
+        "m_min": 3.0,
+        "range": [
+         0.0,
+         20.0
+        ]
+       },
+       "clogged_filter": {
+        "unit": "x rated clean-bed drop",
+        "m_min": 1.3,
+        "range": [
+         1.0,
+         3.0
+        ]
+       },
+       "pipe_scaling": {
+        "unit": "x stated roughness",
+        "m_min": 8.0,
+        "range": [
+         1.0,
+         50.0
+        ]
+       },
+       "leak": {
+        "unit": "% of station flow",
+        "m_min": 2.0,
+        "range": [
+         0.0,
+         20.0
+        ]
+       },
+       "uv_lamp_degraded": {
+        "unit": "pp of new-lamp output",
+        "m_min": 20.0,
+        "range": [
+         0.0,
+         60.0
+        ]
+       },
+       "pressure_sensor_fault": {
+        "unit": "bar (signed)",
+        "m_min": null,
+        "range": null,
+        "bounds": "2 to 6 x the transmitter's stated accuracy, signed"
+       },
+       "flow_sensor_fault": {
+        "unit": "% of reading (signed)",
+        "m_min": 1.0,
+        "range": [
+         -3.0,
+         3.0
+        ]
+       }
+      },
+      "excluded_from_candidates": {
+       "check_valve_passing": "no standby pump"
+      },
+      "resolving_options": [
+       "suction_pressure",
+       "sump_level",
+       "motor_power",
+       "downstream_flow"
+      ]
+     }
+    }
+   },
+   "truth": {
+    "task_id": "ops-f3-904",
+    "keys": {
+     "diagnosis": {
+      "kind": "diagnosis",
+      "label": "no_fault",
+      "faults": [],
+      "magnitudes": {}
+     }
+    },
+    "r2_applies": false,
+    "realisations": {
+     "r1": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": true
+      },
+      "naive_pass": false
+     },
+     "r2": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": false,
+       "R-b": false
+      },
+      "naive_pass": false
+     },
+     "r3": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": true
+      },
+      "naive_pass": false
+     }
+    }
+   },
+   "keys_md": [
+    "diagnosis"
+   ]
+  },
+  "F3-sensor": {
+   "task": {
+    "task_id": "ops-f3-905",
+    "set": "dev",
+    "family": "F3",
+    "generator": "G-ind",
+    "cell": "F3/G-ind",
+    "stratum": "sensor",
+    "keys": {
+     "diagnosis": {
+      "kind": "diagnosis",
+      "vocabulary": {
+       "none": {
+        "unit": "",
+        "m_min": null,
+        "range": null
+       },
+       "worn_pump": {
+        "unit": "pp of catalogue head",
+        "m_min": 5.0,
+        "range": [
+         0.0,
+         30.0
+        ]
+       },
+       "pump_running_slow": {
+        "unit": "% of expected speed",
+        "m_min": 3.0,
+        "range": [
+         0.0,
+         15.0
+        ]
+       },
+       "wrong_impeller_or_trim": {
+        "unit": "% of stated diameter",
+        "m_min": 4.0,
+        "range": [
+         0.0,
+         15.0
+        ]
+       },
+       "reverse_rotation": {
+        "unit": "identity",
+        "m_min": null,
+        "range": null
+       },
+       "blocked_suction_strainer": {
+        "unit": "m of extra suction loss",
+        "m_min": 0.3,
+        "range": [
+         0.0,
+         3.0
+        ]
+       },
+       "low_suction_level": {
+        "unit": "m",
+        "m_min": 0.5,
+        "range": [
+         0.0,
+         3.0
+        ]
+       },
+       "air_entrainment": {
+        "unit": "% gas by volume",
+        "m_min": 3.0,
+        "range": [
+         0.0,
+         6.0
+        ]
+       },
+       "throttled_valve": {
+        "unit": "% Kv reduction",
+        "m_min": 20.0,
+        "range": [
+         0.0,
+         80.0
+        ]
+       },
+       "check_valve_passing": {
+        "unit": "% of duty flow",
+        "m_min": 3.0,
+        "range": [
+         0.0,
+         20.0
+        ]
+       },
+       "clogged_filter": {
+        "unit": "x rated clean-bed drop",
+        "m_min": 1.3,
+        "range": [
+         1.0,
+         3.0
+        ]
+       },
+       "pipe_scaling": {
+        "unit": "x stated roughness",
+        "m_min": 8.0,
+        "range": [
+         1.0,
+         50.0
+        ]
+       },
+       "leak": {
+        "unit": "% of station flow",
+        "m_min": 2.0,
+        "range": [
+         0.0,
+         20.0
+        ]
+       },
+       "uv_lamp_degraded": {
+        "unit": "pp of new-lamp output",
+        "m_min": 20.0,
+        "range": [
+         0.0,
+         60.0
+        ]
+       },
+       "pressure_sensor_fault": {
+        "unit": "bar (signed)",
+        "m_min": null,
+        "range": null,
+        "bounds": "2 to 6 x the transmitter's stated accuracy, signed"
+       },
+       "flow_sensor_fault": {
+        "unit": "% of reading (signed)",
+        "m_min": 1.0,
+        "range": [
+         -3.0,
+         3.0
+        ]
+       }
+      },
+      "excluded_from_candidates": {
+       "pressure_sensor_fault": "no pressure transmitter",
+       "worn_pump": "no pump in this plant"
+      },
+      "resolving_options": [
+       "suction_pressure",
+       "sump_level",
+       "motor_power",
+       "downstream_flow"
+      ]
+     }
+    }
+   },
+   "truth": {
+    "task_id": "ops-f3-905",
+    "keys": {
+     "diagnosis": {
+      "kind": "diagnosis",
+      "label": "identified",
+      "faults": [
+       "flow_sensor_fault"
+      ],
+      "magnitudes": {
+       "flow_sensor_fault": {
+        "value": -1.54,
+        "tol": 0.3
+       }
+      }
+     }
+    },
+    "r2_applies": false,
+    "realisations": {
+     "r1": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": true
+      },
+      "naive_pass": false
+     },
+     "r2": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": false,
+       "R-b": false
+      },
+      "naive_pass": false
+     },
+     "r3": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": true
+      },
+      "naive_pass": false
+     }
+    }
+   },
+   "keys_md": [
+    "diagnosis"
+   ]
+  },
+  "F3-sensor_pressure": {
+   "task": {
+    "task_id": "ops-f3-906",
+    "set": "dev",
+    "family": "F3",
+    "generator": "G-ind",
+    "cell": "F3/G-ind",
+    "stratum": "sensor",
+    "keys": {
+     "diagnosis": {
+      "kind": "diagnosis",
+      "vocabulary": {
+       "none": {
+        "unit": "",
+        "m_min": null,
+        "range": null
+       },
+       "worn_pump": {
+        "unit": "pp of catalogue head",
+        "m_min": 5.0,
+        "range": [
+         0.0,
+         30.0
+        ]
+       },
+       "pump_running_slow": {
+        "unit": "% of expected speed",
+        "m_min": 3.0,
+        "range": [
+         0.0,
+         15.0
+        ]
+       },
+       "wrong_impeller_or_trim": {
+        "unit": "% of stated diameter",
+        "m_min": 4.0,
+        "range": [
+         0.0,
+         15.0
+        ]
+       },
+       "reverse_rotation": {
+        "unit": "identity",
+        "m_min": null,
+        "range": null
+       },
+       "blocked_suction_strainer": {
+        "unit": "m of extra suction loss",
+        "m_min": 0.3,
+        "range": [
+         0.0,
+         3.0
+        ]
+       },
+       "low_suction_level": {
+        "unit": "m",
+        "m_min": 0.5,
+        "range": [
+         0.0,
+         3.0
+        ]
+       },
+       "air_entrainment": {
+        "unit": "% gas by volume",
+        "m_min": 3.0,
+        "range": [
+         0.0,
+         6.0
+        ]
+       },
+       "throttled_valve": {
+        "unit": "% Kv reduction",
+        "m_min": 20.0,
+        "range": [
+         0.0,
+         80.0
+        ]
+       },
+       "check_valve_passing": {
+        "unit": "% of duty flow",
+        "m_min": 3.0,
+        "range": [
+         0.0,
+         20.0
+        ]
+       },
+       "clogged_filter": {
+        "unit": "x rated clean-bed drop",
+        "m_min": 1.3,
+        "range": [
+         1.0,
+         3.0
+        ]
+       },
+       "pipe_scaling": {
+        "unit": "x stated roughness",
+        "m_min": 8.0,
+        "range": [
+         1.0,
+         50.0
+        ]
+       },
+       "leak": {
+        "unit": "% of station flow",
+        "m_min": 2.0,
+        "range": [
+         0.0,
+         20.0
+        ]
+       },
+       "uv_lamp_degraded": {
+        "unit": "pp of new-lamp output",
+        "m_min": 20.0,
+        "range": [
+         0.0,
+         60.0
+        ]
+       },
+       "pressure_sensor_fault": {
+        "unit": "bar (signed)",
+        "m_min": null,
+        "range": null,
+        "bounds": "2 to 6 x the transmitter's stated accuracy, signed"
+       },
+       "flow_sensor_fault": {
+        "unit": "% of reading (signed)",
+        "m_min": 1.0,
+        "range": [
+         -3.0,
+         3.0
+        ]
+       }
+      },
+      "excluded_from_candidates": {
+       "clogged_filter": "no filter in this plant",
+       "uv_lamp_degraded": "no UV reactor in this plant"
+      },
+      "resolving_options": [
+       "suction_pressure",
+       "sump_level",
+       "motor_power",
+       "downstream_flow"
+      ]
+     }
+    }
+   },
+   "truth": {
+    "task_id": "ops-f3-906",
+    "keys": {
+     "diagnosis": {
+      "kind": "diagnosis",
+      "label": "identified",
+      "faults": [
+       "pressure_sensor_fault"
+      ],
+      "magnitudes": {
+       "pressure_sensor_fault": {
+        "value": 0.021,
+        "tol": 0.004
+       }
+      }
+     }
+    },
+    "r2_applies": true,
+    "realisations": {
+     "r1": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": true,
+       "R2": true
+      },
+      "naive_pass": false
+     },
+     "r2": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": false,
+       "R-b": false,
+       "R2": true
+      },
+      "naive_pass": false
+     },
+     "r3": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": true,
+       "R2": true
+      },
+      "naive_pass": false
+     }
+    }
+   },
+   "keys_md": [
+    "diagnosis"
+   ]
+  },
+  "F4": {
+   "task": {
+    "task_id": "ops-f4-901",
+    "set": "dev",
+    "family": "F4",
+    "generator": "G-epa",
+    "cell": "F4/G-epa",
+    "stratum": null,
+    "keys": {
+     "determinable_set": {
+      "kind": "set",
+      "options": [
+       "pump_head_deficit",
+       "valve_kv",
+       "pump_efficiency"
+      ]
+     },
+     "best_added_sensor": {
+      "kind": "choice",
+      "options": [
+       "suction_pressure",
+       "tachometer",
+       "downstream_flow"
+      ]
+     },
+     "two_point_test_helps": {
+      "kind": "boolean"
+     }
+    }
+   },
+   "truth": {
+    "task_id": "ops-f4-901",
+    "keys": {
+     "determinable_set": {
+      "kind": "set",
+      "value": [
+       "valve_kv"
+      ]
+     },
+     "best_added_sensor": {
+      "kind": "choice",
+      "value": "tachometer"
+     },
+     "two_point_test_helps": {
+      "kind": "boolean",
+      "value": false
+     }
+    },
+    "r2_applies": true,
+    "realisations": {
+     "r1": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": false,
+       "R2": true
+      },
+      "naive_pass": false
+     },
+     "r2": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": false,
+       "R2": true
+      },
+      "naive_pass": false
+     },
+     "r3": {
+      "oracle_pass": true,
+      "reference_pass": {
+       "R-a": true,
+       "R-b": false,
+       "R2": true
+      },
+      "naive_pass": false
+     }
+    }
+   },
+   "keys_md": [
+    "determinable_set",
+    "best_added_sensor",
+    "two_point_test_helps"
+   ]
+  }
+ }
+}

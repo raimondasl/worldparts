@@ -247,8 +247,20 @@ def key_spec(key: str, d: Any, problems: list[str]) -> KeySpec | None:
             if not isinstance(spec, dict):
                 problems.append(f"{fw}: must be an object")
                 continue
+            if (
+                isinstance(spec.get("unit"), str)
+                and "m_min" in spec
+                and "range" in spec
+                and spec["m_min"] is None
+                and spec["range"] is None
+            ):
+                # no task-level magnitude bounds (INTERFACE.md): m_min and range null together
+                vocabulary[fault] = dict(spec)
+                continue
             if not isinstance(spec.get("unit"), str) or not _is_number(spec.get("m_min")):
-                problems.append(f"{fw}: needs a unit and a numeric m_min")
+                problems.append(
+                    f"{fw}: needs a unit and a numeric m_min (or m_min and range both null)"
+                )
             rng = _range(spec.get("range"), fw, problems)
             vocabulary[fault] = {**spec, "range": list(rng) if rng else spec.get("range")}
         if len({norm_token(f) for f in vocabulary}) != len(vocabulary):

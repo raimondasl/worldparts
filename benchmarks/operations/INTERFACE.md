@@ -74,6 +74,14 @@ A rejected task's bundle moves to `dev-rejected/<task_id>-a<attempt>/`, and its 
 
 `stratum` is null except in F3, where it is one of `single`, `double`, `ambiguous`, `no_fault` or `sensor`.
 
+Field notes:
+
+- **Key names** are lower-case snake_case, `[a-z][a-z0-9_]*`, in task.json, task.md and the truth file alike. An F2 forecast key is `hours_to_trigger_f_1` for filter F-1. The loader refuses any other key name.
+- **Vocabulary bounds.** A fault's `m_min` and `range` are both numbers in the fault's unit, or both null. Both are null for a fault with no task-level magnitude bounds:
+  - a fault with no magnitude, such as `reverse_rotation`;
+  - a fault whose bounds depend on the faulted instrument, such as `pressure_sensor_fault`. Its bounds may be stated as text in an extra field, `bounds`.
+- **Signed faults.** A fault whose unit is marked `(signed)` has a signed `range`, and its `m_min` bounds the absolute magnitude. Its truth magnitude is signed too.
+
 ## Answer format
 
 The session's final reply ends with one fenced `json` block. It holds one entry per key:
