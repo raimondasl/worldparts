@@ -53,6 +53,66 @@ Logged fixes and orchestration changes after a freeze are dated entries below.
 - **Pilot:** at most 6 sessions on ops-f1-003 and ops-f4-001, in their own run directory, never passed to `grade` or `headroom` for Stage 0.
 - **Session shell** (added by the logged fix below): the private Git Bash `git-bash-6f0c4145d65f`, whose `/tmp` is `%LOCALAPPDATA%\worldparts-bench\session-tmp`.
 
+## freeze-0b, 2026-09-26 (before Stage 0)
+
+**Public:**
+
+- this commit;
+- [bundles-dev.sha256](bundles-dev.sha256): realisation 1 of all 16 development tasks, and realisations 2 and 3 of the five accepted tasks;
+- [truth-dev.sha256](truth-dev.sha256): the validated truths, ops-f1-001, ops-f1-003, ops-f4-001, ops-f4-002 and ops-f4-003. Each is produced under content hash `ed64b3e257623db0` and passes the public truth checks.
+
+**Private folder:**
+
+- **Commit** `0bc65c2ef1edf35cc7ecbce6b2ae3ff3e3743ebf`, tree `b7bb8e0c99bdab7abd6a6a9a3ddade7ef1df145a`.
+- **Archive hash** `71bac2b44b42074c57d7fdee994fa083793a576163cd9e112dfc2f6f7ef67df1`.
+- **Content hash** `ed64b3e257623db020ef374f1b776b04a464b7fe2d406f0dbd2bbca90246bf8b`, over the 60 files in [freeze-0b-private-content.sha256](freeze-0b-private-content.sha256).
+
+**Content-hash check against freeze-0a (`787451b432963c1f`).** The only covered file that changed is `validation/seqval.py`, for the change section 7 allows before freeze-0b: R2 on realisations 1 to 3 wherever neither R-a nor R-b passes (6.5).
+
+- **Checkpoints.** Existing checkpoint rows were verified bit for bit under the new code: 20 rows of oracle, R-a, R-b and naive on ops-f1-001, ops-f1-002, ops-f1-003, ops-f2-003 and ops-f3-004. The checkpoints were then migrated to the new hash, with the record kept in each checkpoint.
+- **Allowed change: realisation 1 at the screen.** Writing realisation 1 as soon as a draw passes its screen, the other change section 7 allows, touches only files outside the content hash.
+
+**Private commits after freeze-0a:**
+
+| Commits | Change | Kind |
+|---|---|---|
+| `a992d24`, `c302cbf` | Courtesy-mode review | Orchestration, logged above |
+| `2c0441f`, `c501e7e`, `bfa87f1`, `04c64d1` | The two allowed changes, their review and the tooling (regeneration check, public-updates listing, checkpoint verification and migration) | Allowed changes and tooling |
+| `6e0ff5d` | The regeneration tool records the cause of one meta difference | Tooling |
+| `dc7f9c9` | The private folder's stop check runs its fast tests only | Tooling |
+| `34602a4`, `9f492dc`, `0bc65c2` | The bundle writers follow INTERFACE.md | Logged fix, entry below |
+
+**Regeneration check.** The freeze-0b code wrote the four freeze-0a tasks again ([freeze-0b-regen-install.md](freeze-0b-regen-install.md)):
+
+- **Bundles.** All 12 bundles (r1 to r3 of ops-f1-003 and ops-f4-001 to 003) are byte-identical.
+- **Truth files.** Each differs only by the new top-level field `r2_applies: true`. No answer, tolerance or reference result changed.
+- **Validity reports.** They gain `content_hash`, `content_hash_full`, `r1_moved_from`, `screen_passed`, R2's record on realisations 1 to 3 and `n_max`. Their `n_real` changes from 200 to null on the F4 tasks, because an F4 validation has no sequential stop; the Monte Carlo size is now `n_max`. Times and paths change too.
+- **Installed.** The new files replace the old ones, which are kept in the private `truth/dev_superseded/freeze-0a/`.
+- **Pilot unaffected.** No pilot session's task changed.
+
+**Slot order (section 8).** Slot order follows the development table of section 4 cell by cell. Within a cell, it is the order in which the draws passed the screen. Before freeze-0b, draws were rejected at the screen or by validation and redrawn within their cells under 6.5: ops-f1-001, ops-f1-002, ops-f2-001, ops-f2-002, ops-f3-001 and ops-f3-005, as the private attempt logs record.
+
+| # | Slot | Cell | Attempt | State at freeze-0b | r1 digest |
+|---:|---|---|---:|---|---|
+| 1 | ops-f1-001 | F1/G-ind | 1 | accepted | `a8b0d563d03ab4a2396b79db3fbca70f6969d36939d228871c0ab2bd1224efd0` |
+| 2 | ops-f1-002 | F1/G-ind | 1 | validating | `b2959d649dea6c346fe9bc76446cbbda2cba54ef03c256f04c21265d7f7d8db5` |
+| 3 | ops-f1-003 | F1/G-epa | 0 | accepted | `2eef78fb13eff0e86ff5294c82150fcc72a5f434f2f01b26dd25e5f7e39129c7` |
+| 4 | ops-f1-004 | F1/G-epa | 0 | validating | `b04552471c6db1a38d2b4dd03457bd7438e7b12134720cd12b71b1f755017dce` |
+| 5 | ops-f2-001 | F2/G-ind | 1 | validating | `4e3933b19dbee6fb8a1f7e6b07649e04c2c23279d8868aea8b4c9dd7d58b283b` |
+| 6 | ops-f2-003 | F2/G-ind | 0 | validating | `fc48985bb1fb5e8f0e99e6dcb9f1314378177077abf6d6d465da3fab3fa5201d` |
+| 7 | ops-f2-002 | F2/G-ind | 1 | validating | `e593be5fbc72f7069d6bae9559ef0e4f18682d859db46fd59d1f0bd9d9c0f24d` |
+| 8 | ops-f3-001 | F3/G-ind | 1 | validating | `32fe12d245ab9003eac7f3126ca0254b3a4b7efee2a490d787b21bf5c30b0fa4` |
+| 9 | ops-f3-002 | F3/G-ind | 0 | validating | `02ac89cf077e3bbd9bc6d40f38a6c79bc5756dfa284c944cf4fdd44a17d9909e` |
+| 10 | ops-f3-003 | F3/G-ind | 0 | validating | `d1defa84a518630289a7fdc371b6497dcbc06f62155b58d120000e5e007495bf` |
+| 11 | ops-f3-006 | F3/G-ind | 0 | validating | `e43dd6cc290c2b1104b608364a8149c16aecd1d0d6860a31ba1d916591889a0f` |
+| 12 | ops-f3-004 | F3/G-epa | 0 | validating | `68060337da0398153b4cfbaa88f6d1e91d18e210fa61560b90d914fff1a0db0e` |
+| 13 | ops-f3-005 | F3/G-epa | 2 | validating | `f9f87cd9c22feecb90088206e4159d69eb629cc7d7f2c44b75b56fd24bc9caa1` |
+| 14 | ops-f4-003 | F4/G-ind | 3 | accepted | `042a323f960f731be1ecc1a3ad4b854dc33f918e24d8d0e30a177fef095fe2a8` |
+| 15 | ops-f4-002 | F4/G-ind | 1 | accepted | `fc03b6bfaa0161a8393176da85b697fc69cd05f32f891452f176ffeeb455b70e` |
+| 16 | ops-f4-001 | F4/G-epa | 1 | accepted | `1c888dd3eac01c54a785402e6b8ad7f1cf3875026d3783296eaf3497ef14b54e` |
+
+**Stage 0 settings.** Sessions use the settings above and `stage0-settings.json`. While sessions run, validation uses at most 3 worker processes at idle priority (`work/WORKERS` = 3 in the private folder).
+
 ## Changes after freeze-0a
 
 - **2026-09-26, pilot run.** The pilot ran 6 sessions from the frozen worktree at `15e8810`, in `benchmarks/operations/results/pilot-0a`:
