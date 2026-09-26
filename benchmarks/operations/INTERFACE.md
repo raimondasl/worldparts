@@ -80,7 +80,7 @@ Field notes:
 - **Vocabulary bounds.** A fault's `m_min` and `range` are both numbers in the fault's unit, or both null. Both are null for a fault with no task-level magnitude bounds:
   - a fault with no magnitude, such as `reverse_rotation`;
   - a fault whose bounds depend on the faulted instrument, such as `pressure_sensor_fault`. Its bounds may be stated as text in an extra field, `bounds`.
-- **Signed faults.** A fault whose unit is marked `(signed)` has a signed `range`, and its `m_min` bounds the absolute magnitude. Its truth magnitude is signed too.
+- **Signed faults.** A fault whose unit is marked `(signed)` has a signed truth magnitude. When its bounds are given, `range` is signed and `m_min` bounds the absolute magnitude. `pressure_sensor_fault` is signed, and its bounds are null.
 
 ## Answer format
 

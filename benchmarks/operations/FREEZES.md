@@ -75,18 +75,20 @@ Logged fixes and orchestration changes after a freeze are dated entries below.
 - **2026-09-26, logged fix (loader) and logged fixes of the private writers: the task.json and truth.json formats.**
   - **What was found.** An audit loaded the private generator's task.json and truth.json, as its writers produce them, through the loader and the grader. The loader refused every F2 and every F3 development bundle:
     - The F2 keys were named `hours_to_trigger_F-1` and so on. The loader requires lower-case snake_case keys, and the grader's key normalisation relies on that rule.
-    - In the F3 vocabulary, `pressure_sensor_fault` had text bounds, and `reverse_rotation` (no magnitude) had a null `m_min` and `range`. INTERFACE.md said nothing about a fault without numeric bounds.
+    - In the F3 vocabulary, both sensor faults, `pressure_sensor_fault` and `flow_sensor_fault`, had text bounds ("2 x stated accuracy", "+-6 x stated accuracy"), and `reverse_rotation` (no magnitude) had a null `m_min` and `range`. INTERFACE.md said nothing about a fault without numeric bounds.
     - The audit also found that F3 tickets did not state the sign of a sensor-fault magnitude, or that faults are named without their instrument. The grader follows 6.6 in both cases.
   - **Private fixes** are logged bug fixes of the writers, on branch `interface-conformance`:
-    - commit `34602a4ef3b38ca4c490aa4882fff96c15fa303d` (fixes and tests) and commit `9f492dc9b725f69c0c85f83fca7abe4cad05c6e7` (sealed appendix A6.17), tree `8f19125f4ea5e77a9a9395006d6bddfb20f42236`;
+    - commit `34602a4ef3b38ca4c490aa4882fff96c15fa303d` (fixes and tests), commit `9f492dc9b725f69c0c85f83fca7abe4cad05c6e7` (sealed appendix A6.17) and commit `0bc65c2ef1edf35cc7ecbce6b2ae3ff3e3743ebf` (review of the fix, below), tree `b7bb8e0c99bdab7abd6a6a9a3ddade7ef1df145a`;
     - they are merged with the private generator stopped;
     - only files outside the content hash changed, so it stays `ed64b3e257623db020ef374f1b776b04a464b7fe2d406f0dbd2bbca90246bf8b`.
 
     The fixes:
     - Keys are lower-case snake_case in task.json, task.md, the truth file and the validity report (`hours_to_trigger_f_1`).
-    - `pressure_sensor_fault` has `m_min` and `range` null, with its bounds as text in `bounds`. `flow_sensor_fault` has numeric bounds.
+    - `pressure_sensor_fault` has `m_min` and `range` null, with its bounds as text in `bounds`. Its bounds depend on the faulted transmitter's span.
+    - `flow_sensor_fault`'s bounds are the same numbers for every flowmeter, so they are now numeric: `m_min` 1 and `range` [-3, 3].
     - F3 tickets state the sign convention and the naming rule.
-    - Short lists of resolving options are filled to three.
+    - Short lists of resolving options are filled to three with instruments that no tag list logs. Every plant type has at least three such instruments, and a list that stays short raises instead of being written.
+    - *Review of the fix.* In the first fix, station lists could stay short: the station tag lists log most of the instruments it added. The review commit adds three kinds of station instrument that no tag list logs: the chamber pressure, the pressure after valve V-1, and a flowmeter in each pump's discharge branch.
     - A new command, `generators rewrite-texts`, rewrites task.md and task.json of the bundles already written. It does this from each bundle's own draw, with its data files checked byte-identical, and logs each rewritten realisation 1 as a new `r1_written`.
   - **The public fix.** `harness/bundles.key_spec` accepts a vocabulary fault whose `m_min` and `range` are both null and whose unit is a string. It is kept with no bounds. Everything else is refused as before: `m_min` null alone, `range` null alone, and bounds given as text.
     - INTERFACE.md now documents key names, null bounds and signed faults.
@@ -99,3 +101,4 @@ Logged fixes and orchestration changes after a freeze are dated entries below.
     - `bundles-dev.sha256` and `truth-dev.sha256` are unchanged. They list only ops-f1-003 and the F4 tasks, and the fixed writers reproduce those bundles byte for byte.
     - The F2 and F3 realisation-1 bundles are rewritten before they are committed at freeze-0b.
     - A rewrite of the 16 development bundles on a scratch copy changed only task.md and task.json of the 9 F2 and F3 tasks. The loader then loaded all 16 tasks, and `set_problems` was empty.
+    - After the review fix, the rewrite was repeated on a fresh copy. It wrote the same 18 files byte for byte: every current F3 ticket already listed at least three options. The loader again loaded all 16 tasks.
