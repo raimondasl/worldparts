@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import re
 import shutil
 import sys
@@ -96,6 +97,7 @@ from .runner import (
     session_mcp_config,
     write_json,
 )
+from .session_bash import SessionBash, ensure_session_bash
 
 #: Default models of ``run``: the explicit ids of PREREGISTRATION.md section 3 (never aliases).
 DEFAULT_MODELS = ("claude-sonnet-5", "claude-opus-5-5")
@@ -239,7 +241,23 @@ def _forbidden_roots(args: argparse.Namespace) -> list[Path]:
     return roots
 
 
-def _run_meta(args: argparse.Namespace, specs: list[SessionSpec], env_dir: Path) -> dict[str, Any]:
+def _session_bash(args: argparse.Namespace) -> SessionBash | None:
+    """The private Git Bash of the sessions (Windows); sessions then run one at a time,
+    because they share its /tmp (session_bash.py)."""
+    if os.name != "nt":  # pragma: no cover - Windows is the development platform
+        return None
+    sb = ensure_session_bash()
+    if int(getattr(args, "jobs", 1)) != 1:
+        raise _fail("sessions share the session /tmp of the private Git Bash: use --jobs 1")
+    return sb
+
+
+def _run_meta(
+    args: argparse.Namespace,
+    specs: list[SessionSpec],
+    env_dir: Path,
+    sb: SessionBash | None = None,
+) -> dict[str, Any]:
     info = env_info(env_dir) or {}
     return {
         "set": args.set,
@@ -257,6 +275,7 @@ def _run_meta(args: argparse.Namespace, specs: list[SessionSpec], env_dir: Path)
         "code_plus_key": _env_key(info),
         "jobs": int(args.jobs),
         "manifest_check": not args.no_manifest_check,
+        "session_bash_key": sb.key if sb is not None else None,
         "bundles": str(bundles_root(args.bundles)),
     }
 
@@ -271,6 +290,7 @@ _PINNED_KEYS = (
     "code_plus_key",
     "jobs",
     "manifest_check",
+    "session_bash_key",
 )
 #: Where the Stage 0 session settings of FREEZES.md are committed; ``headroom`` refuses a run
 #: whose run.json differs from them in any of these keys.
@@ -291,7 +311,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         raise _fail(f"the Claude CLI {exe!r} was not found (set WPBENCH_CLAUDE)")
     run_dir = Path(args.out) if args.out else RESULTS_DIR / _run_id(args.set)
     env_dir = ensure_code_plus_env(args.code_env)
-    meta = _run_meta(args, specs, env_dir)
+    sb = args.session_bash = _session_bash(args)
+    meta = _run_meta(args, specs, env_dir, sb)
     previous = read_json(run_dir / RUN_FILE, {})
     if previous:
         changed = [k for k in _PINNED_KEYS if (previous.get(k) or None) != (meta.get(k) or None)]
@@ -369,6 +390,7 @@ def _execute_all(
                 keep_tmp=args.keep_tmp,
                 forbidden_roots=forbidden,
                 env_key=key,
+                session_bash=getattr(args, "session_bash", None),
             )
         sigs = audit_attempt(adir)
         why = stop_reason(adir)
@@ -407,6 +429,7 @@ SETTINGS_KEYS = (
     "code_plus_key",
     "jobs",
     "manifest_check",
+    "session_bash_key",
 )
 
 
@@ -446,6 +469,10 @@ def _cmd_rerun(args: argparse.Namespace) -> int:
     env_dir = ensure_code_plus_env(args.code_env)
     if _env_key(env_info(env_dir)) != meta.get("code_plus_key"):
         raise _fail("the code-plus environment differs from the run's")
+    args.jobs = 1
+    sb = args.session_bash = _session_bash(args)
+    if (sb.key if sb is not None else None) != meta.get("session_bash_key"):
+        raise _fail("the session Git Bash differs from the run's; re-runs must use the same")
     todo: list[tuple[SessionSpec, int]] = []
     root = bundles_root(args.bundles)
     for sid in targets:

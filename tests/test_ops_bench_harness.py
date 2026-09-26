@@ -9,6 +9,7 @@ and the code-plus environment builder. Synthetic bundles and truth only.
 
 from __future__ import annotations
 
+import argparse
 import builtins
 import copy
 import json
@@ -524,6 +525,7 @@ def stage0(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(runner.subprocess, "Popen", fake_popen)
         mp.setattr(cli, "ensure_code_plus_env", lambda d=None: envdir)
+        mp.setattr(cli, "_session_bash", lambda args: None)
         mp.setattr(cli, "claude_version", lambda: "2.1.280 (fake)")
         mp.setenv("WPBENCH_CLAUDE", str(FAKE))
         mp.setenv("WPBENCH_OPS_TRUTH", str(troot))
@@ -1411,6 +1413,7 @@ class _FakeCli:
 
         mp.setattr(runner.subprocess, "Popen", fake_popen)
         mp.setattr(cli, "ensure_code_plus_env", lambda d=None: envdir)
+        mp.setattr(cli, "_session_bash", lambda args: None)
         mp.setattr(cli, "claude_version", lambda: "2.1.280 (fake)")
         mp.setenv("WPBENCH_CLAUDE", str(FAKE))
         mp.setenv("WPBENCH_OPS_TRUTH", str(self.troot))
@@ -1723,3 +1726,85 @@ def test_rerun_refuses_a_replaced_bundle(stage0: dict[str, Any], tmp_path: Path)
     scada = task.realisation_dir(1) / "data" / "scada.csv"
     scada.write_text(scada.read_text("utf-8") + "Q1,99,good\n", "utf-8")
     assert cli.bundle_replaced(stage0["run"], sid, task, 1)
+
+
+# ----------------------------------------------------------------------------------------
+# the sessions' private Git Bash and its /tmp (found by the freeze-0a pilot)
+# ----------------------------------------------------------------------------------------
+def _fake_git(root: Path) -> Path:
+    src = root / "Git"
+    for rel in ("bin/bash.exe", "usr/bin/bash.exe", "usr/bin/msys-2.0.dll"):
+        (src / rel).parent.mkdir(parents=True, exist_ok=True)
+        (src / rel).write_bytes(b"binary " + rel.encode())
+    (src / "etc").mkdir()
+    (src / "etc" / "fstab").write_text(
+        "# comment\nnone / cygdrive binary,posix=0,noacl,user 0 0\n"
+        "none /tmp usertemp binary,posix=0,noacl 0 0\n", "utf-8")  # fmt: skip
+    return src
+
+
+def test_session_bash_maps_tmp_to_its_own_folder(tmp_path: Path) -> None:
+    from benchmarks.operations.harness import session_bash as sbm
+
+    src = _fake_git(tmp_path)
+    sb = sbm.ensure_session_bash(src, tmp_path / "wb")
+    fstab = (sb.bash.parent.parent / "etc" / "fstab").read_text("utf-8")
+    assert "usertemp" not in fstab and "cygdrive" in fstab
+    assert f"{(tmp_path / 'wb' / 'session-tmp').as_posix()} /tmp ntfs" in fstab
+    assert sb.tmp == tmp_path / "wb" / "session-tmp" and sb.tmp.is_dir()
+    assert sbm.ensure_session_bash(src, tmp_path / "wb") == sb  # made once per key
+    (src / "usr" / "bin" / "msys-2.0.dll").write_bytes(b"another runtime")
+    assert sbm.ensure_session_bash(src, tmp_path / "wb").key != sb.key
+    with pytest.raises(RuntimeError, match="usertemp"):
+        sbm.fstab_text("none / cygdrive binary 0 0\n", tmp_path)
+    assert "\\040" in sbm.fstab_text("none /tmp usertemp binary,posix=0,noacl 0 0\n",
+                                       Path("C:/a b/t"))  # fmt: skip
+
+
+def test_session_tmp_is_emptied_around_each_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarks.operations.harness import session_bash as sbm
+
+    build_set(tmp_path / "b", tmp_path / "t")
+    task = bundles.load_tasks("dev", tmp_path / "b")[0]
+    sb = sbm.SessionBash(tmp_path / "gitbash" / "bin" / "bash.exe", tmp_path / "stmp", "k1")
+    sb.tmp.mkdir()
+    (sb.tmp / "left.py").write_text("an earlier leftover", "utf-8")
+    code = (
+        "import os, pathlib; "
+        "pathlib.Path(os.environ['TEMP'], 'a.py')"
+        ".write_text(os.environ['CLAUDE_CODE_GIT_BASH_PATH'])"
+    )
+    real_popen = subprocess.Popen
+
+    def fake_popen(cmd: list[str], **kwargs: Any) -> Any:
+        return real_popen([sys.executable, "-c", code], **kwargs)
+
+    monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
+    envdir = tmp_path / "env"
+    (envdir / ".venv" / ("Scripts" if os.name == "nt" else "bin")).mkdir(parents=True)
+    spec = runner.SessionSpec("dev", "sonnet", task, "code-hint", 1)
+    adir = tmp_path / "run" / "attempt-1"
+    out = runner.execute_session(spec, adir, "prompt", runner.PINNED_LIMITS, envdir,
+                                 session_bash=sb)  # fmt: skip
+    assert out["session_tmp_before"] == 1 and out["session_tmp_files"] == 1
+    assert (adir / "tmp-before" / "left.py").is_file()
+    assert (adir / "tmp" / "a.py").read_text("utf-8") == str(sb.bash)
+    assert not any(sb.tmp.iterdir()) and out["session_bash"] == "k1"
+    env = json.loads((adir / "command.json").read_text("utf-8"))["env_changes"]
+    assert env["TEMP"] == env["TMP"] == env["TMPDIR"] == str(sb.tmp)
+    assert env["CLAUDE_CODE_GIT_BASH_PATH"] == str(sb.bash)
+
+
+def test_parallel_sessions_are_refused_with_the_session_bash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from benchmarks.operations.harness import session_bash as sbm
+
+    fake = sbm.SessionBash(Path("bash.exe"), Path("tmp"), "k")
+    monkeypatch.setattr(cli, "ensure_session_bash", lambda: fake)
+    if os.name == "nt":
+        assert cli._session_bash(argparse.Namespace(jobs=1)) == fake
+        with pytest.raises(SystemExit, match="--jobs 1"):
+            cli._session_bash(argparse.Namespace(jobs=2))

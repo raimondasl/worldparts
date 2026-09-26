@@ -51,7 +51,20 @@ Logged fixes and orchestration changes after a freeze are dated entries below.
 - **code+ environment:** `ops-code-plus-6b60722d37b5`, with `stamp.json` SHA-256 `7dfc14e70c41131a8c10fdb9cfa6a1b287da76a272d70afdb3610e37fbfcfc89`. The versions are those `harness code-env` prints.
 - **Validation during sessions:** at most 3 worker processes at idle priority (`work/WORKERS` in the private folder).
 - **Pilot:** at most 6 sessions on ops-f1-003 and ops-f4-001, in their own run directory, never passed to `grade` or `headroom` for Stage 0.
+- **Session shell** (added by the logged fix below): the private Git Bash `git-bash-6f0c4145d65f`, whose `/tmp` is `%LOCALAPPDATA%\worldparts-bench\session-tmp`.
 
 ## Changes after freeze-0a
 
-None yet.
+- **2026-09-26, pilot run.** The pilot ran 6 sessions from the frozen worktree at `15e8810`, in `benchmarks/operations/results/pilot-0a`:
+  - ops-f1-003 in `code+` and `code-hint`, and ops-f4-001 in `code-hint`, on both models;
+  - 2 to 3 minutes and $0.27 to $0.49 per session, $2.17 in all;
+  - no infrastructure flags.
+
+  The pilot is not scored.
+- **2026-09-26, logged fix (isolation), found by the pilot.** Claude Code runs a session's shell commands in Git Bash. Git's mount table maps `/tmp` to the user's temporary folder, which all sessions share and which does not follow `TEMP`.
+  - **What the pilot found.** One pilot session (ops-f1-003, `code+`, Sonnet 5) wrote its scripts to `/tmp/a.py` and appended to `/tmp/f.py`. A later session could read those files, or append to them.
+  - **The fix.** Sessions now run with a private copy of Git Bash (`harness/session_bash.py`), whose `/tmp` is a benchmark-only folder. `TEMP`, `TMP` and `TMPDIR` point there too.
+  - **Around each session.** The harness empties that folder before the session and moves what the session left there into its attempt folder. The shell's key is pinned in `run.json` and in `stage0-settings.json`.
+  - **Sessions run one at a time.** The harness refuses `--jobs` other than 1 while the private shell is used.
+  - **Pilot leftovers.** The pilot session's seven leftover files were moved from the user's temporary folder into its attempt folder (`tmp-leftovers/`). The only other pilot session on that task wrote into its own working directory and never named `/tmp`, so nothing passed between pilot sessions.
+  - **Scope.** No grader, checklist, preamble or rule changed.

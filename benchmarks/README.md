@@ -576,6 +576,9 @@ uv run python -m benchmarks.operations.harness manifest --set dev --check
 
   `code-skill`, `lib`, `lib-directed` and `mcp-hybrid` are registered in `harness/arms.py`,
   but they refuse to run before freeze-1.
+- **Shell.** Sessions run with a private copy of Git Bash whose `/tmp` is a benchmark-only
+  folder, emptied around every session (`harness/session_bash.py`), so they run one at a
+  time (`--jobs 1`).
 - **Sessions.** Sessions of the same task never run at the same time (`--jobs` runs
   different tasks in parallel), so no session can read another arm's work on its task. A
   tool input that names another session's temporary directory, or a tool result that

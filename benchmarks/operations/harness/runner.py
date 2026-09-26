@@ -67,6 +67,7 @@ from .arms import Arm, get_arm
 from .bundles import REPO_ROOT, OpsTask, copy_realisation, realisation_digest
 from .env import SESSION_ENV, session_path
 from .infra import attempt_dirs
+from .session_bash import SessionBash, take_tmp
 
 #: Pinned limits (PREREGISTRATION.md section 3, "Pinned settings").
 DEFAULT_MAX_TURNS = 120
@@ -310,11 +311,14 @@ def execute_session(
     tmp_root: Path | None = None,
     forbidden_roots: list[Path] | None = None,
     env_key: str | None = None,
+    session_bash: SessionBash | None = None,
 ) -> dict[str, Any]:
     """Run one attempt and save everything in ``attempt_dir``; return its outcome.
 
     ``forbidden_roots`` (the repository is always one) are folders the temporary
     directory must not be inside, such as the bundle and truth folders.
+    ``session_bash`` (``session_bash.ensure_session_bash``) gives the session its own /tmp:
+    emptied into ``tmp-before/`` first (normally empty), and moved into ``tmp/`` afterwards.
     """
     attempt_dir.mkdir(parents=True, exist_ok=False)
     arm = get_arm(spec.arm)
@@ -325,6 +329,7 @@ def execute_session(
     timed_out = False
     tmp: Path | None = None
     kept_files = 0
+    tmp_before = tmp_after = 0
     before: dict[str, tuple[int, int]] = {}
     (attempt_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
     try:
@@ -352,6 +357,14 @@ def execute_session(
             arm, spec.model, mcp_path, settings_path, limits.max_turns, effort, max_budget_usd
         )
         env, changed = child_env(env_dir, forbidden_roots)
+        if session_bash is not None:
+            tmp_before = take_tmp(session_bash.tmp, attempt_dir / "tmp-before")
+            extra_bash = {"CLAUDE_CODE_GIT_BASH_PATH": str(session_bash.bash)}
+            extra_bash.update({k: str(session_bash.tmp) for k in ("TEMP", "TMP", "TMPDIR")})
+            for k in [k for k in env if k.upper() in {x.upper() for x in extra_bash}]:
+                del env[k]
+            env.update(extra_bash)
+            changed.update(extra_bash)
         write_json(
             attempt_dir / "command.json",
             {
@@ -402,6 +415,8 @@ def execute_session(
                 except subprocess.TimeoutExpired:
                     code = None
     wall = time.monotonic() - t0
+    if session_bash is not None:
+        tmp_after = take_tmp(session_bash.tmp, attempt_dir / "tmp")
     if tmp is not None and (tmp / "work").is_dir() and error is None:
         kept_files = _copy_agent_files(tmp / "work", before, attempt_dir / "workdir")
         if (tmp / "systems").is_dir() and any((tmp / "systems").iterdir()):
@@ -418,6 +433,9 @@ def execute_session(
         **limits.to_dict(),
         "env_key": env_key,
         "agent_files_kept": kept_files,
+        "session_bash": session_bash.key if session_bash is not None else None,
+        "session_tmp_before": tmp_before,
+        "session_tmp_files": tmp_after,
         "tmp_dir": str(tmp) if tmp else None,
         "kept": keep_tmp,
     }
