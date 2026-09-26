@@ -322,6 +322,29 @@ No reference estimator is worldparts or an LLM. They share one estimation engine
 - the naive estimator fails at least 70 %;
 - the bundle is at most 5 MB.
 
+**Sequential realisations.** Every rate in these rules is estimated sequentially, and this governs all references to 200 realisations in sections 6.2 to 6.5.
+
+The rates covered are:
+
+- the oracle's pass rate and its reproduction of the F3 label;
+- each reference estimator's pass rate;
+- the naive estimator's failure rate;
+- the boolean decision rate.
+
+The procedure:
+
+- Realisations are evaluated in index order, in batches of 25, up to 200.
+- A rate is decided as soon as its two-sided 95 % Clopper-Pearson interval lies entirely above or entirely below its threshold. If 200 realisations are reached without a decision, the point estimate decides.
+- A draw is rejected as soon as any rule is decided as failed.
+- Tolerances (SD) and interval widths (W) use every oracle realisation evaluated, and at least 50.
+- R-a and R-b run first. R2 runs only where it applies and only when fewer than two of R-a and R-b pass. A reference that did not run is recorded as `null`.
+- In F3, each realisation fits only these hypotheses:
+  - `none`;
+  - the truth hypothesis;
+  - every hypothesis whose Asimov Δχ² from the truth is at most 200.
+
+  A hypothesis further away than that would need a noise excursion of more than 6 standard deviations to come within 10 of the best.
+
 **Redraws.**
 
 - Invalid draws are redrawn within their cell, using that cell's own seed sequence.
@@ -655,3 +678,4 @@ Cost savings alone never justify CONTINUE.
   - **Truth files.** `realisations` must hold the bundle's r1 to rK, each with `oracle_pass` true and a non-empty `reference_pass`. The headroom rule is not computed for a task without a realisation-1 reference result, instead of counting it as "no estimator passes".
   - **Isolation.** Sessions of one task never run at the same time. A tool input that names another session's temporary directory, or a tool result that shows a path inside one, is contamination. Sessions get no `PWD`, `OLDPWD` or `INIT_CWD`, and no variable whose value names the repository, the bundle folder or the truth folder.
   - **Firewall.** Grader records hold no truth value, but a numeric key's truth can be worked out from them, so records and summaries go to the owner only. A firewalled session gets only `grade RUN --pass-fail`, which prints pass or fail per session, writes no record and logs each evaluation.
+- 2026-09-25, draft 2, compute: sequential validation of every rate, early rejection of draws, R2 run only when R-a or R-b fails, and F3 realisations fit only the hypotheses within reach (section 6.5, "Sequential realisations"). The reason: the first development-set run fixed 200 realisations for every estimator and fitted every hypothesis. After 11 hours on 12 cores its first 13 tasks had not finished, so it was stopped. No agent session had run, and no task had been shown to any agent. The new rules decide every validity rule as the old ones would whenever the old decision was not a coin flip.
