@@ -545,21 +545,25 @@ section-9 outcome rule and the operating characteristics are in
 ```sh
 # Print the exact command lines, environment and prompts; run nothing.
 uv run python -m benchmarks.operations.harness run --set dev --arms code+ code-hint \
-    --models sonnet opus --realisation 1 --dry-run
+    --realisation 1 --dry-run
 # Build the code-plus environment (numpy, scipy, pandas, statsmodels, scikit-learn, lmfit,
 # fluids, wntr, matplotlib; no worldparts), keyed by a hash of its versions.
 uv run python -m benchmarks.operations.harness code-env
-# The 64 sessions (paid: the owner approves the projected cost first).
-uv run python -m benchmarks.operations.harness run --set dev --models sonnet opus \
-    --jobs 4 --out benchmarks/operations/results/stage0
+# The 64 sessions (paid: the owner approves the projected cost first), one at a time, with
+# the pinned CLI (WPBENCH_CLAUDE) and the models' explicit ids (the defaults); FREEZES.md
+# records every setting. Tasks whose realisation 1 is replaced or moves re-run in a new run.
+uv run python -m benchmarks.operations.harness run --set dev --jobs 1 \
+    --out benchmarks/operations/results/stage0
 # The blind audit (opaque session ids; no arms, no grades), re-runs of the flagged
 # sessions (same realisation, at most twice), then grading and the headroom rule.
 uv run python -m benchmarks.operations.harness audit benchmarks/operations/results/stage0
 uv run python -m benchmarks.operations.harness run --out benchmarks/operations/results/stage0 \
     --rerun-flagged
 uv run python -m benchmarks.operations.harness grade benchmarks/operations/results/stage0
-uv run python -m benchmarks.operations.harness headroom benchmarks/operations/results/stage0
-# The bundle manifest (freeze-0), and its check.
+# Every Stage 0 run directory (replacements and moved realisations run in new ones);
+# --final once Stage 0 has ended (a pending verdict then counts as open).
+uv run python -m benchmarks.operations.harness headroom benchmarks/operations/results/stage0*
+# The bundle manifest (freeze-0a and freeze-0b), and its check.
 uv run python -m benchmarks.operations.harness manifest --set dev
 uv run python -m benchmarks.operations.harness manifest --set dev --check
 ```

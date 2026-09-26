@@ -416,6 +416,38 @@ def set_problems(tasks: list[OpsTask], set_name: str) -> list[str]:
     return out
 
 
+def preregistered_slots(set_name: str) -> int:
+    """The number of task slots of a set's pre-registered cells."""
+    return sum(PREREGISTERED_CELLS.get(set_name, {}).values())
+
+
+def blocking_set_problems(tasks: list[OpsTask], set_name: str) -> list[str]:
+    """The differences of a partly filled set that block the Stage 0 rule: a cell or F3
+    stratum with more tasks than pre-registered, a task outside the cells, a bundle over the
+    size limit. Missing tasks are not among them; they are undecided slots."""
+    want = PREREGISTERED_CELLS.get(set_name, {})
+    have: dict[str, int] = {}
+    for t in tasks:
+        have[t.cell] = have.get(t.cell, 0) + 1
+    out = [
+        f"cell {c}: {n} task(s), pre-registered {want.get(c, 0)}"
+        for c, n in sorted(have.items())
+        if n > want.get(c, 0)
+    ]
+    strata_want = PREREGISTERED_STRATA.get(set_name, {})
+    strata_have: dict[str, int] = {}
+    for t in tasks:
+        if t.stratum:
+            strata_have[t.stratum] = strata_have.get(t.stratum, 0) + 1
+    out += [
+        f"F3 stratum {st}: {n} task(s), pre-registered {strata_want.get(st, 0)}"
+        for st, n in sorted(strata_have.items())
+        if n > strata_want.get(st, 0)
+    ]
+    out += [p for p in set_problems(tasks, set_name) if "over the 5 MB limit" in p]
+    return out
+
+
 def copy_realisation(task: OpsTask, k: int, dest: Path) -> list[str]:
     """Copy ``r<k>/`` without ``task.json`` into ``dest`` (which must be empty or absent).
     Returns the copied files as posix paths relative to ``dest``."""
@@ -468,15 +500,17 @@ def truth_problems(task: OpsTask, truth: Any) -> list[str]:
             problems.append(f"{where}: kind {t.get('kind')!r} is not {spec.kind!r}")
             continue
         problems += [f"{where}: {p}" for p in _truth_key_problems(spec, t)]
-    problems += _realisation_problems(task, truth.get("realisations"))
+    problems += _realisation_problems(task, truth.get("realisations"), truth.get("r2_applies"))
     return problems
 
 
-def _realisation_problems(task: OpsTask, reals: Any) -> list[str]:
+def _realisation_problems(task: OpsTask, reals: Any, r2_applies: Any = None) -> list[str]:
     """The truth's ``realisations`` must hold exactly the bundle's r1..rK, each with
     ``oracle_pass`` true (INTERFACE.md: they are realisations the oracle passes) and a
     non-empty ``reference_pass`` mapping estimators to true, false or null (the Stage 0
-    headroom rule reads r1's)."""
+    headroom rule reads r1's). Where R-a and R-b both fail a realisation, R2 must have run
+    (PREREGISTRATION.md 6.5) unless the truth says ``r2_applies: false``; otherwise a missing
+    R2 result would be read as "no reference passes"."""
     want = [f"r{k}" for k in task.realisations]
     if not isinstance(reals, dict):
         return [f"realisations must be an object with {', '.join(want)}"]
@@ -505,6 +539,16 @@ def _realisation_problems(task: OpsTask, reals: Any) -> list[str]:
             out.append(
                 f"realisation {name}: reference_pass must map one or more estimators to "
                 "true, false or null"
+            )
+        elif (
+            ref.get("R-a") is False
+            and ref.get("R-b") is False
+            and ref.get("R2") is None
+            and r2_applies is not False
+        ):
+            out.append(
+                f"realisation {name}: R-a and R-b fail and R2 has no result; R2 runs there "
+                "(PREREGISTRATION.md 6.5) unless the truth says r2_applies: false"
             )
     return out
 
@@ -616,6 +660,47 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def realisation_digest(task: OpsTask, k: int) -> str:
+    """SHA-256 over the relative path and SHA-256 of every file in ``r<k>/`` (``task.json``
+    included): what a session of realisation k saw. A session whose recorded digest differs
+    from the current one ran on a bundle that was replaced since (a task redrawn by
+    validation, or a realisation 1 that moved), and it is never scored (PREREGISTRATION.md
+    section 8, Stage 0)."""
+    src = task.realisation_dir(k)
+    h = hashlib.sha256()
+    for p in sorted(src.rglob("*"), key=lambda q: q.relative_to(src).as_posix()):
+        if p.is_file():
+            h.update(f"{p.relative_to(src).as_posix()}\0{_sha256(p)}\n".encode())
+    return h.hexdigest()
+
+
+def manifest_digest(entries: dict[str, str], set_name: str, task_id: str, k: int) -> str | None:
+    """:func:`realisation_digest` of ``r<k>`` computed from manifest entries
+    (``{"<set>/<task>/r<k>/<file>": sha256}``), so that a session's recorded digest can be
+    compared with the committed bundle rather than the local one (None: not listed)."""
+    prefix = f"{set_name}/{task_id}/r{k}/"
+    rows = sorted((p[len(prefix) :], sha) for p, sha in entries.items() if p.startswith(prefix))
+    if not rows:
+        return None
+    h = hashlib.sha256()
+    for rel, sha in rows:
+        h.update(f"{rel}\0{sha}\n".encode())
+    return h.hexdigest()
+
+
+def truth_manifest_path(set_name: str) -> Path:
+    """The committed list of validated truth files (``truth-<set>.sha256``, sha256sum format,
+    paths relative to the truth folder): a truth file counts only if its SHA-256 is listed."""
+    return OPS_DIR / f"truth-{set_name}.sha256"
+
+
+def truth_listed(task: OpsTask, root: Path, listed: dict[str, str]) -> bool:
+    """Whether the task's truth file exists and its SHA-256 is the one ``listed`` gives."""
+    p = truth_path(task, root)
+    rel = p.relative_to(root).as_posix()
+    return p.is_file() and listed.get(rel) == _sha256(p)
 
 
 def manifest_entries(root: Path, set_name: str) -> dict[str, str]:

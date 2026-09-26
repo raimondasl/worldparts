@@ -1,6 +1,6 @@
 # Operations benchmark (v0.3): pre-registration
 
-Status: **draft 2**, 2026-09-24. This file becomes binding at the **freeze-0** commit ([section 7](#7-freezes-sealing-and-firewalls)), before any agent session. After that, changes are allowed only as dated entries in the [change log](#change-log), each with its reason, and never because of agent results.
+Status: **binding** since the freeze-0a commit of 2026-09-26 (draft 3; see [FREEZES.md](FREEZES.md) and [section 7](#7-freezes-sealing-and-firewalls)), made before any agent session. Changes are allowed only as dated entries in the [change log](#change-log), each with its reason, and never because of agent results.
 
 ## 1. Why this benchmark exists
 
@@ -100,13 +100,13 @@ Every arm gets the same task bundle ([section 5](#5-what-every-arm-receives)), t
 ### Pinned settings
 
 - The same Claude Code CLI version for all arms (currently 2.1.280, set with `WPBENCH_CLAUDE`).
-- The same effort setting per model.
+- The effort setting per model recorded in [FREEZES.md](FREEZES.md) at freeze-0a: no `--effort` flag, so each model runs at its CLI default.
 - `--max-turns 120` and 2,400 s per session.
 - All recorded in `run.json`.
 
 ### 3.1 Methods checklist (verbatim)
 
-This text is frozen at freeze-0. A test checks that it is 20 to 30 lines and names neither worldparts nor its functions as code. The English word "identifiability" in item 7 is allowed.
+This text is frozen at freeze-0a. A test checks that it is 20 to 30 lines and names neither worldparts nor its functions as code. The English word "identifiability" in item 7 is allowed.
 
 ```text
 Method checklist for questions answered from plant data.
@@ -339,7 +339,7 @@ The procedure:
 - A rate is decided as soon as its two-sided 95 % Clopper-Pearson interval lies entirely above or entirely below its threshold. If 200 realisations are reached without a decision, the point estimate decides.
 - A draw is rejected as soon as any rule is decided as failed.
 - Tolerances (SD) and interval widths (W) use every oracle realisation evaluated, and at least 50.
-- R-a and R-b run first. R2 runs only where it applies and only when fewer than two of R-a and R-b pass. A reference that did not run is recorded as `null`.
+- R-a and R-b run first. R2 runs where it applies when fewer than two of R-a and R-b pass. Where it applies, R2 also runs on each of realisations 1 to 3 on which neither R-a nor R-b passes, so the Stage 0 rule (section 8) never depends on this shortcut. A reference that did not run is recorded as `null`. On realisations 1 to 3, `null` for R2 therefore means that R2 does not apply, or that R-a or R-b passes.
 - In F3, every estimator fits every screened hypothesis on every realisation. There is one exception. A hypothesis is skipped on a realisation when the Asimov Δχ² over the steady bins that realisation keeps exceeds 1,000. On 200 realisations checked, the realised Δχ² was 0.51 to 1.47 times that retained value.
 
 **Redraws.**
@@ -417,7 +417,7 @@ The final reply ends with one fenced `json` object. Value kinds:
 
 **Infrastructure errors.**
 
-- Only these count: a CLI, API, transport, harness or permission failure, a session with no model turn, or an external kill. They are detected by rules committed at freeze-0.
+- Only these count: a CLI, API, transport, harness or permission failure, a session with no model turn, or an external kill. They are detected by rules committed at freeze-0a.
 - Such sessions are re-run, at most twice, with the same realisation. They are never excluded.
 - Exceptions raised by worldparts or by the agent's code, timeouts and turn-limit hits are failures.
 
@@ -427,33 +427,99 @@ The final reply ends with one fenced `json` object. Value kinds:
 
 ### Private benchmark folder
 
-opsim, the generators, the validation suite, the sealed appendix and all truth files live in a private folder outside the public repository. Each freeze commit in the public repository records the SHA-256 of a `git archive` of that folder. The folder is published after the gate decision.
+opsim, the generators, the validation suite, the sealed appendix and all truth files live in a private folder outside the public repository. The folder is published after the gate decision. Each freeze entry in [FREEZES.md](FREEZES.md) records the folder by:
 
-### freeze-0 (before the harness pilot and Stage 0)
+- its full commit id and tree id;
+- its **archive hash**: the SHA-256 of `git -c core.autocrlf=false archive --format=tar <commit id>`;
+- its **content hash**: the full SHA-256 that `validation.seqval.code_hash` computes over the files that decide what a task or its truth holds (the simulator, the validation suite, the draw and the checkpointed job logic), with the list of those files and the SHA-256 of each.
 
-**Public repository:**
+Logged fixes and orchestration changes are dated entries in FREEZES.md. Changes to this file are entries in its change log.
+
+### freeze-0a (before the harness pilot)
+
+Freeze-0 is committed in three parts:
+
+- **freeze-0a**, before any agent session, fixes every file that could be tuned;
+- **freeze-0b**, before Stage 0, adds realisation 1 of the remaining development tasks;
+- **freeze-0c**, before the Stage 0 verdict is reported, adds every truth file the verdict uses.
+
+**Public repository** (the whole commit), in particular:
 
 - this file;
 - the grader;
-- the harness support for the `code+` and `code-hint` arms;
+- the harness support for the `code+` and `code-hint` arms, and the v0.2 harness modules it imports;
 - the headroom-rule script;
 - `analysis/power.py` with its tables;
 - the checklist;
 - the preambles;
 - the infrastructure-error rules;
-- the hash manifest of the 16 development bundles (realisations 1 to 3).
+- `uv.lock`;
+- the session settings recorded in FREEZES.md: CLI version, model ids, effort, budget cap, limits, session concurrency and the `code+` environment;
+- the hash manifest of the development bundles that exist at freeze-0a.
 
-**Private folder, by hash:**
+**Private folder:** its archive hash and its content hash. The archive covers the following; the content hash covers only the code files it lists.
 
 - the sealed appendix (opsim forms, realised error model, historian artefacts, fault forward models, m_min, the tag lists and aggregation);
 - opsim;
 - the generators;
 - the validation suite;
-- the plausible ranges and tolerance floors;
-- the development truth and validity reports;
-- the cell acceptance rates.
+- the plausible ranges and tolerance floors.
 
-After freeze-0, the files above change only through logged bug fixes. Any change that alters a development bundle or its truth re-runs Stage 0.
+The development truth and validity reports that exist at freeze-0a are recorded by SHA-256, each with the code it was produced under.
+
+### freeze-0b (before Stage 0)
+
+- The hash manifest of realisation 1 of all 16 development tasks.
+- The private folder's commit, archive hash and content hash.
+- A **regeneration check**: the freeze-0b code writes every freeze-0a bundle, truth file and validity report again. Bundles must be byte-identical. A truth file or validity report that differs is replaced and recorded in FREEZES.md with each difference and its cause. A task the freeze-0b code rejects is redrawn, and the pilot's sessions on a changed task are superseded.
+
+Between freeze-0a and freeze-0b, the private code may change only to do what this file requires and the freeze-0a code does not yet do:
+
+- write a task's realisation 1 as soon as its draw passes the screen (section 8);
+- run R2 on realisations 1 to 3 as 6.5 requires.
+
+Such a change must pass the regeneration check, and every checkpointed result it shares with the freeze-0a code must be identical.
+
+### Commitments after freeze-0b
+
+- **Replacement bundles.** A replacement's realisation 1, and a moved realisation 1, are added to `bundles-dev.sha256` and to FREEZES.md before their first session.
+- **Truth files.** Each truth file and validity report is recorded in FREEZES.md by SHA-256, with the content hash it was produced under, before any session of its task is graded.
+- **Later realisations.** Realisations 2 and 3 are recorded as validation finishes.
+- **freeze-0c**, before the Stage 0 verdict is reported, open or closed, records three things:
+  - the private folder's commit, archive hash and content hash;
+  - a check that the content hash equals freeze-0b's, or a list of each logged fix;
+  - the commit that holds every truth file the verdict uses.
+- **Acceptance rates.** The cell acceptance rates are measured before freeze-1 (6.5).
+
+### After freeze-0a
+
+- **Tunable files.** The files above change only through logged bug fixes. There are two exceptions:
+  - private orchestration changes, defined below;
+  - entries of the sealed appendix that document such changes or logged fixes. The appendix's specification text changes only through logged bug fixes.
+- **Pilot.** The pilot's sessions run in their own run directory, which is never passed to `grade` or `headroom` for Stage 0.
+  - The pilot may lead only to fixes of the runner, the session environment, isolation and the infrastructure signatures.
+  - The grader, the checklist, the preambles and the headroom rule are never changed because of anything in a pilot or Stage 0 transcript.
+  - A grader defect is fixed only where it contradicts the written text of 6.6. The fix is tested on constructed answers and applied to every session already run.
+- **Private orchestration.** A private change counts as orchestration only if all of these hold:
+  - it touches no file in the content hash's list, and no specification text of the sealed appendix;
+  - it touches no code that writes a bundle, a truth file or a validity report.
+    The scheduler, the command line and the status display are orchestration.
+  - it changes no batch size, realisation order, seed or rule of 6.5.
+
+  Orchestration changes are logged with their reason in FREEZES.md, and they never depend on Stage 0 answers or grades. Every other private change is a change to a tunable file.
+- **Changes after the first Stage 0 session.** These changes validate every development task again under the new code, and grade every session again:
+  - any change to the private content hash;
+  - any change to the private library versions;
+  - any change to a tunable file, other than appendix entries that document changes;
+  - any change to a byte of a development bundle or truth file that the frozen code did not itself produce.
+
+  Only the sessions whose bundle digest changes run again, in a new run directory. The report gives the verdict from before the change as well, so a change can never re-roll sessions whose tasks did not change.
+
+  Two events re-run only that task's sessions, and only when the frozen content hash decided them:
+  - a task that validation rejects and replaces;
+  - a task whose realisation 1 moves because the oracle fails it.
+
+  Writing a task's first truth file, and adding its realisations 2 and 3, are not changes.
 
 ### freeze-1 (only if the room is open; before the beacon round)
 
@@ -463,7 +529,7 @@ After freeze-0, the files above change only through logged bug fixes. Any change
 - The `code-skill` toolkit.
 - `analysis/analyze.py`, implementing section 8 as written; only bug fixes against this text are allowed.
 - The sealing code.
-- A hash check that every freeze-0 file is byte-identical, or has only logged fixes.
+- A hash check that every freeze-0a, freeze-0b and freeze-0c file is byte-identical, or has only logged fixes.
 
 The commit hash and the drand round number are posted in a public GitHub issue before the round.
 
@@ -489,7 +555,7 @@ Their transcripts are kept and audited for reads of forbidden paths.
 
 The orchestrating session, which has seen both sides, writes neither worldparts code nor the toolkit.
 
-### Allowed worldparts additions after freeze-0
+### Allowed worldparts additions after freeze-0a
 
 - The section-14 APIs: measurements with a long-format SCADA reader, `calibrate`, `identifiability` and `diagnose`.
 - File-path measurements for MCP.
@@ -504,7 +570,7 @@ Not allowed:
 
 - component laws, defaults or data-cleaning rules chosen to match anything in the sealed appendix.
 
-Before the seed, a reviewer diffs `src/worldparts` between freeze-0 and freeze-1 and lists every new constant, default and cleaning rule.
+Before the seed, a reviewer diffs `src/worldparts` between freeze-0a and freeze-1 and lists every new constant, default and cleaning rule.
 
 **Readiness.** Before freeze-1, a scripted worldparts pipeline with no LLM must pass at least 90 % of development realisations, and `calibrate` and `diagnose` must finish within 300 s on every development bundle when used as documented.
 
@@ -520,6 +586,31 @@ Test tasks and truth are published after the gate decision, with a canary string
 
 - The 16 development tasks, once each, in `code+` and `code-hint`, on Sonnet 5 and Opus 5.5: 64 sessions.
 - Each task uses **realisation 1**: the first realisation in its sequence on which the oracle passes.
+- Sessions run one at a time (`--jobs 1`), with the settings recorded in FREEZES.md. While they run, validation uses at most 3 worker processes at idle priority. A session run with other settings is not scored.
+
+**Validation runs alongside the sessions.**
+
+- **Bundle.** A task's realisation 1 is written from the first realisation of its sequence as soon as its draw passes the screen. The screen is the set of checks that need no realisation:
+  - the Asimov screen of 6.3 (F3);
+  - the predicted half-widths of 6.4 (F4);
+  - the draw checks of the sealed appendix.
+
+  Each of these checks is also a rule of full validation and is logged as a rejection rule. The task's sessions may run once its realisation 1 is committed, at freeze-0b or in a later entry.
+- **Full validation** (6.5) follows, in slot order. Slot order follows the development table of section 4, cell by cell. Within a cell, it is the order in which the draws passed the screen. FREEZES.md lists the 16 slots in that order at freeze-0b. It sets the tolerances, the validity of the task and the reference results for realisation 1. No session is graded, and no grade is shown, before its task's validation is finished.
+- **Oracle fails realisation 1.** If validation finds that the oracle fails the first realisation:
+  - the task's realisation 1 is rewritten from the first realisation the oracle passes, and committed;
+  - that task's sessions run again on it, in a new run directory;
+  - the sessions on the earlier realisation 1 are superseded.
+- **Rejected task.** A task that validation rejects is redrawn in its cell (6.5).
+  - Its bundle moves out of `dev/` to `dev-rejected/<task_id>-a<attempt>/`.
+  - Its sessions are superseded: kept, never scored.
+  - The replacement keeps the slot's task id. Its sessions run in a new run directory once its realisation 1 is committed.
+- **Redraw limit.** A development cell that is not filled within 100 draws of its seed sequence, counting the draws made before freeze-0a, leaves its unfilled slots undecided (see the rule below). So a missing task can never help to close the room.
+- **Superseded sessions** are recognised by the digest of the bundle each session saw ([INTERFACE.md](INTERFACE.md)).
+- **Checks when scoring.** `headroom` applies three checks:
+  - it refuses a run whose settings differ from the committed `stage0-settings.json`;
+  - it counts a session only if its bundle digest matches realisation 1 in the committed `bundles-dev.sha256`;
+  - it counts a task as validated only if its truth file's SHA-256 is in the committed `truth-dev.sha256`.
 
 **Cost.** Before Stage 0:
 
@@ -529,9 +620,13 @@ Test tasks and truth are published after the gate decision, with a canary string
 
 **Rule.** For each frontier model m:
 
-- F(m) is the number of development tasks on which `code-hint` fails while at least one valid reference estimator passes the same realisation.
+- F(m) is the number of development tasks on which `code-hint` fails while at least one reference estimator (R-a, R-b, or R2 where it applies) passes the same realisation.
 - **The room is closed if and only if F(Sonnet 5) ≤ 3 and F(Opus 5.5) ≤ 3.**
 - `code+` is recorded but does not enter the rule.
+- A task is decided for m when it is validated and has exactly one current, graded `code-hint` session of m on its realisation 1. While tasks are undecided, F⁻(m) counts the failures above over the decided tasks, and u(m) is the number of the 16 task slots that are not decided for m.
+- The room is open as soon as F⁻(m) ≥ 4 for either model, and closed as soon as F⁻(m) + u(m) ≤ 3 for both models; otherwise the verdict is pending. With every task decided this is the rule above, so a verdict reached early is the one the complete data give.
+- A session waiting for a re-run blocks the verdict. The contamination check of 6.6 covers every graded Stage 0 session, superseded ones included. After an early verdict, the remaining sessions still run and are graded as their tasks are validated. The verdict computed at the end, with `headroom --final`, is binding, and any change from the early verdict is reported.
+- If Stage 0 ends with the verdict pending, because a slot cannot be filled or the owner does not re-approve the cost, the report says so and names the undecided slots. The room then counts as open, because it was not shown closed.
 
 **Operating characteristics.** `power.py` gives the chance that the room is closed at each true code-hint pass rate. It reproduced a critic's figures within ±0.01. The assumptions and the full tables are in [analysis/power-tables.md](analysis/power-tables.md).
 
@@ -588,7 +683,7 @@ That is 924 sessions. If PIVOT-small is in play, Haiku adds `code-hint` and `mcp
 
 ### Blind defect audit and re-runs
 
-Before any grade is computed, the harness checks every session against the pre-registered infrastructure signatures, with arm labels hidden. A defect found this way, or found later without using grades, leads to re-running exactly the affected sessions in every arm with the same realisations. The gate is then computed once on the merged data, whatever the outcome. A whole stage is never re-run.
+Before any grade is computed, the harness checks every session against the pre-registered infrastructure signatures, with arm labels hidden. A defect found this way, or found later without using grades, leads to re-running exactly the affected sessions in every arm with the same realisations. The gate is then computed once on the merged data, whatever the outcome. A defect found by the audit never re-runs a whole stage; section 7 alone says when other sessions run again.
 
 ## 9. Outcomes
 
@@ -681,3 +776,25 @@ Cost savings alone never justify CONTINUE.
   - **Tolerance-information rule.** It is added to 6.4. Before, the tolerance used the noise-only spread across realisations, which share the realised nuisance, while determinability used the nuisance-inclusive profile.
   - **Acceptance-rate runs.** They move to before freeze-1, when they are needed for the test set; they would take about 50 hours on this machine.
   - **`null` for a reference** now means "does not apply or was not run". No agent session has run and no task has been shown to any agent.
+- 2026-09-26, draft 3, compute and order (the owner's decision), revised after an independent review of the draft before freeze-0a:
+  - **Stage 0 sessions may run once a task's realisation 1 is committed after its screen.** Full validation follows in slot order and decides every grade; nothing is graded before it.
+  - **Early verdict.** The rule gains a bound form: open as soon as F⁻(m) ≥ 4, closed as soon as F⁻(m) + u(m) ≤ 3, otherwise pending. It equals the rule on complete data. A pending end counts as open. Development cells are redrawn at most 100 times.
+  - **Replaced bundles.** Sessions on replaced or moved bundles are superseded, recognised by the bundle digest each session records, and re-run in a new run directory.
+  - **Re-running Stage 0.** After the first Stage 0 session, any content-hash change re-runs all of Stage 0 and validates every task again. Only a rejection or a moved realisation 1 that the frozen code decided re-runs a single task.
+  - **Freeze-0 in three parts.** 0a comes before the pilot; 0b before Stage 0, with a regeneration check; 0c before the verdict. It also sets narrow rules for pilot-driven fixes and for private orchestration changes, a reproducible archive hash and a full content hash with its file list.
+  - **R2 on realisations 1 to 3.** R2 runs there wherever neither R-a nor R-b passes, so the rule's input does not depend on the sequential shortcut. "Valid reference estimator" is replaced by the list of estimators.
+  - **Session settings.** Effort (the CLI default), budget, limits and `--jobs 1` are recorded in FREEZES.md. Validation uses at most 3 idle-priority workers while sessions run.
+  - **Reasons:**
+    - Validating all 16 tasks before any session would take 1 to 3 days on the owner's PC at a pace that keeps it usable. The first run, at full load, froze the PC and forced a restart.
+    - Sessions need only the bundles.
+    - A clear result is known before validation ends.
+  - **Cost:** sessions on tasks that validation later rejects are repeated on the replacements.
+  - No agent session had run.
+- 2026-09-26, draft 3, second review before freeze-0a:
+  - `grade` skips sessions of tasks not validated yet, and those whose bundle moved out.
+  - `headroom` checks the settings, the committed bundle manifest and the committed truth list. It computes contamination over every graded Stage 0 session and has a `--final` mode.
+  - The regeneration rule is the same in this file and FREEZES.md.
+  - After the first Stage 0 session, a change re-validates and re-grades everything, but re-runs only sessions whose bundle changed.
+  - Slot order and the development redraw limit are defined.
+  - A rejected task's bundle moves to `dev-rejected/`.
+  - A truth where R-a and R-b both fail must carry R2's result, or say `r2_applies: false`.

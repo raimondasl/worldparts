@@ -40,7 +40,7 @@ from .bundles import REPO_ROOT
 PYTHON_VERSION = "3.12"
 #: Taken at the version the repository's environment has (uv.lock).
 LOCKED_PACKAGES = ("numpy", "scipy", "pandas", "fluids", "wntr", "matplotlib")
-#: Not in uv.lock: pinned here at freeze-0 (None would mean the newest compatible version
+#: Not in uv.lock: pinned here at freeze-0a (None would mean the newest compatible version
 #: at build time); the installed versions are recorded in stamp.json and run.json.
 EXTRA_PINS: dict[str, str | None] = {
     "statsmodels": "0.15.0",

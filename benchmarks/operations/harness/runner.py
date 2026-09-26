@@ -64,7 +64,7 @@ from benchmarks.composition.harness.runner import (
 )
 
 from .arms import Arm, get_arm
-from .bundles import REPO_ROOT, OpsTask, copy_realisation
+from .bundles import REPO_ROOT, OpsTask, copy_realisation, realisation_digest
 from .env import SESSION_ENV, session_path
 from .infra import attempt_dirs
 
@@ -77,11 +77,26 @@ RUN_FILE = "run.json"
 INDEX_FILE = "index.json"
 SESSIONS_DIR = "sessions"
 RECORD_FILE = "record.json"
+#: The digest of the realisation a session saw (``bundles.realisation_digest``).
+BUNDLE_FILE = "bundle.json"
 TMP_PREFIX = "wpbench-ops-"
 #: Parent variables never passed to a session (truth and bundle locations, the CLI path).
 DROP_PREFIXES = ("WPBENCH",)
 #: Parent variables naming the directory the harness was started from (shells, npm).
 DROP_CWD = ("PWD", "OLDPWD", "INIT_CWD")
+#: Parent variables that change how the CLI or the model behaves without a ``CLAUDE`` prefix
+#: (those are dropped with the v0.2 list): every session runs with the CLI defaults that
+#: FREEZES.md records.
+DROP_BEHAVIOUR = (
+    "MAX_THINKING_TOKENS",
+    "MAX_MCP_OUTPUT_TOKENS",
+    "BASH_DEFAULT_TIMEOUT_MS",
+    "BASH_MAX_TIMEOUT_MS",
+    "BASH_MAX_OUTPUT_LENGTH",
+    "DISABLE_PROMPT_CACHING",
+    "DISABLE_INTERLEAVED_THINKING",
+    "MCP_TOOL_TIMEOUT",
+)
 #: At most this many files (each at most 1 MB) the agent wrote are kept per attempt.
 KEEP_FILES, KEEP_BYTES = 200, 1_000_000
 
@@ -207,8 +222,8 @@ def child_env(
     """(full environment of the CLI, the variables the harness set, changed or removed).
 
     Removed variables map to None (their values are not recorded). A variable is removed
-    when it is a ``WPBENCH*`` or :data:`DROP_CWD` variable or when its value names the
-    repository or one of ``forbidden_roots`` (the bundle and truth folders) in any
+    when it is a ``WPBENCH*``, :data:`DROP_CWD` or :data:`DROP_BEHAVIOUR` variable, or when its
+    value names the repository or one of ``forbidden_roots`` (the bundle and truth folders) in any
     spelling; PATH instead loses the entries that name them.
     """
     parent = _clean_parent_env()
@@ -220,7 +235,7 @@ def child_env(
     env: dict[str, str] = {}
     removed: list[str] = []
     for k, v in parent.items():
-        drop = k.upper().startswith(DROP_PREFIXES) or k.upper() in DROP_CWD
+        drop = k.upper().startswith(DROP_PREFIXES) or k.upper() in DROP_CWD + DROP_BEHAVIOUR
         if drop or (k != path_key and _names_any(v, patterns)):
             removed.append(k)
         else:
@@ -318,7 +333,12 @@ def execute_session(
         if bad is not None:
             raise RuntimeError(f"the session directory {tmp} is inside {bad}")
         work = tmp / "work"
+        digest = realisation_digest(spec.task, spec.realisation)
         copy_realisation(spec.task, spec.realisation, work)
+        write_json(
+            attempt_dir / BUNDLE_FILE,
+            {"task": spec.task.task_id, "realisation": spec.realisation, "digest": digest},
+        )
         if arm.workdir_extras:  # pragma: no cover - hook for code-skill's reference/ (freeze-1)
             raise RuntimeError(f"{arm.name}: working-directory extras are not available yet")
         before = _snapshot(work)

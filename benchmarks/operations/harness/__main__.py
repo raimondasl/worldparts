@@ -47,22 +47,28 @@ from .bundles import (
     BundleError,
     ConfigError,
     OpsTask,
+    blocking_set_problems,
     bundles_root,
     format_manifest,
     load_task,
     load_tasks,
     load_truth,
     manifest_differences,
+    manifest_digest,
     manifest_entries,
     manifest_path,
     parse_manifest,
-    set_problems,
+    preregistered_slots,
+    realisation_digest,
     task_manifest_prefixes,
+    truth_listed,
+    truth_manifest_path,
+    truth_path,
     truth_root,
 )
 from .env import default_code_plus_dir, ensure_code_plus_env, env_info
 from .grading import final_reply, grade_answer, tool_numbers_of
-from .headroom import HEADROOM_SET, headroom, headroom_lines
+from .headroom import HEADROOM_REALISATION, HEADROOM_SET, headroom, headroom_lines
 from .infra import (
     MAX_ATTEMPTS,
     attempt_dirs,
@@ -74,6 +80,7 @@ from .infra import (
 from .markers import contamination
 from .report import load_records, to_markdown, write_report
 from .runner import (
+    BUNDLE_FILE,
     INDEX_FILE,
     PINNED_LIMITS,
     RECORD_FILE,
@@ -90,8 +97,8 @@ from .runner import (
     write_json,
 )
 
-#: Default models of ``run`` (aliases; the stream records the model id each resolved to).
-DEFAULT_MODELS = ("sonnet", "opus")
+#: Default models of ``run``: the explicit ids of PREREGISTRATION.md section 3 (never aliases).
+DEFAULT_MODELS = ("claude-sonnet-5", "claude-opus-5-5")
 #: Where ``grade --pass-fail`` logs every evaluation (the firewall's evaluation log).
 PASS_FAIL_LOG = "pass-fail.log"
 
@@ -248,6 +255,8 @@ def _run_meta(args: argparse.Namespace, specs: list[SessionSpec], env_dir: Path)
         "claude_version": claude_version(),
         "code_plus_env": info,
         "code_plus_key": _env_key(info),
+        "jobs": int(args.jobs),
+        "manifest_check": not args.no_manifest_check,
         "bundles": str(bundles_root(args.bundles)),
     }
 
@@ -260,7 +269,12 @@ _PINNED_KEYS = (
     "max_budget_usd",
     "claude_version",
     "code_plus_key",
+    "jobs",
+    "manifest_check",
 )
+#: Where the Stage 0 session settings of FREEZES.md are committed; ``headroom`` refuses a run
+#: whose run.json differs from them in any of these keys.
+STAGE0_SETTINGS = Path(__file__).resolve().parent.parent / "stage0-settings.json"
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -383,6 +397,28 @@ def _execute_all(
     return 0
 
 
+#: The keys of ``stage0-settings.json`` (the Stage 0 session settings of FREEZES.md).
+SETTINGS_KEYS = (
+    "max_turns",
+    "timeout_s",
+    "effort",
+    "max_budget_usd",
+    "claude_version",
+    "code_plus_key",
+    "jobs",
+    "manifest_check",
+)
+
+
+def bundle_replaced(run_dir: Path, sid: str, task: OpsTask, k: int) -> bool:
+    """Whether the bundle a session's first attempt saw (its ``bundle.json``) is no longer
+    the task's realisation k: a re-run in that run directory would then quietly run another
+    bundle under the old session id."""
+    first = attempt_dirs(session_dir(run_dir, sid))
+    seen = (read_json(first[0] / BUNDLE_FILE, {}) or {}).get("digest") if first else None
+    return seen is not None and seen != realisation_digest(task, k)
+
+
 def _cmd_rerun(args: argparse.Namespace) -> int:
     """Re-run flagged sessions (``--rerun-flagged``) or named ones (``--rerun SID ...``,
     for a defect found without grades), each with its own realisation, as a new attempt."""
@@ -422,6 +458,11 @@ def _cmd_rerun(args: argparse.Namespace) -> int:
         spec = SessionSpec(e["set"], e["model"], task, e["arm"], int(e["realisation"]))
         if spec.sid != sid:
             raise _fail(f"index entry of {sid} does not match its id")
+        if bundle_replaced(run_dir, sid, task, spec.realisation):
+            raise _fail(
+                f"{sid}: the bundle of {e['task']} r{e['realisation']} was replaced since the "
+                "session first ran; run the task again in a new run directory (section 8)"
+            )
         todo.append((spec, n + 1))
     if not args.no_manifest_check:
         _check_manifest(_unique_tasks(s.task for s, _ in todo), args)
@@ -464,6 +505,8 @@ def grade_session(
     s = parse_stream(text)
     outcome = read_json(adir / "outcome.json", {}) or {}
     final, no_reply = final_reply(text, outcome)
+    seen = (read_json(adir / BUNDLE_FILE, {}) or {}).get("digest")
+    current = realisation_digest(task, int(entry["realisation"]))
     g = grade_answer(task, truth, final, tool_numbers_of(s.tool_result_texts))
     if no_reply:
         g.parse_error = f"no final reply: {no_reply}"
@@ -485,6 +528,8 @@ def grade_session(
         "arm": entry["arm"],
         "realisation": int(entry["realisation"]),
         "attempt": len(attempts),
+        "bundle_digest": seen,
+        "bundle_current": None if seen is None else seen == current,
         **gd,
         "final_reply": final is not None,
         "no_final_reply": no_reply,
@@ -527,12 +572,21 @@ def cmd_grade(args: argparse.Namespace) -> int:
     truths: dict[tuple[str, str], dict[str, Any]] = {}
     n = 0
     not_run = 0
+    not_validated = 0
+    gone = 0
     verdicts: list[str] = []
     for sid, entry in sorted(index.items()):
         key = (entry["set"], entry["task"])
+        if not (broot / entry["set"] / entry["task"]).is_dir():
+            gone += 1  # the task's bundle was moved out (a rejected task): never graded
+            continue
         try:
             if key not in tasks:
                 tasks[key] = load_task(broot / entry["set"] / entry["task"], entry["set"])
+            if not truth_path(tasks[key], troot).is_file():
+                not_validated += 1  # not validated yet: graded once its truth exists
+                continue
+            if key not in truths:
                 truths[key] = load_truth(tasks[key], troot)
         except BundleError as exc:
             raise _fail(str(exc)) from None
@@ -547,6 +601,7 @@ def cmd_grade(args: argparse.Namespace) -> int:
         verdicts.append(f"{sid} {'PASS' if rec['passed'] else 'FAIL'}")
     if args.pass_fail:
         # Pass or fail only (section 7, firewall): nothing else the grader computed.
+        # (Sessions of tasks not validated yet are not evaluated.)
         for line in verdicts:
             print(line)
         stamp = datetime.now().isoformat(timespec="seconds")
@@ -556,6 +611,11 @@ def cmd_grade(args: argparse.Namespace) -> int:
         return 0
     s = write_report(run_dir)
     print(f"graded {n} session(s); {not_run} not run; report: {run_dir / 'summary.md'}")
+    if not_validated or gone:
+        print(
+            f"not graded: {not_validated} session(s) of tasks not validated yet, "
+            f"{gone} of tasks whose bundle was moved out"
+        )
     if s["pending_reruns"]:
         n_wait = len(s["pending_reruns"])
         print(f"{n_wait} session(s) wait for a re-run: the grades are provisional")
@@ -579,23 +639,79 @@ def cmd_headroom(args: argparse.Namespace) -> int:
     run_dirs = [_run_dir(r) for r in args.runs]
     records = load_records(run_dirs)
     models = {"Sonnet 5": args.sonnet, "Opus 5.5": args.opus}
+    manifest = Path(args.manifest) if args.manifest else manifest_path(HEADROOM_SET)
+    truth_manifest = (
+        Path(args.truth_manifest) if args.truth_manifest else truth_manifest_path(HEADROOM_SET)
+    )
+    settings_path = Path(args.settings) if args.settings else STAGE0_SETTINGS
+    blocking: list[str] = []
     try:
         tasks = load_tasks(HEADROOM_SET, args.bundles)
         troot = truth_root(args.truth)
-        truths = {t.task_id: load_truth(t, troot) for t in tasks}
+        listed = (
+            parse_manifest(truth_manifest.read_text(encoding="utf-8"))
+            if truth_manifest.is_file()
+            else {}
+        )
+        # A task counts as validated only when its truth file is the committed one; any
+        # other task is an undecided slot.
+        truths = {t.task_id: load_truth(t, troot) for t in tasks if truth_listed(t, troot, listed)}
     except (BundleError, ConfigError) as exc:
         raise _fail(str(exc)) from None
-    res = headroom(
-        records, [t.task_id for t in tasks], truths, models, set_problems(tasks, HEADROOM_SET)
+    unlisted = sorted(
+        t.task_id for t in tasks if truth_path(t, troot).is_file() and t.task_id not in truths
     )
+    committed = parse_manifest(manifest.read_text(encoding="utf-8")) if manifest.is_file() else {}
+    # Sessions count only on the committed realisation 1 (its digest from the manifest).
+    digests: dict[str, str] = {}
+    for t in tasks:
+        d = manifest_digest(committed, HEADROOM_SET, t.task_id, HEADROOM_REALISATION)
+        if d is not None:
+            digests[t.task_id] = d
+    settings = read_json(settings_path, None)
+    if not isinstance(settings, dict):
+        blocking.append(f"no Stage 0 settings file {settings_path}")
+    else:
+        for d in run_dirs:
+            meta = read_json(d / RUN_FILE, {}) or {}
+            bad = [k for k in settings if meta.get(k) != settings[k]]
+            if bad:
+                blocking.append(f"run {d.name} used other settings than FREEZES.md: {bad}")
+    res = headroom(
+        records,
+        [t.task_id for t in tasks],
+        truths,
+        models,
+        blocking + [f"development set: {p}" for p in blocking_set_problems(tasks, HEADROOM_SET)],
+        n_slots=preregistered_slots(HEADROOM_SET),
+        current_digests=digests,
+    )
+    print(f"committed bundles: {manifest}; committed truths: {truth_manifest}")
+    if unlisted:
+        print(f"truth files not in {truth_manifest.name} (undecided): {', '.join(unlisted)}")
+    uncommitted = sorted(t.task_id for t in tasks if t.task_id not in digests)
+    if uncommitted:
+        print(f"realisation 1 not committed (undecided): {', '.join(uncommitted)}")
     for line in headroom_lines(res):
         print(line)
+    final_open = bool(args.final and res.verdict == "pending")
+    if final_open:
+        print(
+            "Stage 0 has ended with the verdict pending: the room counts as OPEN, because it "
+            "was not shown closed (PREREGISTRATION.md section 8)."
+        )
     out = {
         "computed": res.computed,
         "not_computed": res.not_computed,
         "models": models,
         "model_ids": res.model_ids,
         "F": res.F,
+        "u": res.u,
+        "undecided_tasks": res.undecided,
+        "superseded": res.superseded,
+        "verdict": res.verdict,
+        "final": bool(args.final),
+        "open_because_pending_at_end": final_open,
         "failing_tasks": res.failing,
         "closed": res.closed,
         "per_task": res.per_task,
@@ -604,7 +720,9 @@ def cmd_headroom(args: argparse.Namespace) -> int:
     }
     if args.json:
         write_json(Path(args.json), out)
-    return 0 if res.computed else 2
+    if not res.computed:
+        return 2
+    return 3 if res.verdict == "pending" and not final_open else 0
 
 
 # ----------------------------------------------------------------------------------------
@@ -703,11 +821,21 @@ def parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("headroom", help="The Stage 0 headroom rule on graded run(s).")
     sp.add_argument("runs", nargs="+")
-    sp.add_argument("--sonnet", default="sonnet", help="Model string of Sonnet 5 in the runs.")
-    sp.add_argument("--opus", default="opus", help="Model string of Opus 5.5 in the runs.")
+    sp.add_argument("--sonnet", default="claude-sonnet-5", help="Model id of Sonnet 5 in the runs.")
+    sp.add_argument("--opus", default="claude-opus-5-5", help="Model id of Opus 5.5 in the runs.")
     sp.add_argument("--truth", default=None)
     sp.add_argument("--bundles", default=None)
     sp.add_argument("--json", default=None, help="Also write the result to this JSON file.")
+    sp.add_argument("--manifest", default=None, help="Committed bundle manifest (default: repo).")
+    sp.add_argument(
+        "--truth-manifest", default=None, help="Committed truth list (default: truth-dev.sha256)."
+    )
+    sp.add_argument("--settings", default=None, help="Stage 0 settings (default: repo).")
+    sp.add_argument(
+        "--final",
+        action="store_true",
+        help="Stage 0 has ended: a pending verdict counts as open (section 8).",
+    )
     sp.set_defaults(fn=cmd_headroom)
 
     sp = sub.add_parser("report", help="Write summary.md and summary.json.")

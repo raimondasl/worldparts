@@ -25,6 +25,23 @@ This is the contract between the private generator and the public harness and gr
 
 The harness copies everything in `r<k>/` except `task.json` into the session's working directory. The session prompt is the text of `task.md` plus the arm's preamble. The realisations `r1`, `r2` and `r3` differ only in data noise and artefacts.
 
+**What each session saw.** Each session attempt records the digest of the realisation it saw in `bundle.json`. The digest is a SHA-256 over the path and SHA-256 of every file in `r<k>/`, `task.json` included.
+
+Grading writes two fields into `record.json`:
+
+- `bundle_digest`: the recorded digest;
+- `bundle_current`: whether that digest still matches the bundle.
+
+A session whose bundle has been replaced since it ran is `superseded`. That happens when validation redraws a task, or when a task's realisation 1 moves. The report and the headroom rule never score a superseded session (PREREGISTRATION.md section 8, Stage 0).
+
+A rejected task's bundle moves to `dev-rejected/<task_id>-a<attempt>/`, and its replacement keeps the task id.
+
+**Committed files for scoring.** `headroom` reads three committed files next to this one:
+
+- `bundles-dev.sha256`: a session counts only if its digest matches realisation 1 there;
+- `truth-dev.sha256`: a task counts as validated only if its truth file's SHA-256 is listed there;
+- `stage0-settings.json`: a run with other settings is refused.
+
 ## `task.json`
 
 ```json
@@ -114,7 +131,11 @@ Field notes:
 - **Identified diagnoses.** When `label` is `identified`, `magnitudes` maps each true fault to `{"value": v, "tol": t}`.
 - **Estimator results.**
   - `reference_pass` records whether each reference estimator passes that realisation.
-  - `null` means the estimator does not apply, or was not run because two other references already decided the rule (PREREGISTRATION 6.5).
+  - `null` means the estimator does not apply, or, for R2, that it was not needed because R-a or R-b passes (PREREGISTRATION 6.5).
+  - **R2 where R-a and R-b both fail.** R2 must have a result there. The exception is a truth whose top level says `"r2_applies": false`, as on filtration and train plants.
   - The Stage 0 headroom rule uses these values for realisation `r1`.
-- **Realisation order.** The harness uses `r1`, `r2` and `r3` in order. They are already the first three realisations on which the oracle passes.
+- **Realisation order.** The harness uses `r1`, `r2` and `r3` in order.
+  - **Before validation:** a task's bundle holds only `r1`, written from the first realisation of its sequence.
+  - **If the oracle fails it:** `r1` is rewritten from the first realisation the oracle passes, and sessions on the earlier `r1` are superseded (PREREGISTRATION.md section 8).
+  - **After validation:** `r1`, `r2` and `r3` are the first three realisations on which the oracle passes.
 - **Required entries.** `realisations` has exactly one entry for each realisation directory of the bundle (`r1` to `rK`). Each entry has `oracle_pass: true` and a `reference_pass` with at least one estimator. The grader refuses a truth file that breaks this.

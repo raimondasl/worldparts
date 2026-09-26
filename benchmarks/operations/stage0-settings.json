@@ -1,0 +1,10 @@
+{
+  "max_turns": 120,
+  "timeout_s": 2400.0,
+  "effort": null,
+  "max_budget_usd": null,
+  "claude_version": "2.1.280 (Claude Code)",
+  "code_plus_key": "6b60722d37b5",
+  "jobs": 1,
+  "manifest_check": true
+}

@@ -249,7 +249,8 @@ def build_set(root: Path, truth_root: Path, no_reference: tuple[str, ...] = ()) 
                 (r / "data" / "scada.csv").write_text(
                     f"timestamp,tag,value,quality\n2026-01-01T00:00,Q1,{10 + k},good\n", "utf-8"
                 )
-            ref = {"R-a": tid not in no_reference, "R-b": False, "R2": None}
+            ref = {"R-a": tid not in no_reference, "R-b": False,
+                   "R2": None if tid not in no_reference else False}  # fmt: skip
             truth = {
                 "task_id": tid,
                 "keys": tkeys,
@@ -380,11 +381,14 @@ def test_session_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     monkeypatch.setenv("VIRTUAL_ENV", str(REPO / ".venv"))
     monkeypatch.setenv("KEEP_ME", "yes")
+    monkeypatch.setenv("CLAUDE_EFFORT", "xhigh")  # a parent session's effort
+    monkeypatch.setenv("MAX_THINKING_TOKENS", "64000")
     envdir = tmp_path / "ops-code-plus-abc"
     full, changed = runner.child_env(envdir)
     upper = {k.upper() for k in full}
     assert not {"WPBENCH_OPS_TRUTH", "WPBENCH_OPS_BUNDLES", "WPBENCH_CLAUDE"} & upper
     assert "CLAUDE_CODE_SESSION_ID" not in upper and "MCP_CONNECTION_NONBLOCKING" not in upper
+    assert "CLAUDE_EFFORT" not in upper and "MAX_THINKING_TOKENS" not in upper
     assert full["ANTHROPIC_API_KEY"] == "sk-test" and full["KEEP_ME"] == "yes"
     assert full["MPLBACKEND"] == "Agg" and changed["MPLBACKEND"] == "Agg"
     assert full["VIRTUAL_ENV"] == str(envdir / ".venv")
@@ -464,6 +468,11 @@ def test_dry_run_prints_everything_and_runs_nothing(
 # ----------------------------------------------------------------------------------------
 # a whole Stage 0 run against the fake executable
 # ----------------------------------------------------------------------------------------
+# The fake runs below use the model aliases as test data; real runs use the explicit ids that
+# are the harness defaults, so the headroom calls name the fixture's strings.
+ALIASES = ["--sonnet", "sonnet", "--opus", "opus"]
+
+
 @pytest.fixture(scope="module")
 def stage0(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     """Run Stage 0 on 16 synthetic tasks with the fake CLI, audit, re-run, grade."""
@@ -474,7 +483,7 @@ def stage0(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     # T[4]'s reference estimators fail realisation 1, so a code-hint failure there does
     # not count toward F.
     t4 = json.loads((troot / "dev" / f"{T[4]}.truth.json").read_text("utf-8"))
-    t4["realisations"]["r1"]["reference_pass"] = {"R-a": False, "R-b": False, "R2": None}
+    t4["realisations"]["r1"]["reference_pass"] = {"R-a": False, "R-b": False, "R2": False}
     (troot / "dev" / f"{T[4]}.truth.json").write_text(json.dumps(t4), "utf-8")
     good = {t: {"reply": reply(correct_answer(truth_keys(troot, t)))} for t in T}
     bad = {t: {"reply": reply(wrong_answer(truth_keys(troot, t)))} for t in T}
@@ -524,9 +533,23 @@ def stage0(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
         assert cli.main(["run", "--set", "dev", "--models", "sonnet", "opus", "--jobs", "8",
                          "--out", str(run_dir), *base]) == 0  # fmt: skip
         out["audit1"] = json.loads((run_dir / "audit.json").read_text("utf-8"))
+        # What FREEZES.md commits: the bundle manifest, the validated truths, the settings.
+        mpath, tpath, spath = tmp / "bundles.sha256", tmp / "truth.sha256", tmp / "set.json"
+        assert cli.main(["manifest", "--set", "dev", "--bundles", str(broot),
+                         "--out", str(mpath)]) == 0  # fmt: skip
+        tpath.write_text("".join(
+            f"{bundles._sha256(p)}  {p.relative_to(troot).as_posix()}\n"
+            for p in sorted((troot / "dev").glob("*.truth.json"))), "utf-8")  # fmt: skip
+        meta = json.loads((run_dir / "run.json").read_text("utf-8"))
+        spath.write_text(json.dumps({k: meta[k] for k in cli.SETTINGS_KEYS}), "utf-8")
+        hargs = ["--manifest", str(mpath), "--truth-manifest", str(tpath),
+                 "--settings", str(spath), *ALIASES]  # fmt: skip
+        out.update(hargs=hargs, settings=spath)
         # Grading before the re-runs is provisional; the headroom rule refuses.
         assert cli.main(["grade", str(run_dir)]) == 0
-        out["headroom_before"] = cli.main(["headroom", str(run_dir), "--bundles", str(broot)])
+        out["headroom_before"] = cli.main(
+            ["headroom", str(run_dir), "--bundles", str(broot), *hargs]
+        )
         for _ in range(3):
             assert cli.main(["run", "--out", str(run_dir), "--rerun-flagged", *base]) == 0
         # A defect found without grades: named sessions are re-run (within the cap).
@@ -541,7 +564,7 @@ def stage0(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
         out["headroom_json"] = tmp / "headroom.json"
         out["headroom_after"] = cli.main(
             ["headroom", str(run_dir), "--bundles", str(broot), "--json",
-             str(out["headroom_json"])]
+             str(out["headroom_json"]), *hargs]
         )  # fmt: skip
         # Resuming the run with other settings is refused.
         with pytest.raises(SystemExit, match="other settings"):
@@ -689,7 +712,7 @@ def test_headroom_rule_on_the_run(stage0: dict[str, Any]) -> None:
 
 def test_headroom_printout(stage0: dict[str, Any], capsys: pytest.CaptureFixture[str]) -> None:
     code = cli.main(["headroom", str(stage0["run"]), "--bundles", str(stage0["bundles"]),
-                     "--truth", str(stage0["truth"])])  # fmt: skip
+                     "--truth", str(stage0["truth"]), *stage0["hargs"]])  # fmt: skip
     out = capsys.readouterr().out
     assert code == 0
     for line in headroom.RULE_LINES:
@@ -987,13 +1010,15 @@ def test_headroom_rule(fails: Any, no_ref: Any, F: tuple[int, int], closed: bool
     assert res.computed and (res.F["Sonnet 5"], res.F["Opus 5.5"]) == F
     assert res.closed is closed
     lines = headroom.headroom_lines(res)
-    assert lines[1:4] == list(headroom.RULE_LINES)
+    assert lines[1 : 1 + len(headroom.RULE_LINES)] == list(headroom.RULE_LINES)
     assert lines[-1].endswith(f"the room is {'CLOSED' if closed else 'OPEN'}.")
 
 
 def test_headroom_is_not_computed_when_it_cannot_be() -> None:
     recs = _records({})
-    assert headroom.headroom(recs[:-1], TASKS, _truths(), MODELS).not_computed  # a session gone
+    gone = headroom.headroom(recs[:-1], TASKS, _truths(), MODELS)  # a session not run yet
+    assert gone.computed and gone.u == {"Sonnet 5": 0, "Opus 5.5": 1}
+    assert gone.verdict == "closed"  # F- + u = 0 + 1: the missing session cannot open it
     recs = _records({})
     recs[20]["rerun_allowed"] = True
     res = headroom.headroom(recs, TASKS, _truths(), MODELS)
@@ -1351,9 +1376,13 @@ def test_headroom_refuses_truth_without_r1_reference_results(tmp_path: Path) -> 
     for t in tasks:
         p = tmp_path / "t" / "dev" / f"{t.task_id}.truth.json"
         p.write_text(json.dumps(drifted[t.task_id]), "utf-8")
+    listed = tmp_path / "truth.sha256"  # a committed truth is loaded and checked
+    listed.write_text("".join(
+        f"{bundles._sha256(p)}  {p.relative_to(tmp_path / 't').as_posix()}\n"
+        for p in sorted((tmp_path / "t" / "dev").glob("*.truth.json"))), "utf-8")  # fmt: skip
     with pytest.raises(SystemExit, match="are missing"):
         cli.main(["headroom", str(tmp_path), "--bundles", str(tmp_path / "b"), "--truth",
-                  str(tmp_path / "t")])  # fmt: skip
+                  str(tmp_path / "t"), "--truth-manifest", str(listed)])  # fmt: skip
 
 
 # ----------------------------------------------------------------------------------------
@@ -1475,3 +1504,222 @@ def test_a_usage_limit_stops_the_run_and_it_resumes(
         audit = json.loads((f.run_dir / "audit.json").read_text("utf-8"))
     assert audit["flagged"] == [] and len(audit["sessions"]) == 4
     assert sorted(s["attempt"] for s in audit["sessions"].values()) == [1, 1, 1, 2]
+
+
+def test_default_models_are_the_preregistered_ids() -> None:
+    # PREREGISTRATION.md section 3: the models are called by explicit ids, never by aliases.
+    assert cli.DEFAULT_MODELS == ("claude-sonnet-5", "claude-opus-5-5")
+    args = cli.parser().parse_args(["headroom", "RUN"])
+    assert (args.sonnet, args.opus) == ("claude-sonnet-5", "claude-opus-5-5")
+
+
+def test_realisation_digest_follows_every_file(tmp_path: Path) -> None:
+    build_set(tmp_path / "b", tmp_path / "t")
+    task = bundles.load_tasks("dev", tmp_path / "b")[0]
+    d1 = bundles.realisation_digest(task, 1)
+    assert d1 == bundles.realisation_digest(task, 1) and d1 != bundles.realisation_digest(task, 2)
+    scada = task.realisation_dir(1) / "data" / "scada.csv"
+    scada.write_text(scada.read_text("utf-8") + "Q1,13,good\n", "utf-8")
+    assert bundles.realisation_digest(task, 1) != d1
+
+
+def test_sessions_record_the_bundle_they_saw(stage0: dict[str, Any]) -> None:
+    recs = stage0["records"]
+    assert recs and all(r["bundle_current"] is True for r in recs)
+    assert all(len(r["bundle_digest"]) == 64 for r in recs)
+    one = next(r for r in recs if r["attempt"] == 1)
+    seen = json.loads((Path(one["attempt_dir"]) / "bundle.json").read_text("utf-8"))
+    assert seen["digest"] == one["bundle_digest"] and seen["realisation"] == 1
+
+
+def test_headroom_ignores_sessions_on_replaced_bundles() -> None:
+    recs = _records({"sonnet": [0, 1, 2, 3]})
+    old = next(r for r in recs if r["model"] == "sonnet" and r["arm"] == "code-hint"
+               and r["task"] == "t00")  # fmt: skip
+    # t00 was redrawn by validation: its first session is superseded, the replacement passed
+    replacement = {**old, "sid": "sonnet-code-hint-0-new", "passed": True}
+    old["superseded"] = True
+    res = headroom.headroom([*recs, replacement], TASKS, _truths(), MODELS)
+    assert res.computed and res.F["Sonnet 5"] == 3 and res.closed is True
+    assert any("never scored" in w and old["sid"] in w for w in res.warnings)
+    # without the replacement's session the slot is undecided: F- = 3, u = 1, so pending
+    res2 = headroom.headroom(recs, TASKS, _truths(), MODELS)
+    assert res2.computed and res2.verdict == "pending" and res2.closed is None
+    assert res2.F["Sonnet 5"] == 3 and res2.u["Sonnet 5"] == 1
+    assert res2.undecided["Sonnet 5"] == ["t00"]
+    assert "PENDING" in headroom.headroom_lines(res2)[-1]
+
+
+def test_headroom_bound_form_decides_early_only_when_the_complete_data_would() -> None:
+    truths = _truths()
+    # 10 of 16 tasks validated; Sonnet already fails 4 of them: open, whatever the rest do
+    ten = {t: truths[t] for t in TASKS[:10]}
+    res = headroom.headroom(_records({"sonnet": [0, 1, 2, 3]}), TASKS, ten, MODELS)
+    assert res.verdict == "open" and res.u == {"Sonnet 5": 6, "Opus 5.5": 6}
+    assert res.closed is False
+    # 13 validated, no failures: F- + u = 3 for both, closed whatever the rest do
+    res = headroom.headroom(_records({}), TASKS, {t: truths[t] for t in TASKS[:13]}, MODELS)
+    assert res.verdict == "closed" and res.closed is True
+    # 12 validated, no failures: F- + u = 4, so pending
+    res = headroom.headroom(_records({}), TASKS, {t: truths[t] for t in TASKS[:12]}, MODELS)
+    assert res.verdict == "pending" and res.closed is None
+    # a failure on an unvalidated task is not counted yet
+    res = headroom.headroom(_records({"opus": [15]}), TASKS, {t: truths[t] for t in TASKS[:15]},
+                            MODELS)  # fmt: skip
+    assert res.F["Opus 5.5"] == 0 and res.u["Opus 5.5"] == 1 and res.verdict == "closed"
+
+
+def test_headroom_counts_missing_slots_as_undecided() -> None:
+    present = TASKS[:14]
+    recs = [r for r in _records({}) if r["task"] in present]
+    truths = {t: v for t, v in _truths().items() if t in present}
+    res = headroom.headroom(recs, present, truths, MODELS, n_slots=16)
+    assert res.u == {"Sonnet 5": 2, "Opus 5.5": 2} and res.verdict == "closed"
+    res = headroom.headroom(recs, present, truths, MODELS, n_slots=13)
+    assert not res.computed and any("slots" in p for p in res.not_computed)
+
+
+def test_headroom_supersedes_sessions_by_bundle_digest() -> None:
+    recs = _records({"sonnet": [0, 1, 2, 3]})
+    for r in recs:
+        r["bundle_digest"] = "old" if r["task"] == "t00" else "cur"
+    digests = {t: "cur" for t in TASKS}
+    res = headroom.headroom(recs, TASKS, _truths(), MODELS, current_digests=digests)
+    assert res.F["Sonnet 5"] == 3 and res.u["Sonnet 5"] == 1 and res.verdict == "pending"
+    assert all("t00" not in s for s in res.failing.values())
+    assert len(res.superseded) == 4  # both arms, both models on t00
+    for r in recs:  # a record without a digest cannot be shown to be current
+        r.pop("bundle_digest")
+    res = headroom.headroom(recs, TASKS, _truths(), MODELS, current_digests=digests)
+    assert len(res.superseded) == len(recs) and res.u["Sonnet 5"] == 16
+
+
+def test_headroom_command_is_pending_while_a_failing_task_is_unvalidated(
+    stage0: dict[str, Any], tmp_path: Path
+) -> None:
+    import shutil
+
+    truth = tmp_path / "truth"
+    shutil.copytree(stage0["truth"], truth)
+    T = stage0["ids"]
+    tasks = {t.task_id: t for t in bundles.load_tasks("dev", stage0["bundles"])}
+    bundles.truth_path(tasks[T[0]], truth).unlink()  # Sonnet fails T[0]: F- = 3, u = 1
+    out = tmp_path / "h.json"
+    code = cli.main(["headroom", str(stage0["run"]), "--bundles", str(stage0["bundles"]),
+                     "--truth", str(truth), "--json", str(out), *stage0["hargs"]])  # fmt: skip
+    res = json.loads(out.read_text("utf-8"))
+    assert code == 3 and res["verdict"] == "pending" and res["closed"] is None
+    assert res["u"]["Sonnet 5"] == 1 and res["F"]["Sonnet 5"] == 3
+
+
+def test_grade_skips_unvalidated_tasks_and_headroom_waits(
+    stage0: dict[str, Any], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import shutil
+
+    run, truth = tmp_path / "run", tmp_path / "truth"
+    shutil.copytree(stage0["run"], run)
+    shutil.copytree(stage0["truth"], truth)
+    T = stage0["ids"]
+    tasks = {t.task_id: t for t in bundles.load_tasks("dev", stage0["bundles"])}
+    bundles.truth_path(tasks[T[3]], truth).unlink()  # T[3] is not validated yet
+    for rec in (run / "sessions").glob("*/record.json"):
+        rec.unlink()
+    capsys.readouterr()
+    assert cli.main(["grade", str(run), "--truth", str(truth)]) == 0
+    printed = capsys.readouterr().out
+    assert "not graded: 4 session(s) of tasks not validated yet" in printed
+    recs = (run / "sessions").glob("*/record.json")
+    graded = {json.loads(p.read_text("utf-8"))["task"] for p in recs}
+    assert T[3] not in graded and len(graded) == 15
+    code = cli.main(["headroom", str(run), "--bundles", str(stage0["bundles"]),
+                     "--truth", str(truth), *stage0["hargs"]])  # fmt: skip
+    assert code == 3  # Sonnet: F- = 3 (T0-T2), u = 1 (T3): pending
+
+
+def test_headroom_refuses_runs_with_other_settings(stage0: dict[str, Any], tmp_path: Path) -> None:
+    other = tmp_path / "settings.json"
+    s = json.loads(stage0["settings"].read_text("utf-8"))
+    other.write_text(json.dumps({**s, "effort": "high"}), "utf-8")
+    args = [a if a != str(stage0["settings"]) else str(other) for a in stage0["hargs"]]
+    code = cli.main(["headroom", str(stage0["run"]), "--bundles", str(stage0["bundles"]),
+                     "--truth", str(stage0["truth"]), *args])  # fmt: skip
+    assert code == 2
+
+
+def test_headroom_counts_only_committed_truths_and_bundles(
+    stage0: dict[str, Any], tmp_path: Path
+) -> None:
+    hargs = list(stage0["hargs"])
+    tman = Path(hargs[hargs.index("--truth-manifest") + 1])
+    T = stage0["ids"]
+    listed = [ln for ln in tman.read_text("utf-8").splitlines() if T[0] not in ln]
+    fewer = tmp_path / "truth.sha256"
+    fewer.write_text("\n".join(listed) + "\n", "utf-8")
+    hargs[hargs.index("--truth-manifest") + 1] = str(fewer)
+    out = tmp_path / "h.json"
+    code = cli.main(["headroom", str(stage0["run"]), "--bundles", str(stage0["bundles"]),
+                     "--truth", str(stage0["truth"]), "--json", str(out), *hargs])  # fmt: skip
+    res = json.loads(out.read_text("utf-8"))
+    assert code == 3 and res["u"]["Sonnet 5"] == 1 and T[0] in res["undecided_tasks"]["Sonnet 5"]
+    # an uncommitted realisation 1: its sessions cannot count
+    man = Path(hargs[hargs.index("--manifest") + 1])
+    kept = [ln for ln in man.read_text("utf-8").splitlines() if f"/{T[1]}/r1/" not in ln]
+    fewer_b = tmp_path / "bundles.sha256"
+    fewer_b.write_text("\n".join(kept) + "\n", "utf-8")
+    hargs2 = list(stage0["hargs"])
+    hargs2[hargs2.index("--manifest") + 1] = str(fewer_b)
+    code = cli.main(["headroom", str(stage0["run"]), "--bundles", str(stage0["bundles"]),
+                     "--truth", str(stage0["truth"]), "--json", str(out), *hargs2])  # fmt: skip
+    res = json.loads(out.read_text("utf-8"))
+    assert T[1] in res["undecided_tasks"]["Sonnet 5"] and len(res["superseded"]) >= 4
+
+
+def test_headroom_final_turns_pending_into_open(stage0: dict[str, Any], tmp_path: Path) -> None:
+    import shutil
+
+    truth = tmp_path / "truth"
+    shutil.copytree(stage0["truth"], truth)
+    T = stage0["ids"]
+    tasks = {t.task_id: t for t in bundles.load_tasks("dev", stage0["bundles"])}
+    bundles.truth_path(tasks[T[0]], truth).unlink()
+    out = tmp_path / "h.json"
+    code = cli.main(["headroom", str(stage0["run"]), "--bundles", str(stage0["bundles"]),
+                     "--truth", str(truth), "--json", str(out), "--final",
+                     *stage0["hargs"]])  # fmt: skip
+    res = json.loads(out.read_text("utf-8"))
+    assert code == 0 and res["verdict"] == "pending" and res["open_because_pending_at_end"]
+
+
+def test_manifest_digest_equals_the_bundle_digest(tmp_path: Path) -> None:
+    build_set(tmp_path / "b", tmp_path / "t")
+    task = bundles.load_tasks("dev", tmp_path / "b")[0]
+    entries = bundles.manifest_entries(tmp_path / "b", "dev")
+    assert bundles.manifest_digest(entries, "dev", task.task_id, 1) == bundles.realisation_digest(
+        task, 1
+    )
+    assert bundles.manifest_digest(entries, "dev", "no-such-task", 1) is None
+
+
+def test_truth_without_r2_where_both_references_fail_is_refused(tmp_path: Path) -> None:
+    build_set(tmp_path / "b", tmp_path / "t")
+    task = bundles.load_tasks("dev", tmp_path / "b")[0]
+    truth = json.loads(bundles.truth_path(task, tmp_path / "t").read_text("utf-8"))
+    truth["realisations"]["r1"]["reference_pass"] = {"R-a": False, "R-b": False, "R2": None}
+    assert any("R2 has no result" in p for p in bundles.truth_problems(task, truth))
+    truth["r2_applies"] = False  # a filtration or train plant: R2 does not apply
+    assert not any("R2 has no result" in p for p in bundles.truth_problems(task, truth))
+
+
+def test_rerun_refuses_a_replaced_bundle(stage0: dict[str, Any], tmp_path: Path) -> None:
+    import shutil
+
+    b = tmp_path / "b"
+    shutil.copytree(stage0["bundles"], b)
+    T = stage0["ids"]
+    task = next(t for t in bundles.load_tasks("dev", b) if t.task_id == T[0])
+    sid = runner.session_id("dev", "sonnet", T[0], "code-hint", 1)
+    assert not cli.bundle_replaced(stage0["run"], sid, task, 1)
+    scada = task.realisation_dir(1) / "data" / "scada.csv"
+    scada.write_text(scada.read_text("utf-8") + "Q1,99,good\n", "utf-8")
+    assert cli.bundle_replaced(stage0["run"], sid, task, 1)

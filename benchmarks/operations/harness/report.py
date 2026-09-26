@@ -30,12 +30,15 @@ ARM_ORDER = ("code+", "code-hint", "code-skill", "lib-directed", "lib", "mcp-hyb
 
 def load_records(run_dirs: list[Path]) -> list[dict[str, Any]]:
     """Every session record of the runs; a record graded from an attempt that is no longer
-    the latest (a re-run happened since) is marked ``stale``."""
+    the latest (a re-run happened since) is marked ``stale``, and one whose bundle was
+    replaced since it ran is marked ``superseded`` (never scored)."""
     out = []
     for run_dir in run_dirs:
         for p in sorted((run_dir / SESSIONS_DIR).glob(f"*/{RECORD_FILE}")):
             rec = json.loads(p.read_text(encoding="utf-8"))
             rec["stale"] = rec.get("attempt") != len(attempt_dirs(p.parent))
+            # a session on a bundle that was replaced since (bundles.realisation_digest)
+            rec["superseded"] = rec.get("bundle_current") is False
             out.append(rec)
     out.sort(key=lambda r: (r["model"], r["arm"], r["task"], r["realisation"]))
     return out
@@ -248,8 +251,10 @@ def to_markdown(s: dict[str, Any]) -> str:
 
 
 def write_report(run_dir: Path) -> dict[str, Any]:
-    records = load_records([run_dir])
+    all_records = load_records([run_dir])
+    records = [r for r in all_records if not r.get("superseded")]
     s = summarise(records, [run_dir.name])
+    s["superseded"] = sorted(r["sid"] for r in all_records if r.get("superseded"))
     (run_dir / "summary.json").write_text(json.dumps(s, indent=2), encoding="utf-8")
     (run_dir / "summary.md").write_text(to_markdown(s), encoding="utf-8")
     return s
