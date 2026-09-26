@@ -114,7 +114,7 @@ Field notes:
 - **Identified diagnoses.** When `label` is `identified`, `magnitudes` maps each true fault to `{"value": v, "tol": t}`.
 - **Estimator results.**
   - `reference_pass` records whether each reference estimator passes that realisation.
-  - `null` means the estimator does not apply.
+  - `null` means the estimator does not apply, or was not run because two other references already decided the rule (PREREGISTRATION 6.5).
   - The Stage 0 headroom rule uses these values for realisation `r1`.
 - **Realisation order.** The harness uses `r1`, `r2` and `r3` in order. They are already the first three realisations on which the oracle passes.
 - **Required entries.** `realisations` has exactly one entry for each realisation directory of the bundle (`r1` to `rK`). Each entry has `oracle_pass: true` and a `reference_pass` with at least one estimator. The grader refuses a truth file that breaks this.

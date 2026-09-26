@@ -272,7 +272,9 @@ The draw must match its stratum.
 - **Per-realisation fit.** On each realisation, the oracle computes a point estimate and a 95 % profile-likelihood interval, with the parameter bounded to [L, U].
 - **Spread and width.** SD is the standard deviation of the point estimates across realisations. W is the median interval width divided by (U − L).
 - **Determinability.** A key is determinable if W ≤ 0.20 and not determinable if W ≥ 0.50. Anything in between is rejected.
-- **Tolerance.** tol = max(3·SD, floor). A determinable key is kept only if 2·tol ≤ 0.35·(U − L).
+- **Tolerance.** tol = max(3·SD, floor). A determinable key is kept only if both of these hold:
+  - 2·tol ≤ 0.35·(U − L);
+  - its median 95 % profile half-width, which includes the nuisance parameters, is at most tol. A tolerance narrower than what the data can determine would reward luck.
 - **Floors**, in each answer's own unit:
 
 | Quantity | Floor |
@@ -338,18 +340,13 @@ The procedure:
 - A draw is rejected as soon as any rule is decided as failed.
 - Tolerances (SD) and interval widths (W) use every oracle realisation evaluated, and at least 50.
 - R-a and R-b run first. R2 runs only where it applies and only when fewer than two of R-a and R-b pass. A reference that did not run is recorded as `null`.
-- In F3, each realisation fits only these hypotheses:
-  - `none`;
-  - the truth hypothesis;
-  - every hypothesis whose Asimov Δχ² from the truth is at most 200.
-
-  A hypothesis further away than that would need a noise excursion of more than 6 standard deviations to come within 10 of the best.
+- In F3, every estimator fits every screened hypothesis on every realisation. There is one exception. A hypothesis is skipped on a realisation when the Asimov Δχ² over the steady bins that realisation keeps exceeds 1,000. On 200 realisations checked, the realised Δχ² was 0.51 to 1.47 times that retained value.
 
 **Redraws.**
 
 - Invalid draws are redrawn within their cell, using that cell's own seed sequence.
 - Every rejection is logged with the rule and the estimator responsible.
-- Before freeze-0, each cell's acceptance rate is measured on 200 public-seed draws. The Asimov screen runs on all 200. Full validation runs on a random subsample of at least 20 draws that passed the screen, with at least 50 realisations each. A cell below 10 % is redesigned on the development distribution.
+- Before freeze-1, and so before the test seed is drawn, each cell's acceptance rate is measured on 200 public-seed draws. Stage 0 does not need it: the development set shows what it needs. The Asimov screen runs on all 200. Full validation runs on a random subsample of at least 20 draws that passed the screen, with at least 50 realisations each. A cell below 10 % is redesigned on the development distribution.
 - After the beacon, a cell not filled within 100 draws is dropped, and the drop is reported.
 
 **Trivial policies.** Each policy is defined for every answer kind:
@@ -679,3 +676,8 @@ Cost savings alone never justify CONTINUE.
   - **Isolation.** Sessions of one task never run at the same time. A tool input that names another session's temporary directory, or a tool result that shows a path inside one, is contamination. Sessions get no `PWD`, `OLDPWD` or `INIT_CWD`, and no variable whose value names the repository, the bundle folder or the truth folder.
   - **Firewall.** Grader records hold no truth value, but a numeric key's truth can be worked out from them, so records and summaries go to the owner only. A firewalled session gets only `grade RUN --pass-fail`, which prints pass or fail per session, writes no record and logs each evaluation.
 - 2026-09-25, draft 2, compute: sequential validation of every rate, early rejection of draws, R2 run only when R-a or R-b fails, and F3 realisations fit only the hypotheses within reach (section 6.5, "Sequential realisations"). The reason: the first development-set run fixed 200 realisations for every estimator and fitted every hypothesis. After 11 hours on 12 cores its first 13 tasks had not finished, so it was stopped. No agent session had run, and no task had been shown to any agent. The new rules decide every validity rule as the old ones would whenever the old decision was not a coin flip.
+- 2026-09-26, draft 2, after the review of the compute stage:
+  - **F3 skip rule.** The skip rule replaces the fixed pruning at an Asimov Δχ² of 200. A reviewer showed that realisations keep only part of the steady bins, so the claimed 6-standard-deviation margin was really about 2. The references' own form errors also bring far hypotheses close, so pruning them changed clear decisions.
+  - **Tolerance-information rule.** It is added to 6.4. Before, the tolerance used the noise-only spread across realisations, which share the realised nuisance, while determinability used the nuisance-inclusive profile.
+  - **Acceptance-rate runs.** They move to before freeze-1, when they are needed for the test set; they would take about 50 hours on this machine.
+  - **`null` for a reference** now means "does not apply or was not run". No agent session has run and no task has been shown to any agent.
