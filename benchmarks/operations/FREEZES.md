@@ -68,3 +68,7 @@ Logged fixes and orchestration changes after a freeze are dated entries below.
   - **Sessions run one at a time.** The harness refuses `--jobs` other than 1 while the private shell is used.
   - **Pilot leftovers.** The pilot session's seven leftover files were moved from the user's temporary folder into its attempt folder (`tmp-leftovers/`). The only other pilot session on that task wrote into its own working directory and never named `/tmp`, so nothing passed between pilot sessions.
   - **Scope.** No grader, checklist, preamble or rule changed.
+- **2026-09-26, private orchestration.** Two private commits review the scheduler's courtesy mode: `a992d24` and `c302cbfcc26ddb17d2c9ded2415b1f1521c4d690`.
+  - **What the mode does.** At most 6 workers run, at idle priority. While the owner uses the PC, one worker runs and the others are frozen.
+  - **Files touched.** `generators/scheduler.py`, `generators/__main__.py`, `generators/status.py`, their tests, and appendix entry A6.14, which documents them.
+  - **Content hash.** Unchanged, `787451b432963c1f`.
