@@ -3,8 +3,8 @@
 For each frontier model m, F(m) counts the development tasks on which the model's
 ``code-hint`` session on realisation 1 fails while at least one reference estimator passes
 realisation 1 (``realisations.r1.reference_pass`` of the task's truth: any estimator whose
-value is ``true``; ``null`` means the estimator does not apply or was not run). The room is closed if and
-only if F(Sonnet 5) <= 3 and F(Opus 5.5) <= 3. ``code+`` does not enter the rule.
+value is ``true``; ``null`` means the estimator does not apply or was not run). The room is
+closed if and only if F(Sonnet 5) <= 3 and F(Opus 5.5) <= 3. ``code+`` does not enter the rule.
 
 The rule is not computed (and says why) when a development task lacks its code-hint
 session for a model, a task has more than one such session, a session is waiting for an
