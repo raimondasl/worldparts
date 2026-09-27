@@ -197,6 +197,53 @@ Logged fixes and orchestration changes after a freeze are dated entries below.
     - `tests/fixtures/opsbench/fake_claude.py`: it tells the new arms apart by their preambles.
     - `tests/test_ops_bench_harness.py`: two whole runs with the fake CLI use at most 2 fake sessions at a time instead of 8 and 4, for the courtesy mode of the machine. No assertion changed.
   - **Unchanged:** the grader (`grading.py`), the headroom rule, the infrastructure rules, the contamination markers (`markers.py`), `checklist.txt`, `environment.txt`, `stage0-settings.json` and the settings `headroom` checks. The `code+` and `code-hint` prompts, command lines and environments are byte-identical, and the existing tests pass with their assertions unchanged.
+- **2026-09-27, review fixes of the build-phase tooling (before any builder session).** A review of the entry above found that the pass/fail mode could be used as an oracle of the truth, that the evaluation limit and the audit could be bypassed, and gaps in the quick-reference test, the toolkit check and the readiness pins. Each finding was reproduced on synthetic fixtures and fixed with tests; no builder session had run.
+  - **Pass/fail mode** (`harness/score.py`, `harness/__main__.py`, `tools/ops_passfail.py`):
+    - **The oracle.** A bundle copy whose `task.json` lost a fault or an option (through `WPBENCH_OPS_BUNDLES`) made the truth check fail exactly when that was the truth, and the failure logged nothing. Now the bundles of the scored tasks must match the committed `bundles-dev.sha256` before any truth file is opened. `--truth`, `--truth-manifest`, `--bundles`, `--out` and `--no-manifest-check` are refused.
+    - **The variables.** The truth folder comes from `WPBENCH_OPS_PASSFAIL_TRUTH`, which `truth_root()` never reads. So the owner's commands (full scores, `grade`, `headroom`) do not run in a builder session, which no longer gets `WPBENCH_OPS_TRUTH`.
+    - **Counting.** The session's name comes from `WPBENCH_OPS_SESSION` (a different `--session` is refused and logged). The log is the owner's (`WPBENCH_OPS_PASSFAIL_LOG`, by default `%LOCALAPPDATA%/worldparts-bench/ops-build/pass-fail.log`), never in the builder's `DIR`, so deleting `DIR` or picking a new name does not reset the count. Each evaluation is counted under a lock file and logged before anything is graded, so two runs at once cannot both be the third, and a failed or crashed run counts. The log is parsed so that a line without its line break cannot hide the next evaluation.
+    - **Errors.** An error after that point gives one message that names no truth. A run that would score nothing (a wrong truth folder) is refused before it is logged.
+  - **Scoring** (`harness/score.py`):
+    - An answer file the grader cannot grade fails with a `parse_error` instead of stopping the run: an integer too large for a float, or an array nested deeper than Python recurses.
+    - The full mode writes every grade to `--out FILE` outside `DIR` (not `DIR/score.json`) and checks the scored bundles against the committed manifest (`--no-manifest-check` to skip).
+    - It prints the pass rate with one decimal, rounded down (43/48 was printed "90 %"), and a line `readiness ...: MET` or `NOT MET` with the passes needed (the smallest integer at or above 90 % of N, computed exactly). `readiness_met` and `readiness_needed` are added to the document.
+  - **Firewall audit** (`harness/firewall.py`). New violations:
+    - `score.json`, `WPBENCH_OPS_PASSFAIL_*` and the owner's `%LOCALAPPDATA%/worldparts-bench`. With this entry, `score.json` joins the files builders never read, beside `record.json`, `summary.*`, `headroom*.json` and `pass-fail.log`.
+    - Wildcard spellings of the forbidden names (`*opsbench*`, `tru*`), and `cd` into `reports`, `truth`, `research_notes` or `.claude`.
+    - A recursive search, copy or archive (`grep -r`, `find -exec`, `xargs`, `cp -r`, `robocopy`, `tar`, `zip -r`, `Copy-Item -Recurse`, ...) over a folder above a run directory (`.`, the repository, `benchmarks`, a checkout such as the Stage 0 worktree), unless it is restricted to transcript and code files. Over a folder above the repository (`..`, world-model, the home folder, a drive) it is a violation even when restricted, and so are `rg`, the `Grep` tool and multi-level `Glob` patterns there. `rg`, the Grep tool and `git grep` elsewhere stay allowed, since they skip the git-ignored run folders.
+    - A wildcard read of a run directory by any command but a lister (`jq`, `grep` without `-r`, `python` glob), and paths such as `sessions/*/*.json`.
+    - The owner's commands (`harness score` without `--pass-fail`, `grade` without it, `headroom`, `report`), the pass/fail mode with the owner's options, and the harness's truth functions called from Python. Setting `WPBENCH_OPS_SESSION` is a violation too.
+    - A change to the harness, its committed lists, the wrapper or the benchmark's tests, by a write tool or a shell write. The quick reference, which track A writes, is excepted.
+    - Other sessions' transcripts: session-transcript tools, `claude --resume` or `--continue`, the terminal reader.
+    - `git log -p`, `show`, `diff`, `checkout`, ... of a folder that holds PREREGISTRATION.md (`.`, `benchmarks`, `benchmarks/operations`), and fetches of its history from GitHub (a commit URL, `commits?path=`, `raw.githubusercontent.com/<commit>`), by shell or `WebFetch`, whose URL is now scanned.
+    - Text written by a write tool: a script (`.py`, `.sh`, `.ps1`, ..., or no suffix) is scanned like a shell command. Other written text, such as notes that quote these rules, gives warnings only; the review had asked for violations there too.
+    - Evaluations are counted for every launcher (`uv run -m`, `py`, `$PY`, `./tools/ops_passfail.py`, `runpy`, the harness's `main`).
+  - **Firewall audit, new warnings:**
+    - an evaluation inside a loop, `xargs`, a background job or a written script;
+    - `git diff` of an old revision, and `git checkout`, `switch`, `worktree add` or `reset --hard` to one;
+    - setting `WPBENCH_OPS_BUNDLES`.
+
+    Setting `WPBENCH_OPS_BUNDLES` stays a warning, and the pass/fail mode still honours the variable (the review had asked to ignore it): the manifest check makes the bundle folder's location irrelevant.
+  - **Quick-reference test** (`harness/quickref.py`, a change to its rules, logged as its docstring requires; the quick reference does not exist yet):
+    - `.95` and `1_000` are numbers.
+    - These are read as prose:
+      - string literals;
+      - backtick spans of three or more hyphen-joined words;
+      - names of more than four underscore-joined words;
+      - prose tokens joined by `/`, `,` or `;`.
+    - Words with letters that are not ASCII are refused.
+    - A shown line has at most 120 characters.
+    - A line with a procedure word is refused even when it copies the checklist. Section 3 says the quick reference has "no thresholds and no procedure", and the `lib` arm gets it without the checklist. Before this change, the test's example passed the checklist line "Prefer none, then single faults".
+    - The section-14 names are every public name `worldparts/__init__.py` imports from the section-14 modules, so a name track A adds (a SCADA reader) counts at once. The modules are `measurements`, `calibration`, `diagnosis`, and `scada` or `identifiability` if they exist.
+  - **Toolkit** (`harness/toolkit.py`): refused when a file is not UTF-8 text (a pickle or an archive would escape both checks). Refused, too, when it has more lines than section 3's cap: 800, or the line count of the section-14 modules (5,364 lines today), whichever is larger.
+  - **Readiness pins** (`harness/__main__.py`, `harness/env.py`):
+    - **Preambles.** `run.json` records the SHA-256 of each preamble file its arms use (`preambles`). A resumed run and a re-run refuse other texts. A readiness run refuses preamble files that differ from the commit. The re-run path checks the preambles first.
+    - **The lib key.** It hashes the last commit that changed the wheel's sources, not HEAD. So a commit such as this file's entries no longer blocks resuming or re-running a readiness run. HEAD at build time is recorded in the environment's stamp.
+    - **No rebuild in place.** A resumed run or a re-run uses the run's lib environment directory and never rebuilds it in place. An explicitly given `--lib-env` that holds another environment is refused, not rebuilt.
+    - **Ignored files.** The dirty check includes git-ignored files that the wheel build packs (an example `.inp`); caches are excluded.
+  - **Grader issue, logged and not fixed.** `grading.as_number` calls `float()` on any JSON integer, so an integer above about 1e308 raises `OverflowError`. This crashes `grade RUN` on such a final reply; no Stage 0 reply has one. Scoring now catches it (above). A fix in `grading.py` waits for the defect rule of 6.6, and `grading.py` is unchanged.
+  - **Documentation and tests.** The README, INTERFACE.md ("Scripted answers", "Build-phase inputs") and `tests/test_ops_bench_build.py` are updated; the new tests use synthetic fixtures and the fake CLI only. No other test changed.
+  - **Unchanged:** the grader, the headroom rule, the infrastructure rules, the markers, the checklist, the `code+` and `code-hint` preambles, prompts, command lines and environments, `stage0-settings.json` and the Stage 0 settings.
 
 ## Build phase after Stage 0 (protocol fixed before any builder session, 2026-09-27)
 

@@ -14,8 +14,8 @@ Run from the repository root::
     uv run python -m benchmarks.operations.harness lib-env
     uv run python -m benchmarks.operations.harness run --set dev --readiness \\
         [--arms lib-directed code-skill lib] [--models claude-sonnet-5] [--dry-run]
-    uv run python -m benchmarks.operations.harness score DIR [--set dev] [--truth T]
-    uv run python -m benchmarks.operations.harness score DIR --pass-fail --session NAME
+    uv run python -m benchmarks.operations.harness score DIR --out FILE [--set dev] [--truth T]
+    uv run python -m benchmarks.operations.harness score DIR --pass-fail
     uv run python -m benchmarks.operations.harness firewall-audit TRANSCRIPT.jsonl [...]
 
 ``run`` never grades: it runs sessions and then the blind audit. ``grade`` runs the audit
@@ -24,10 +24,11 @@ again before it computes any grade. A real ``run`` starts paid Claude Code sessi
 runs different tasks in parallel), so no session can read another arm's work on its task.
 
 ``grade RUN --pass-fail`` and ``score DIR --pass-fail`` are the only grader outputs a
-firewalled session may receive (PREREGISTRATION.md section 7): they print pass or fail,
-write no record and append each evaluation to ``pass-fail.log``. Records, summaries and
-``score.json`` are for the owner only, since a numeric key's truth can be worked out from
-them. Builders run ``tools/ops_passfail.py DIR --session NAME``, and ``firewall-audit``
+firewalled session may receive (PREREGISTRATION.md section 7): they print pass or fail and
+write no record; ``grade`` appends each evaluation to ``<run>/pass-fail.log``, and
+``score`` to the owner's log (:func:`.score.log_path`). Records, summaries and the full
+scores of ``score --out`` are for the owner only, since a numeric key's truth can be
+worked out from them. Builders run ``tools/ops_passfail.py DIR``, and ``firewall-audit``
 scans their transcripts (:mod:`.firewall`).
 
 ``run --readiness`` runs the readiness arms (``code-skill``, ``lib-directed``, ``lib``;
@@ -53,6 +54,7 @@ from typing import Any
 from benchmarks.composition.harness.grading import parse_stream
 from benchmarks.composition.harness.runner import SessionLimits, claude_executable, format_command
 
+from . import arms as _arms
 from . import firewall
 from . import score as scoring
 from .arms import (
@@ -65,11 +67,13 @@ from .arms import (
     require_available,
 )
 from .bundles import (
+    REPO_ROOT,
     RESULTS_DIR,
     SETS,
     BundleError,
     ConfigError,
     OpsTask,
+    _sha256,
     blocking_set_problems,
     bundles_root,
     format_manifest,
@@ -95,6 +99,7 @@ from .env import (
     ensure_lib_env,
     env_info,
     lib_env_info,
+    uncommitted,
 )
 from .grading import final_reply, grade_answer, tool_numbers_of
 from .headroom import HEADROOM_REALISATION, HEADROOM_SET, headroom, headroom_lines
@@ -178,6 +183,43 @@ def _check_preambles(arms: Any) -> None:
     problems = [f"{a.name}: {p}" for a in arms for p in preamble_problems(a)]
     if problems:
         raise _fail("; ".join(problems))
+
+
+def _preamble_files(arms: Any) -> list[str]:
+    return sorted({f for a in arms for f in a.preamble_files})
+
+
+def preamble_digests(arms: Any) -> dict[str, str]:
+    """``{file: SHA-256}`` of the preamble files the arms use (recorded in run.json; a
+    resumed run and a re-run refuse other preamble texts)."""
+    d = _arms.PREAMBLES_DIR
+    return {f: _sha256(d / f) for f in _preamble_files(arms) if (d / f).is_file()}
+
+
+def uncommitted_preambles(arms: Any) -> list[str]:
+    """The arms' preamble files that differ from the commit (``[]``: all committed). A
+    readiness run's prompts must be those of a commit, as its wheel's sources must be."""
+    d = _arms.PREAMBLES_DIR
+    try:
+        rel = [
+            (d / f).resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+            for f in _preamble_files(arms)
+        ]
+    except ValueError:
+        return [f"the preamble folder {d} is not in the repository"]
+    changed = uncommitted(rel)
+    if changed is None:
+        return ["git is not available to check the preambles against the commit"]
+    return changed
+
+
+def _require_committed_preambles(arms: Any) -> None:
+    changed = uncommitted_preambles(arms)
+    if changed:
+        raise _fail(
+            "a readiness run's preambles must be committed (as its wheel's sources): "
+            + "; ".join(changed[:10])
+        )
 
 
 def _specs(args: argparse.Namespace) -> list[SessionSpec]:
@@ -332,6 +374,7 @@ def _run_meta(
 ) -> dict[str, Any]:
     info = env_info(env_dir) or {}
     lib = (lib_env_info(lib_env) or {}) if lib_env is not None else None
+    arms_used = {get_arm(s.arm).name: get_arm(s.arm) for s in specs}.values()
     return {
         "set": args.set,
         "models": sorted({s.model for s in specs}),
@@ -355,6 +398,7 @@ def _run_meta(
         "lib_key": (lib or {}).get("key"),
         "toolkit": toolkit.manifest() if toolkit is not None else None,
         "toolkit_digest": toolkit.digest if toolkit is not None else None,
+        "preambles": preamble_digests(arms_used),
     }
 
 
@@ -394,12 +438,14 @@ def cmd_run(args: argparse.Namespace) -> int:
         raise _fail(f"the Claude CLI {exe!r} was not found (set WPBENCH_CLAUDE)")
     run_dir = Path(args.out) if args.out else RESULTS_DIR / _run_id(args.set)
     arms_used = {get_arm(s.arm).name: get_arm(s.arm) for s in specs}.values()
+    if _readiness(args):
+        _require_committed_preambles(arms_used)
+    previous = read_json(run_dir / RUN_FILE, {})
     toolkit = _toolkit(args, arms_used)
     env_dir = ensure_code_plus_env(args.code_env)
-    lib_env = _lib_env(args, env_dir, arms_used)
+    lib_env = _lib_env(args, env_dir, arms_used, (previous or {}).get("lib_env"))
     sb = args.session_bash = _session_bash(args)
     meta = _run_meta(args, specs, env_dir, sb, lib_env, toolkit)
-    previous = read_json(run_dir / RUN_FILE, {})
     if previous:
         changed = [k for k in _PINNED_KEYS if (previous.get(k) or None) != (meta.get(k) or None)]
         for key, info in _SHARED_WHEN_USED:
@@ -407,6 +453,13 @@ def cmd_run(args: argparse.Namespace) -> int:
                 changed.append(key)
             elif not meta.get(key):
                 meta[key], meta[info] = previous.get(key), previous.get(info)
+        recorded = previous.get("preambles") or {}
+        changed += [
+            f"preamble {f}"
+            for f, sha in meta["preambles"].items()
+            if f in recorded and recorded[f] != sha
+        ]
+        meta["preambles"] = {**recorded, **meta["preambles"]}
         if changed:
             raise _fail(
                 f"run {run_dir} was started with other settings ({', '.join(changed)}); "
@@ -443,12 +496,25 @@ def _toolkit(args: argparse.Namespace, arms: Any) -> Toolkit | None:
     return tk
 
 
-def _lib_env(args: argparse.Namespace, code_plus: Path, arms: Any) -> Path | None:
+def _lib_env(
+    args: argparse.Namespace, code_plus: Path, arms: Any, recorded: dict[str, Any] | None = None
+) -> Path | None:
     """The lib environment when a lib arm runs; refused unless its wheel is built from a
-    commit (the wheel's sources unchanged in the working tree), which run.json records."""
+    commit (the wheel's sources unchanged in the working tree), which run.json records.
+
+    ``recorded`` is the ``lib_env`` of the run being resumed or re-run: its directory (or
+    ``--lib-env``) is used and never rebuilt in place, so a run that no longer matches its
+    environment is refused instead of destroying it."""
     if not any(a.env == "lib" for a in arms):
         return None
-    lib_env = ensure_lib_env(code_plus, getattr(args, "lib_env", None))
+    given = getattr(args, "lib_env", None)
+    try:
+        if recorded and recorded.get("dir"):
+            lib_env = ensure_lib_env(code_plus, Path(given or recorded["dir"]), rebuild=False)
+        else:
+            lib_env = ensure_lib_env(code_plus, given)
+    except RuntimeError as exc:
+        raise _fail(str(exc)) from None
     info = lib_env_info(lib_env) or {}
     if not info.get("commit") or info.get("dirty") is not False:
         raise _fail(
@@ -600,13 +666,27 @@ def _cmd_rerun(args: argparse.Namespace) -> int:
     limits = SessionLimits(int(meta["max_turns"]), float(meta["timeout_s"]))
     args.readiness = bool(meta.get("readiness"))
     target_arms = {get_arm(index[sid]["arm"]).name: get_arm(index[sid]["arm"]) for sid in targets}
+    _check_preambles(target_arms.values())
+    recorded = meta.get("preambles") or {}
+    other = [
+        f
+        for f, sha in preamble_digests(target_arms.values()).items()
+        if f in recorded and recorded[f] != sha
+    ]
+    if other:
+        raise _fail(
+            f"the preamble file(s) {', '.join(other)} differ from the run's; re-runs must use "
+            "the same"
+        )
+    if args.readiness:
+        _require_committed_preambles(target_arms.values())
     toolkit = _toolkit(args, target_arms.values())
     if toolkit is not None and toolkit.digest != meta.get("toolkit_digest"):
         raise _fail("the code-skill toolkit differs from the run's; re-runs must use the same")
     env_dir = ensure_code_plus_env(args.code_env)
     if _env_key(env_info(env_dir)) != meta.get("code_plus_key"):
         raise _fail("the code-plus environment differs from the run's")
-    lib_env = _lib_env(args, env_dir, target_arms.values())
+    lib_env = _lib_env(args, env_dir, target_arms.values(), meta.get("lib_env"))
     if lib_env is not None and _env_key(lib_env_info(lib_env)) != meta.get("lib_key"):
         raise _fail("the lib environment differs from the run's; re-runs must use the same")
     args.jobs = 1
@@ -895,6 +975,23 @@ def cmd_headroom(args: argparse.Namespace) -> int:
 # ----------------------------------------------------------------------------------------
 # scripted answers (score) and the firewall audit
 # ----------------------------------------------------------------------------------------
+def _inside(path: Path, folder: Path) -> bool:
+    p, f = path.resolve(), folder.resolve()
+    return p == f or f in p.parents
+
+
+def _bundle_differences(tasks: list[OpsTask], set_name: str, root: Any = None) -> list[str]:
+    """How the bundles of ``tasks`` (every realisation) differ from the committed
+    ``bundles-<set>.sha256`` (``[]``: they are the committed ones)."""
+    path = manifest_path(set_name)
+    if not path.is_file():
+        return [f"no committed manifest {path.name}"]
+    expected = parse_manifest(path.read_text(encoding="utf-8"))
+    return manifest_differences(
+        expected, manifest_entries(bundles_root(root), set_name), task_manifest_prefixes(tasks)
+    )
+
+
 def cmd_score(args: argparse.Namespace) -> int:
     """Score DIR/<task>/r<k>.json (:mod:`.score`): the owner's full scores, or pass/fail."""
     answers = Path(args.dir)
@@ -902,17 +999,34 @@ def cmd_score(args: argparse.Namespace) -> int:
         return _score_pass_fail(args, answers)
     if not answers.is_dir():
         raise _fail(f"no answer directory {answers}")
+    if not args.out:
+        raise _fail(
+            "the full mode writes every grade (for the owner only) to --out FILE, outside the "
+            "answer directory; a builder gets --pass-fail only"
+        )
+    out = Path(args.out)
+    if _inside(out, answers):
+        raise _fail(f"--out {out} is inside the answer directory; write it outside {answers}")
     try:
         tasks = load_tasks(args.set, args.bundles)
         troot = truth_root(args.truth)
         listed = _truth_list(args)
+        if not args.no_manifest_check:
+            diffs = _bundle_differences(
+                [t for t in tasks if truth_listed(t, troot, listed)], args.set, args.bundles
+            )
+            if diffs:
+                raise _fail(
+                    f"the bundles differ from {manifest_path(args.set).name}: "
+                    + "; ".join(diffs[:20])
+                )
         res = scoring.score_answers(answers, tasks, troot, listed)
     except (BundleError, ConfigError) as exc:
         raise _fail(str(exc)) from None
     for line in scoring.full_lines(res):
         print(line)
-    write_json(answers / scoring.SCORE_FILE, scoring.score_document(res, answers, args.set))
-    print(f"wrote {answers / scoring.SCORE_FILE} (for the owner only: never show it to a builder)")
+    write_json(out, scoring.score_document(res, answers, args.set))
+    print(f"wrote {out} (for the owner only: never show it to a builder)")
     return 0
 
 
@@ -921,40 +1035,88 @@ def _truth_list(args: argparse.Namespace) -> dict[str, str]:
     return parse_manifest(path.read_text(encoding="utf-8")) if path.is_file() else {}
 
 
+#: The pass/fail mode's only message when the truth cannot be used; it names nothing.
+TRUTH_UNREADABLE = (
+    "the truth could not be read (the owner sets WPBENCH_OPS_PASSFAIL_TRUTH when launching "
+    "the session); no evaluation was logged"
+)
+
+
 def _score_pass_fail(args: argparse.Namespace, answers: Path) -> int:
     """Pass or fail per realisation; nothing about the truth, its folder or the grades,
-    even in an error message."""
-    session = args.session or ""
-    if not scoring.SESSION_NAME.match(session):
-        raise _fail("--pass-fail needs --session NAME (letters, digits, '.', '_' or '-')")
+    even in an error message (:mod:`.score`, "Pass/fail").
+
+    The truth folder, the committed lists and the session's name come from the owner only:
+    ``--truth``, ``--truth-manifest``, ``--bundles``, ``--out`` and ``--no-manifest-check``
+    are refused. Before any truth file is opened, the bundles of the scored tasks are
+    checked against the committed ``bundles-dev.sha256`` (so a changed ``task.json`` can
+    never be tested against the truth), and the evaluation is counted and logged under a
+    lock; whatever happens after that, it counts."""
+    given = [
+        f"--{name.replace('_', '-')}"
+        for name in ("truth", "truth_manifest", "bundles", "out", "no_manifest_check")
+        if getattr(args, name, None)
+    ]
+    if given:
+        raise _fail(
+            f"--pass-fail takes no {', '.join(given)}: the truth, the committed lists and the "
+            "bundle check are the owner's"
+        )
     if args.set != "dev":
         raise _fail("--pass-fail scores the development set only")
+    session = os.environ.get(scoring.SESSION_ENV) or ""
+    if not scoring.SESSION_NAME.match(session):
+        raise _fail(
+            f"{scoring.SESSION_ENV} is not set: the owner sets it (the session's name) when "
+            "launching the session; ask the owner"
+        )
+    log = scoring.log_path()
+    if args.session and args.session != session:
+        scoring.log_refusal(log, session, f"--session {args.session!r} is another name")
+        raise _fail(f"--session {args.session} is not this session's name ({session})")
     if not answers.is_dir():
         raise _fail(f"no answer directory {answers}")
-    log = answers / scoring.PASS_FAIL_LOG
-    done = scoring.evaluations_logged(log, session)
-    if done >= scoring.MAX_EVALUATIONS:
-        scoring.log_refusal(log, session)
+    try:
+        tasks = load_tasks("dev")
+    except (BundleError, ConfigError) as exc:
+        raise _fail(str(exc)) from None
+    try:
+        # Which tasks have a committed truth: only whether each truth file is the committed
+        # one is read here, never its content.
+        troot = scoring.passfail_truth_root()
+        listed = parse_manifest(truth_manifest_path("dev").read_text(encoding="utf-8"))
+        scored = [t for t in tasks if truth_listed(t, troot, listed)]
+    except Exception:  # never let a truth path or value through
+        raise _fail(TRUTH_UNREADABLE) from None
+    if not scored:
+        raise _fail(TRUTH_UNREADABLE)
+    try:
+        diffs = _bundle_differences(scored, "dev")
+    except (ConfigError, OSError, ValueError) as exc:
+        raise _fail(f"the bundles could not be checked ({exc}); no evaluation was logged") from None
+    if diffs:
+        raise _fail(
+            f"the bundles differ from the committed {manifest_path('dev').name} ({len(diffs)} "
+            f"file(s), e.g. {diffs[0]}); no evaluation was logged"
+        )
+    number = scoring.begin_evaluation(log, session)
+    if number is None:
         raise _fail(
             f"session {session} has had its {scoring.MAX_EVALUATIONS} evaluations "
             "(PREREGISTRATION.md section 7)"
         )
     try:
-        tasks = load_tasks(args.set, args.bundles)
-    except (BundleError, ConfigError) as exc:
-        raise _fail(str(exc)) from None
-    try:
-        troot = truth_root(args.truth)
-        res = scoring.score_answers(answers, tasks, troot, _truth_list(args))
-    except (BundleError, ConfigError, OSError, ValueError):
+        res = scoring.score_answers(answers, scored, troot, listed)
+    except Exception:  # it counts, and says nothing about the truth
+        scoring.log_failure(log, session, number)
         raise _fail(
-            "the truth could not be read (the owner sets WPBENCH_OPS_TRUTH when launching the "
-            "session); no evaluation was logged"
+            f"the evaluation could not be completed; it counts as evaluation {number} of "
+            f"{scoring.MAX_EVALUATIONS} for session {session}"
         ) from None
-    scoring.log_evaluation(log, session, done + 1, res)
+    scoring.log_evaluation(log, session, number, res)
     for line in scoring.pass_fail_lines(res):
         print(line)
-    print(f"evaluation {done + 1} of {scoring.MAX_EVALUATIONS} for session {session}")
+    print(f"evaluation {number} of {scoring.MAX_EVALUATIONS} for session {session}")
     return 0
 
 
@@ -964,9 +1126,10 @@ def cmd_firewall_audit(args: argparse.Namespace) -> int:
     if missing:
         raise _fail(f"no transcript {', '.join(missing)}")
     truths: list[str] = list(args.truth or [])
-    env_truth = os.environ.get("WPBENCH_OPS_TRUTH")
-    if env_truth and env_truth not in truths:
-        truths.append(env_truth)
+    for var in ("WPBENCH_OPS_TRUTH", scoring.PASSFAIL_TRUTH_ENV):
+        env_truth = os.environ.get(var)
+        if env_truth and env_truth not in truths:
+            truths.append(env_truth)
     res = firewall.audit_transcripts(paths, truths, list(args.forbid or []))
     for line in firewall.audit_lines(res):
         print(line)
@@ -1127,12 +1290,27 @@ def parser() -> argparse.ArgumentParser:
         "--truth-manifest", default=None, help="Committed truth list (default truth-<set>.sha256)."
     )
     sp.add_argument(
+        "--out",
+        default=None,
+        help="Full mode: the file every grade is written to (for the owner only; outside DIR).",
+    )
+    sp.add_argument(
+        "--no-manifest-check",
+        action="store_true",
+        help="Full mode: do not check the scored bundles against bundles-<set>.sha256.",
+    )
+    sp.add_argument(
         "--pass-fail",
         action="store_true",
-        help="Print only PASS or FAIL per task realisation and the number of passes, write "
-        "nothing but DIR/pass-fail.log, and allow at most 3 evaluations per --session.",
+        help="Print only PASS or FAIL per task realisation and the number of passes; the "
+        f"truth ({scoring.PASSFAIL_TRUTH_ENV}) and the session's name ({scoring.SESSION_ENV}) "
+        "come from the owner, and at most 3 evaluations per session are logged.",
     )
-    sp.add_argument("--session", default=None, help="The builder session's name (--pass-fail).")
+    sp.add_argument(
+        "--session",
+        default=None,
+        help=f"--pass-fail: this session's name; it must be ${scoring.SESSION_ENV} (optional).",
+    )
     sp.set_defaults(fn=cmd_score)
 
     sp = sub.add_parser(

@@ -22,10 +22,14 @@ holds the code-plus packages at exactly the versions the code-plus environment h
 ``stamp.json``), worldparts installed from a wheel built from this repository (``uv build
 --wheel``, not editable), and worldparts' own dependencies at the versions of the
 repository's environment. ``<key>`` hashes :func:`lib_request`: the code-plus key, the
-versions, the worldparts version, the SHA-256 of the wheel's sources and the repository
-commit (with whether those sources differ from it). ``stamp.json`` adds the wheel's file
-name and SHA-256. ``run.json`` records all of it (``lib_env``, ``lib_key``), and a real
-run refuses a lib environment whose sources differ from the commit. The wheel is refused
+versions, the worldparts version, the SHA-256 of the wheel's sources and the last commit
+that changed those sources (with whether they differ from it, git-ignored files included:
+:func:`git_state`); HEAD is not part of it, so a commit that leaves the wheel unchanged
+keeps the environment. ``stamp.json`` adds the wheel's file name and SHA-256 and HEAD at
+build time. ``run.json`` records all of it (``lib_env``, ``lib_key``), and a real run
+refuses a lib environment whose sources differ from the commit. A directory that holds
+an environment of another request is never rebuilt in place when it is given explicitly
+or belongs to a run being resumed (:func:`ensure_lib_env`). The wheel is refused
 when one of its files would trip a contamination marker of the lib arms
 (:func:`wheel_problems`). Before freeze-1 the lib environment serves only readiness runs
 (``run --readiness``).
@@ -256,24 +260,62 @@ def _canon(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def git_state(repo: Path = REPO_ROOT) -> dict[str, Any]:
-    """``{"commit": HEAD, "dirty": whether the wheel's sources differ from it}`` (both None
-    without git)."""
+#: Ignored files that the wheel build leaves out (so they do not make the sources dirty).
+_BUILD_SKIPS = re.compile(r"(?:^|/)__pycache__(?:/|$)|\.py[co]$")
+
+
+def uncommitted(paths: list[str], repo: Path = REPO_ROOT) -> list[str] | None:
+    """The files under ``paths`` (relative to ``repo``) that differ from the commit:
+    changed, staged, untracked, and git-ignored ones too (a build packs an ignored file
+    such as a ``.inp`` example), except caches (:data:`_BUILD_SKIPS`). None without git."""
     git = shutil.which("git")
     if git is None:
-        return {"commit": None, "dirty": None}
+        return None
+    try:
+        status = subprocess.run(
+            [git, "-C", str(repo), "status", "--porcelain", "--ignored", "--untracked-files=all",
+             "--", *paths],
+            capture_output=True, text=True, check=True, timeout=60,
+        ).stdout  # fmt: skip
+    except (OSError, subprocess.SubprocessError):
+        return None
+    out = []
+    for line in status.splitlines():
+        path = line[3:].strip().strip('"')
+        if line.startswith("!!") and _BUILD_SKIPS.search(path):
+            continue
+        out.append(line)
+    return out
+
+
+def git_state(repo: Path = REPO_ROOT) -> dict[str, Any]:
+    """``{"commit": the last commit that changed the wheel's sources, "head": HEAD,
+    "dirty": whether those sources differ from it}`` (all None without git).
+
+    The lib environment is keyed by ``commit`` (with the sources' SHA-256), not by HEAD: a
+    commit that changes nothing in the wheel, such as a FREEZES.md entry, keeps the
+    environment, so a stopped readiness run can resume and re-run on it."""
+    none: dict[str, Any] = {"commit": None, "head": None, "dirty": None}
+    git = shutil.which("git")
+    if git is None:
+        return none
     try:
         head = subprocess.run(
             [git, "-C", str(repo), "rev-parse", "HEAD"],
             capture_output=True, text=True, check=True, timeout=60,
         ).stdout.strip()  # fmt: skip
-        status = subprocess.run(
-            [git, "-C", str(repo), "status", "--porcelain", "--", *WHEEL_SOURCES],
+        source = subprocess.run(
+            [git, "-C", str(repo), "log", "-1", "--format=%H", "--", *WHEEL_SOURCES],
             capture_output=True, text=True, check=True, timeout=60,
-        ).stdout  # fmt: skip
+        ).stdout.strip()  # fmt: skip
     except (OSError, subprocess.SubprocessError):
-        return {"commit": None, "dirty": None}
-    return {"commit": head or None, "dirty": bool(status.strip())}
+        return none
+    changed = uncommitted(list(WHEEL_SOURCES), repo)
+    return {
+        "commit": source or None,
+        "head": head or None,
+        "dirty": None if changed is None else bool(changed),
+    }
 
 
 def lib_request(code_plus_dir: Path) -> dict[str, Any]:
@@ -292,6 +334,7 @@ def lib_request(code_plus_dir: Path) -> dict[str, Any]:
     constraints = {_canon(k): v for k, v in installed_constraints().items()}
     constraints.update(installed)  # the code-plus environment's own versions win
     constraints.pop("worldparts", None)
+    state = git_state()
     return {
         "python": PYTHON_VERSION,
         "code_plus_key": info["key"],
@@ -300,7 +343,9 @@ def lib_request(code_plus_dir: Path) -> dict[str, Any]:
         "worldparts": {
             "version": metadata.version("worldparts"),
             "source_sha256": worldparts_source_hash(REPO_ROOT),
-            **git_state(),
+            # the commit that last changed the wheel's sources, never HEAD (git_state)
+            "commit": state.get("commit"),
+            "dirty": state.get("dirty"),
         },
     }
 
@@ -324,6 +369,7 @@ def lib_env_info(env_dir: Path) -> dict[str, Any] | None:
             "source_sha256": wp["source_sha256"],
             "commit": wp.get("commit"),
             "dirty": wp.get("dirty"),
+            "repo_head": stamp.get("repo_head"),
             "wheel": stamp["wheel"]["file"],
             "wheel_sha256": stamp["wheel"]["sha256"],
             "installed": stamp["installed"],
@@ -357,13 +403,20 @@ def wheel_problems(wheel: Path) -> list[str]:
     return problems
 
 
-def ensure_lib_env(code_plus_dir: Path, env_dir: Path | None = None, log: Any = print) -> Path:
+def ensure_lib_env(
+    code_plus_dir: Path, env_dir: Path | None = None, log: Any = print, rebuild: bool = True
+) -> Path:
     """Create the lib environment unless a current one exists; return its directory.
 
     ``code_plus_dir`` is a built code-plus environment: the lib environment installs its
     packages at the versions it holds, so the two differ only by worldparts (and
-    worldparts' own dependencies)."""
+    worldparts' own dependencies). A directory given explicitly (``env_dir``), and any
+    directory when ``rebuild`` is False, that holds a complete environment built from
+    another request is never rebuilt in place (a run may have recorded it): RuntimeError.
+    The default directory is keyed by the request, so a mismatch there is a half-built
+    environment, which is rebuilt."""
     request = lib_request(code_plus_dir)
+    explicit = env_dir is not None
     env_dir = env_dir or default_lib_dir(request)
     repo = REPO_ROOT.resolve()
     if env_dir.resolve() == repo or repo in env_dir.resolve().parents:
@@ -372,10 +425,18 @@ def ensure_lib_env(code_plus_dir: Path, env_dir: Path | None = None, log: Any = 
     py = code_env_python(env_dir)
     if stamp.exists() and py.exists():
         try:
-            if json.loads(stamp.read_text(encoding="utf-8")).get("request") == request:
-                return env_dir
+            built = json.loads(stamp.read_text(encoding="utf-8")).get("request")
         except (json.JSONDecodeError, AttributeError):
-            pass
+            built = None
+        if built == request:
+            return env_dir
+        if built is not None and (explicit or not rebuild):
+            raise RuntimeError(
+                f"the lib environment {env_dir} was built from other worldparts sources or "
+                f"versions (key {env_key(built)}, now {env_key(request)}); it is never "
+                "rebuilt in place: check out the commit it was built from, or give another "
+                "directory"
+            )
     uv = shutil.which("uv")
     if uv is None:
         raise RuntimeError("uv is not on PATH; it is needed to build the lib environment")
@@ -431,6 +492,7 @@ def ensure_lib_env(code_plus_dir: Path, env_dir: Path | None = None, log: Any = 
                 "request": request,
                 "installed": _parse_freeze(frozen.stdout),
                 "wheel": {"file": wheel.name, "sha256": wheel_sha},
+                "repo_head": git_state().get("head"),  # recorded, not part of the key
             }
         ),
         encoding="utf-8",

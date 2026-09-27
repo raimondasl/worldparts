@@ -18,8 +18,13 @@ checklist and the sentence "Adapt and use the tools in reference/ for this plant
   would itself trip a contamination marker of the code arms (worldparts, the repository,
   the private folder, truth files, ...): a session reading its own ``reference/`` must
   never be flagged by the toolkit's text.
-- **Size.** ``lines`` counts the lines of its text files, for the size cap of section 3
-  (800 lines or the line count of worldparts' section-14 code, whichever is larger).
+- **Size.** ``lines`` counts the lines of its files. Section 3 caps the toolkit at 800
+  lines or the line count of worldparts' section-14 code (:func:`.quickref.section14_lines`,
+  the modules of :data:`.quickref.SECTION14_MODULES`), whichever is larger; a larger
+  toolkit is refused (:func:`size_cap`).
+- **Text only.** Every file must be UTF-8 text: a binary file (a pickle, an archive holding
+  code, an image) would escape both the size cap and the contamination check, so it is
+  refused.
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ from benchmarks.composition.harness.grading import StreamSummary
 
 from .bundles import ConfigError, _sha256
 from .markers import contamination
+from .quickref import section14_lines
 
 TOOLKIT_ENV = "WPBENCH_OPS_TOOLKIT"
 #: Where each code-skill session finds the toolkit (its working directory).
@@ -44,6 +50,15 @@ SKIP_DIRS = frozenset(
     {".git", "__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache", ".venv"}
 )
 SKIP_SUFFIXES = (".pyc", ".pyo")
+#: Section 3's floor of the toolkit's size cap (lines).
+MIN_SIZE_CAP = 800
+
+
+def size_cap(src: Path | None = None) -> int:
+    """The toolkit's size cap of section 3: 800 lines or the line count of worldparts'
+    section-14 code (in ``src``, default the repository's ``src/worldparts``), whichever is
+    larger."""
+    return max(MIN_SIZE_CAP, section14_lines(src))
 
 
 @dataclass(frozen=True)
@@ -107,27 +122,43 @@ def _text(path: Path) -> str | None:
         return None
 
 
-def toolkit_problems(root: Path) -> list[str]:
-    """Why the toolkit cannot be given to code-skill sessions, or ``[]``: no files, or a
-    file (or file name) that would trip a contamination marker of the code arms."""
+def toolkit_problems(root: Path, cap: int | None = None) -> list[str]:
+    """Why the toolkit cannot be given to code-skill sessions, or ``[]``: no files, a file
+    that is not UTF-8 text, more lines than the size cap (``cap``, default
+    :func:`size_cap`), or a file (or file name) that would trip a contamination marker of
+    the code arms."""
     files = toolkit_files(root)
     if not files:
         return [f"the toolkit folder {root} has no files"]
     problems: list[str] = []
+    texts: list[tuple[str, str]] = []
+    for p in files:
+        rel = p.relative_to(root).as_posix()
+        text = _text(p)
+        if text is None:
+            problems.append(f"{rel}: not UTF-8 text (the toolkit holds text files only)")
+        else:
+            texts.append((rel, text))
+    lines = sum(len(t.splitlines()) for _, t in texts)
+    limit = size_cap() if cap is None else cap
+    if lines > limit:
+        problems.append(
+            f"{lines} lines; section 3 caps the toolkit at {limit} (800 or the line count of "
+            "worldparts' section-14 code, whichever is larger)"
+        )
     names = "\n".join(f"{TOOLKIT_DIRNAME}/{p.relative_to(root).as_posix()}" for p in files)
-    for rel, text in [("(file names)", names)] + [
-        (p.relative_to(root).as_posix(), _text(p) or "") for p in files
-    ]:
+    for rel, text in [("(file names)", names), *texts]:
         s = StreamSummary(tool_result_texts=[text])
         for reason in contamination(s, "code-skill"):
             problems.append(f"{rel}: {reason.replace('tool result mentions', 'mentions')}")
     return problems
 
 
-def load_toolkit(override: Path | str | None = None) -> Toolkit:
-    """The toolkit (raises :class:`ConfigError` when it is not given, missing or refused)."""
+def load_toolkit(override: Path | str | None = None, cap: int | None = None) -> Toolkit:
+    """The toolkit (raises :class:`ConfigError` when it is not given, missing or refused;
+    ``cap`` overrides the size cap, default :func:`size_cap`)."""
     root = toolkit_root(override)
-    problems = toolkit_problems(root)
+    problems = toolkit_problems(root, cap)
     if problems:
         raise ConfigError("the code-skill toolkit is refused: " + "; ".join(problems[:20]))
     files = {p.relative_to(root).as_posix(): _sha256(p) for p in toolkit_files(root)}
