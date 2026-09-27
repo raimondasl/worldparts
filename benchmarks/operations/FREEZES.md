@@ -162,3 +162,14 @@ Logged fixes and orchestration changes after a freeze are dated entries below.
     - The F2 and F3 realisation-1 bundles are rewritten before they are committed at freeze-0b.
     - A rewrite of the 16 development bundles on a scratch copy changed only task.md and task.json of the 9 F2 and F3 tasks. The loader then loaded all 16 tasks, and `set_problems` was empty.
     - After the review fix, the rewrite was repeated on a fresh copy. It wrote the same 18 files byte for byte: every current F3 ticket already listed at least three options. The loader again loaded all 16 tasks.
+- **2026-09-26, Stage 0 first pass (commitments and run log).** It ran from the frozen worktree at `9cb3564`, with the owner's approval per batch of 8, in `benchmarks/operations/results/stage0`.
+  - **Sessions.** All 64 ran (16 tasks x 2 arms x 2 models), one at a time. The final blind audit shows 0 flagged and 0 to re-run. The API-equivalent cost is about $27.
+  - **Infrastructure re-run.** At about 21:22 every `python.exe` on the machine ended: the harness, the private generator, and the owner's unrelated agent4evr processes, which a watchdog restarted at 21:32. The cause is outside this project.
+    - One session (`facc2cfa29392b8b`: ops-f3-005, `code+`, Sonnet 5) was flagged `harness_interrupted`, and it was re-run under 6.6 as attempt 2.
+    - Its orphaned CLI process ran on until 21:30. For those minutes it overlapped the first batch-8 session (`eb2417a1fb07776f`, ops-f4-001: a different task).
+    - That session never named `/tmp` or `TEMP` in a tool input. The only content of the shared session `/tmp` was the CLI's own `claude` folder, kept in both attempts' records.
+    - The seven batch-7 sessions that had not started ran afterwards.
+  - **ops-f1-004 rejected.** Validation rejected attempt 0 (`reference_pass`) after its four Stage 0 sessions had run. Those sessions are superseded. Attempt 1 was rejected too (`reference_pass`) before any session. Both bundles are in the private `dev-rejected/`.
+  - **ops-f1-004 replacement.** Attempt 2's realisation 1 is committed here (r1 digest `c7f8e0a8c76b558aa4ff204f108c61c278721be53841f7cf1e60bee8c48d1a90`). Its sessions run in a new run directory once its validation has decided, so they are not spent on a draw that is rejected again. This orders the work; it does not depend on any answer or grade.
+  - **ops-f1-002.** Its truth (`c7409236d41966f00786a860ce9abd8af7ea7ee94938974c2178b01a68a9d93b`, content hash `ed64b3e257623db0`) and its realisations 2 and 3 are committed here. Validation accepted attempt 1 with its realisation 1 unmoved.
+
