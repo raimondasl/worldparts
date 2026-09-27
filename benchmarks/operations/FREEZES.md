@@ -178,3 +178,32 @@ Logged fixes and orchestration changes after a freeze are dated entries below.
 - **2026-09-27 02:43, validation.** Accepted, each with realisation 1 unmoved; truths (content hash `ed64b3e257623db0`) and realisations 2 and 3 committed: ops-f1-004 attempt 3 (`1c6fea23fabeb4d2e9cd3fc79de16d0f910733296c7553d1f0a9348fbd446a3a`; its r1 was committed at 23:10, its replacement sessions have not run yet), ops-f2-002 attempt 1 (`aa6e934f7bf775bb4dc554dd086f56b9a09e84a4a304d500a6bfc3097c9274a9`), ops-f3-001 attempt 1 (`edb6651eb7fb8864af98f2bf12a24201c457f25149be959ddbab34e779255c29`).
 - **2026-09-27 10:20, validation.** Accepted, each with realisation 1 unmoved; truths (content hash `ed64b3e257623db0`) and realisations 2 and 3 committed: ops-f3-002 (`1833111f2d09e2bda0fe8d294f4485ccac076f187a75a0f2d1a3fd89b1cd2047`), ops-f3-003 (`1f7427988b036c7e66f95311b71f00d414c9ede1ee4c5c257093b77aca6a6c06`), ops-f3-004 (`5adb2fb4d869a868ff52081756edbfc25e0a41ad52febdac804892c59efb2f5f`), ops-f3-006 (`3759cf88cb3eebc2e3e0bb2f9ca512e0196a2f64b3523f56332e0665595cfd03`). ops-f3-005 (F3/G-epa, no_fault): attempt 2, on which its four Stage 0 sessions ran, was rejected (`naive_fail`), so those sessions are superseded; attempts 3 to 60 were rejected too (screen `asimov`, `reference_pass`, `naive_fail`, `transmitter_range`, `error`), a cell acceptance far below 10 % to be redesigned before freeze-1 (6.5); attempt 61's realisation 1 is committed (`ff4ea5c547aa2a70ea1370a86c9098906328b195fe06e7a0ddbce7fba1959070`); the cell's redraw limit of 100 draws applies. The room became OPEN at 02:43 under the bound form (F-(Sonnet 5) = 4).
 - **2026-09-27 10:40, Stage 0 replacement run.** ops-f1-004's four sessions ran on attempt 3's committed realisation 1 in `benchmarks/operations/results/stage0-replace-f1-004` (worktree `d0f43fc`, same settings; 0 flagged; $4.10). The four earlier sessions of ops-f1-004 in `stage0` are superseded. The rule is computed over both run directories. With 15 of 16 slots decided (ops-f3-005 still being redrawn), F-(Sonnet 5) = 6 and F-(Opus 5.5) = 2: the room is OPEN.
+
+## Build phase after Stage 0 (protocol fixed before any builder session, 2026-09-27)
+
+The room is open. The owner chose a staged path: first the build and the readiness checks of section 7, then a go/no-go on the test-set phase. The readiness checks are the dev-set `lib-directed` and `code-skill` runs of section 3 and the scripted pipeline and time limits of section 7. This protocol applies the firewall of section 7 and is fixed here before any builder session.
+
+- **Tracks.**
+  - **A** finishes worldparts: only the additions allowed after freeze-0a, a scripted worldparts pipeline with no LLM for the readiness check, and the quick reference.
+  - **B** writes the `code-skill` toolkit, in a workspace with no worldparts source. Its session has not seen worldparts' section-14 code.
+  - The orchestrating session writes neither.
+- **Inputs of every builder session:**
+  - the public repository, except the draft history of PREREGISTRATION.md (no `git log -p` or `git show` of it);
+  - the development bundles in `opsbench-bundles/dev`;
+  - the Stage 0 transcripts, meaning each attempt's `prompt.txt`, `stream.jsonl` and `workdir/`, but never `record.json`, `summary.*`, `headroom*.json` or `pass-fail.log`;
+  - the checklist;
+  - at most 3 pass/fail evaluations per session, through a wrapper that logs each call.
+- **Forbidden paths:** the private folder, the truth folder, `reports/`, `research_notes/`, and the Claude memory folder.
+- **Audit.** Every builder transcript is scanned for forbidden reads and for its evaluation count. The results are logged here.
+- **Equal budgets.** At most 3 builder sessions per track, and at most 8 agent-hours of wall-clock time per track. The toolkit is capped at the larger of 800 lines and worldparts' section-14 line count at freeze-1.
+- **Readiness (section 7, unchanged):**
+  - the scripted worldparts pipeline passes at least 90 % of development realisations;
+  - `calibrate` and `diagnose` finish within 300 s on every development bundle;
+  - `lib-directed` and `code-skill` each run once on the development set with Sonnet 5, and both pass rates are committed.
+- **Owner's go/no-go (an investment decision, not a rule of the pre-registration).** The test-set phase starts only if three things hold on the development set:
+  - Sonnet 5 `lib-directed` is near Opus 5.5 `code-hint` from Stage 0;
+  - it is clearly above Sonnet 5 `code-hint`;
+  - it is clearly above `code-skill`.
+
+  Otherwise the owner closes or pivots.
+
