@@ -314,3 +314,52 @@ The room is open. The owner chose a staged path: first the build and the readine
   Any choice other than the staged build is logged here before it runs.
 - **Partial disclosure of per-task results, already public.** The 10:20 entry above gives F-(Sonnet 5) = 4 while the decided tasks were known, which narrows which tasks Sonnet 5's `code-hint` failed. Any future builder session is told this at its start.
 
+## Owner's decision and logged fixes after the Stage 0 verdict (2026-09-27)
+
+**The owner's decision.** Of the options under review (entry above), the owner chose the free check of Stage 0 transcripts first. It read the transcripts of two development tasks, ops-f3-002 and ops-f4-001, and traced their results to defects of the private generator, not to the agents' methods. The owner then chose to settle the gate without a build phase:
+
+- The build phase above will not run, and no builder session has run.
+- The benchmark is fixed first (below), and the Stage 0 sessions whose bundles change run again.
+- The owner decides on the worldparts library after the fixed results.
+
+The exploratory probe was not run.
+
+**Logged fixes** of the private generator (PREREGISTRATION 7, "Changes after the first Stage 0 session"; sealed appendix A6.18). Two read-only audits then searched the whole generator for more defects of the same two kinds: an estimator reading a hidden value as known, and a ticket that states the question differently from how the truth is computed. The fixes:
+
+- **D1 (ops-f3-002).** The treatment-train generator ran every train's pump at 48 Hz. A train on a drive logs that command, but a direct-on-line train does not: its plant.md states a 50 Hz motor on the grid, while its pump ran at 48 Hz. The estimators' operating log took the frequency from the simulation, so they knew the hidden value; an agent could not.
+  - *Fix.* A direct-on-line train runs at its motor's nominal frequency, and plant.md says the pump runs direct on line at the grid frequency. Trains on a drive are unchanged.
+  - *Scope.* ops-f3-002 is the only treatment train of the development set.
+- **D2 (ops-f4-001).** An F4 ticket listed the pump's as-built curve as a nuisance (flow scale 0.92 to 1.08, head scale 0.95 to 1.05, ...). When plant.md prints the pump's works-test certificate, validation takes the pump as built from it, so the ticket and the truth described different problems.
+  - *Fix.* A certified pump's ticket states no as-built nuisance.
+  - *Scope.* ops-f4-001 is the only development task with a certificate. Its truth does not change; its task.md does.
+- **D3 (no development task).** Under valve flow control, a treatment train's valve position reached every estimator but no agent.
+  - *Fix.* The flow controller's output is logged as an exact tag, FC-001, like a drive's frequency command.
+  - *Scope.* The only development train is under fixed control.
+- **Found and not fixed.** The audits also found wording mismatches that change no graded development answer, measured on the draws. Fixing them would change bundles whose answers stand and re-run their sessions for nothing. They are listed in A6.18, which is published with the private folder.
+
+**Private folder after the fixes.**
+
+- **Commit** `72068c7eaf21a76dec428845af13a01f1bebd607` (tree `c5288fdebe05f9cec235d3aafc7f1697edf24fb0`).
+  - It includes `6d51442`: the fixes, A6.18, their tests, and a `supersede` command that sets an accepted task's files aside so that the generator validates it again.
+  - `72068c7` shortens a help text.
+- **Archive hash** `ad709044ec4ab16c6664b700fda02c359fbaf64da3ce37d1b73a1c788f641967`.
+- **Content hash** `396e1b34b697a57e93911ebfd8425c8ca305ae3c050b819da38d733ee3d3dadc`, over the 60 files in [fix-2a-private-content.sha256](fix-2a-private-content.sha256). Four covered files changed from freeze-0c's `ed64b3e257623db0`: `opsim/design.py` (D1), and `opsim/sensors.py`, `generators/train.py` and `validation/models/base.py` (D3).
+- **Tests.** The private fast suite passes: 377 tests, 3 skipped. Two of the skips are the tests of ops-f3-002, whose truth is set aside until it is validated again.
+
+**Every development task validated again under the new code (section 7).**
+
+- **Checkpoints.** 44 checkpointed rows were recomputed bit for bit under the new code, all identical: realisation 1 of the oracle, R-a, R-b and naive on the 11 accepted station and filtration tasks (F1 to F3). The 116 checkpoints of the old hash were then migrated to `396e1b34b697a57e`. ops-f3-002's was not: it was set aside first.
+- **Regeneration check** of the 14 accepted tasks other than ops-f3-002, from the migrated checkpoints; the F4 tasks were drawn and validated again: all 42 bundles (r1 to r3 of each) are byte-identical, and every truth file is identical (0 differing fields). Each validity report differs only in the content hash it records and in its times. The reports are kept as they are: each still names the code its truth was produced under, and this entry records that the new code reproduces it.
+- **ops-f4-001.** `rewrite-texts` rewrote the task.md of r1 to r3 from its draw; every other file is byte-identical. New realisation digests:
+  - r1 `84ac7ba62e4a8ef0d2cf70195a5a1d5f2b61846dad8947e8801e2d6553871241`;
+  - r2 `ea9e5e5b490cf82812726cfa0c977bafa6c65f0f07c7ecd173018f2785427537`;
+  - r3 `b42133de861463f71e0f2eda748b220a50de9533abe9b30c9cadb6dac13f3da9`.
+
+  Its truth is unchanged.
+- **ops-f3-002.** Attempt 0 was superseded: its r1 `02ac89cf077e3bbd9bc6d40f38a6c79bc5756dfa284c944cf4fdd44a17d9909e`, its truth and its checkpoint are set aside, with the reason in its attempt log. The generator validates attempt 0 again under the new code. Its new realisation 1 and truth are recorded here when validation decides, and its sessions run only then, as for ops-f1-004.
+
+**Sessions that run again (section 7).** Only those whose bundle digest changed: the four sessions of ops-f4-001 and the four of ops-f3-002.
+
+- They run in a new run directory, `benchmarks/operations/results/stage0-fix-2a`, with Stage 0's settings (`stage0-settings.json`), one at a time.
+- Every session is graded again, and the rule is computed over all three run directories. The verdict from before the change is reported beside the new one: OPEN, F(Sonnet 5) = 6 and F(Opus 5.5) = 2.
+- **The harness for the re-run** is the one at this commit. It differs from freeze-0b's only by the build-phase tooling (`dc9e5e5`, `2610f55`), whose entries above record that the `code+` and `code-hint` prompts, command lines and environments are byte-identical. The re-run's prompts and command lines are compared with Stage 0's.
