@@ -273,3 +273,32 @@ The room is open. The owner chose a staged path: first the build and the readine
 
   Otherwise the owner closes or pivots.
 
+## freeze-0c, 2026-09-27 (before the Stage 0 verdict is reported)
+
+**Private folder.** It is unchanged since freeze-0b:
+
+- **Commit** `0bc65c2ef1edf35cc7ecbce6b2ae3ff3e3743ebf` (tree `b7bb8e0c99bdab7abd6a6a9a3ddade7ef1df145a`).
+- **Archive hash** `71bac2b44b42074c57d7fdee994fa083793a576163cd9e112dfc2f6f7ef67df1`.
+- **Content hash** `ed64b3e257623db020ef374f1b776b04a464b7fe2d406f0dbd2bbca90246bf8b`, equal to freeze-0b's.
+- **Logged fixes after freeze-0b:** none.
+
+**Truths and bundles.** This commit holds every truth file the verdict used: 15 validated tasks in [truth-dev.sha256](truth-dev.sha256), each produced under content hash `ed64b3e257623db0`. It also holds the final development bundles in [bundles-dev.sha256](bundles-dev.sha256).
+
+**ops-f3-005 is unfilled.** Its cell, F3/G-epa, used all 100 draws of its seed sequence (section 8, redraw limit), and the last draw's bundle was moved out. The slot stays undecided.
+
+**Verdict.** It was computed by the frozen harness (worktree at `3074737`, whose grading and headroom code is identical to freeze-0b's) with `headroom --final` over `stage0` and `stage0-replace-f1-004`:
+
+- F(Sonnet 5) = 6 and F(Opus 5.5) = 2, over 15 decided tasks, with u = 1.
+- **The room is OPEN.** The early bound verdict of 2026-09-27 02:43 is unchanged.
+- The four superseded sessions of ops-f1-004 were not scored.
+- The final blind audit shows no pending re-run.
+- No session was contaminated.
+
+**Cost.** API-equivalent, every attempt included:
+
+- pilot: $2.17;
+- Stage 0 main run: $27.29;
+- ops-f1-004 replacement run: $4.10.
+
+**What is not published yet.** Per-task grades are not published until the gate decision, because the build-phase firewall allows builders only pass/fail. They are kept in the owner's private report.
+
