@@ -11,11 +11,24 @@ preamble is built from files in ``benchmarks/operations/preambles/`` joined by b
 So ``code-hint`` differs from ``code+`` only by the checklist. Both run with the tools Bash,
 Read, Write and Edit and the ``code-plus`` Python environment (:mod:`.env`).
 
-``code-skill``, ``lib``, ``lib-directed`` and ``mcp-hybrid`` are registered with their
-pre-registered sentences but are not available before freeze-1 (section 7): their toolkit,
-quick reference, wheel and preambles do not exist yet. Adding one means writing its
-preamble files, setting ``available=True`` and, for the lib arms, adding the lib
-environment to :func:`benchmarks.operations.harness.env.python_env_for`.
+The arms of Stage 1 (section 3), with the same tools:
+
+- ``code-skill``: ``environment.txt``, ``checklist.txt`` and ``code-skill.txt`` (the
+  pre-registered sentence), the code-plus environment, and the toolkit copied into the
+  working directory as ``reference/`` (:mod:`.toolkit`);
+- ``lib-directed``: ``environment-lib.txt`` (the same text naming worldparts among the
+  packages), ``checklist.txt``, ``quick-reference.txt`` and ``lib-directed.txt`` (the
+  directive), and the lib environment (:func:`.env.ensure_lib_env`);
+- ``lib``: ``environment-lib.txt`` and ``quick-reference.txt``, and the lib environment;
+- ``mcp-hybrid``: its preamble does not exist yet.
+
+They are not available before freeze-1 (section 7), with one exception: the readiness runs
+of section 3 ("before the test seed is drawn, ``lib-directed`` and ``code-skill`` each run
+once on the development set with Sonnet 5"), for which ``code-skill``, ``lib-directed``
+and ``lib`` run on the development set with ``run --readiness`` (``readiness=True``
+here). ``mcp-hybrid`` stays unavailable. The quick reference is checked
+(:func:`.quickref.quick_reference_problems`) whenever a preamble uses it, and its ``#!``
+annotations are never shown to the agent.
 """
 
 from __future__ import annotations
@@ -24,6 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import quickref
 from .bundles import PREAMBLES_DIR, OpsTask
 
 #: Tools of every code arm (``--tools``) and their permission rules (``--allowedTools``).
@@ -62,9 +76,14 @@ class Arm:
     #: Directories copied into the working directory besides the bundle (code-skill:
     #: its toolkit as ``reference/``); empty for the Stage 0 arms.
     workdir_extras: tuple[str, ...] = ()
+    #: Whether a readiness run on the development set may use it before freeze-1
+    #: (``run --readiness``, section 3 "Readiness").
+    readiness: bool = False
 
 
 _FREEZE1 = "not available before freeze-1 (PREREGISTRATION.md section 7)"
+#: The arms of the readiness runs (section 3), the default of ``run --readiness``.
+READINESS_ARMS = ("lib-directed", "code-skill")
 
 ARMS: dict[str, Arm] = {
     "code+": Arm(
@@ -79,17 +98,19 @@ ARMS: dict[str, Arm] = {
         "code-skill", (1,), "code-plus", CODE_TOOLS, CODE_ALLOWED, False, "code",
         ("environment.txt", "checklist.txt", "code-skill.txt"), False,
         f"{_FREEZE1}: the reference toolkit is written after Stage 0",
-        ("reference",),
+        ("reference",), True,
     ),
     "lib-directed": Arm(
         "lib-directed", (1,), "lib", CODE_TOOLS, CODE_ALLOWED, False, "lib",
         ("environment-lib.txt", "checklist.txt", "quick-reference.txt", "lib-directed.txt"),
         False, f"{_FREEZE1}: the wheel, the quick reference and the preamble are frozen then",
+        (), True,
     ),
     "lib": Arm(
         "lib", (1,), "lib", CODE_TOOLS, CODE_ALLOWED, False, "lib",
         ("environment-lib.txt", "quick-reference.txt"),
         False, f"{_FREEZE1}: the wheel, the quick reference and the preamble are frozen then",
+        (), True,
     ),
     "mcp-hybrid": Arm(
         "mcp-hybrid", (1,), "code-plus", CODE_TOOLS, CODE_ALLOWED, True, "mcp",
@@ -112,26 +133,68 @@ def get_arm(name: str) -> Arm:
         raise ValueError(f"unknown arm {name!r} (arms: {', '.join(ARMS)})") from None
 
 
-def require_available(names: list[str]) -> list[Arm]:
-    """The arms ``names``; ValueError naming each one that cannot run yet."""
+def runnable(arm: Arm, readiness: bool = False) -> bool:
+    """Whether ``arm`` can run now: available, or a readiness arm in a readiness run."""
+    return arm.available or (readiness and arm.readiness)
+
+
+def _blocked_reason(arm: Arm) -> str:
+    extra = (
+        " (before then, a readiness run on the development set can use it: run --readiness)"
+        if arm.readiness
+        else ""
+    )
+    return f"{arm.name}: {arm.unavailable_reason}{extra}"
+
+
+def require_available(names: list[str], readiness: bool = False) -> list[Arm]:
+    """The arms ``names``; ValueError naming each one that cannot run yet. With
+    ``readiness``, the readiness arms (code-skill, lib-directed, lib) can run too."""
     arms = [get_arm(n) for n in names]
-    blocked = [f"{a.name}: {a.unavailable_reason}" for a in arms if not a.available]
+    blocked = [_blocked_reason(a) for a in arms if not runnable(a, readiness)]
     if blocked:
         raise ValueError("; ".join(blocked))
     return arms
 
 
-def read_preamble_file(name: str, preambles_dir: Path = PREAMBLES_DIR) -> str:
+def read_preamble_file(name: str, preambles_dir: Path | None = None) -> str:
     """A preamble file's text without its final line break."""
-    return (preambles_dir / name).read_text(encoding="utf-8").rstrip("\n")
+    return ((preambles_dir or PREAMBLES_DIR) / name).read_text(encoding="utf-8").rstrip("\n")
 
 
-def preamble(arm: Arm | str, preambles_dir: Path = PREAMBLES_DIR) -> str:
-    """The arm's preamble: its files joined by blank lines."""
+def preamble_problems(arm: Arm | str, preambles_dir: Path | None = None) -> list[str]:
+    """Why the arm's preamble cannot be built, or ``[]``: a missing file, or a quick
+    reference that breaks section 3's limits (:mod:`.quickref`)."""
     a = get_arm(arm) if isinstance(arm, str) else arm
-    if not a.available:
-        raise ValueError(f"arm {a.name}: {a.unavailable_reason}")
-    return "\n\n".join(read_preamble_file(n, preambles_dir) for n in a.preamble_files)
+    d = preambles_dir or PREAMBLES_DIR
+    missing = [n for n in a.preamble_files if not (d / n).is_file()]
+    if missing:
+        return [f"preamble file(s) missing in {d}: {', '.join(missing)}"]
+    if quickref.QUICK_REFERENCE not in a.preamble_files:
+        return []
+    return [
+        f"{quickref.QUICK_REFERENCE}: {p}"
+        for p in quickref.quick_reference_problems(
+            (d / quickref.QUICK_REFERENCE).read_text(encoding="utf-8"),
+            read_preamble_file("checklist.txt", d),
+        )
+    ]
+
+
+def preamble(arm: Arm | str, preambles_dir: Path | None = None, readiness: bool = False) -> str:
+    """The arm's preamble: its files joined by blank lines (a quick reference without its
+    ``#!`` annotations)."""
+    a = get_arm(arm) if isinstance(arm, str) else arm
+    if not runnable(a, readiness):
+        raise ValueError(f"arm {_blocked_reason(a)}")
+    problems = preamble_problems(a, preambles_dir)
+    if problems:
+        raise ValueError(f"arm {a.name}: " + "; ".join(problems))
+    parts = []
+    for n in a.preamble_files:
+        text = read_preamble_file(n, preambles_dir)
+        parts.append(quickref.shown_text(text) if n == quickref.QUICK_REFERENCE else text)
+    return "\n\n".join(parts)
 
 
 # ----------------------------------------------------------------------------------------
@@ -187,12 +250,18 @@ def answer_format_instruction(task: OpsTask) -> str:
     return "\n".join(lines)
 
 
-def build_prompt(task: OpsTask, arm: Arm | str, realisation: int) -> str:
+def build_prompt(
+    task: OpsTask,
+    arm: Arm | str,
+    realisation: int,
+    readiness: bool = False,
+    preambles_dir: Path | None = None,
+) -> str:
     """task.md text + the arm's preamble + the answer-format instruction."""
     return (
         task.task_md(realisation).rstrip()
         + "\n\n"
-        + preamble(arm)
+        + preamble(arm, preambles_dir, readiness)
         + "\n\n"
         + answer_format_instruction(task)
         + "\n"

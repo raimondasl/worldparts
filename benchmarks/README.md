@@ -575,7 +575,8 @@ uv run python -m benchmarks.operations.harness manifest --set dev --check
     verbatim methods checklist, `checklist.txt`.
 
   `code-skill`, `lib`, `lib-directed` and `mcp-hybrid` are registered in `harness/arms.py`,
-  but they refuse to run before freeze-1.
+  but they refuse to run before freeze-1, except in a readiness run (`run --readiness`,
+  see [Build phase](#build-phase-after-stage-0)); `mcp-hybrid` has no preamble yet.
 - **Shell.** Sessions run with a private copy of Git Bash whose `/tmp` is a benchmark-only
   folder, emptied around every session (`harness/session_bash.py`), so they run one at a
   time (`--jobs 1`).
@@ -620,3 +621,101 @@ uv run python -m benchmarks.operations.harness manifest --set dev --check
     file whose realisations are not the bundle's r1 to rK, each with `oracle_pass` true.
 - **Power**: `uv run python -m benchmarks.operations.analysis.power --write` reproduces the
   operating characteristics of section 8 and writes `analysis/power-tables.md`.
+
+### Build phase (after Stage 0)
+
+The room is open, so section 7's build phase runs under the protocol of
+[FREEZES.md](operations/FREEZES.md) ("Build phase after Stage 0"): track A finishes
+worldparts and writes the quick reference, track B writes the `code-skill` toolkit, and the
+orchestrating session writes neither. The harness supports it with these commands.
+
+```sh
+# The owner: score scripted answers (every realisation of every validated task); writes
+# DIR/score.json. Never show its output to a builder.
+uv run python -m benchmarks.operations.harness score DIR --set dev
+# A builder: pass or fail only, at most 3 logged evaluations per session name. The owner
+# sets WPBENCH_OPS_TRUTH when launching the session; the wrapper reads it itself.
+uv run python tools/ops_passfail.py DIR --session NAME
+# The owner: audit builder transcripts (a session's .jsonl and its subagents' .jsonl).
+uv run python -m benchmarks.operations.harness firewall-audit SESSION.jsonl \
+    SESSION/subagents/*.jsonl [--truth T] [--forbid PATH ...] [--json OUT]
+# The lib environment (code-plus plus a worldparts wheel), then the readiness runs of
+# section 3 (paid: the owner approves them first; dry run first).
+uv run python -m benchmarks.operations.harness lib-env
+uv run python -m benchmarks.operations.harness run --set dev --readiness --dry-run
+uv run python -m benchmarks.operations.harness run --set dev --readiness --jobs 1 \
+    --out benchmarks/operations/results/readiness
+```
+
+- **Scripted answers** (`harness/score.py`, INTERFACE.md "Scripted answers"). `DIR` holds
+  `<task_id>/r<k>.json`, one answer object per task realisation in the answer format of the
+  prompt. Each file is graded exactly as a session's final reply: its text is the body of
+  a fenced `json` block, parsed and graded by `grading.grade_answer`. A missing file, or
+  one that is not a JSON object, fails. Every realisation of the bundle (r1 to r3 for a
+  validated task) is scored, for the tasks whose truth file is listed in
+  `truth-dev.sha256`; the output says how many realisations were scored.
+  - *Full mode* (the owner only) prints each task's realisations with their failing keys
+    and the realisation pass rate (section 7's readiness check needs at least 90 % for the
+    scripted worldparts pipeline), and writes `DIR/score.json`. Like a session record, it
+    lets a numeric key's truth be worked out.
+  - *Pass/fail mode* (`--pass-fail --session NAME`) prints only PASS or FAIL per task
+    realisation and the number of passes, writes nothing but `DIR/pass-fail.log` (a time
+    stamp, the session name and each verdict per evaluation), and refuses a fourth
+    evaluation for the same session name. Its errors never name the truth folder.
+- **Builder wrapper** (`tools/ops_passfail.py DIR --session NAME`) runs `score DIR --set
+  dev --pass-fail --session NAME` and takes no truth location: it needs
+  `WPBENCH_OPS_TRUTH` from the environment the owner launched the session with. Builders
+  never read the truth folder or that variable, the private folder, `reports/`,
+  `research_notes/`, the Claude memory folder, any `record.json`, `summary.*`,
+  `headroom*.json` or `pass-fail.log`, or the draft history of PREREGISTRATION.md.
+- **Firewall audit** (`harness/firewall.py`). It scans the input of every tool call in the
+  transcripts: shell commands (`Bash`, `PowerShell`), the paths of `Read`, `Write`, `Edit`,
+  `Grep`, `Glob` and `LS`, and path fields of other tools. Violations: those forbidden
+  paths (also the truth folder by path, from `--truth` or `WPBENCH_OPS_TRUTH`, and any
+  `--forbid` path, in the Windows, Git Bash and WSL spellings), a `git log`, `show`,
+  `diff`, `blame`, ... that names PREREGISTRATION.md, a recursive search or wildcard read
+  over a run directory (`grep -r`, `rg`, the `Grep` tool, `cat .../sessions/*/*`) that is
+  not restricted to transcript files (`--include='*.jsonl'`, a `Grep` glob), since it
+  reads `record.json` without naming it, and more than 3 pass/fail
+  evaluations (runs of `ops_passfail`, `score ... --pass-fail` or `grade ... --pass-fail`)
+  in one session, counted over the session's own and its subagents' transcripts (their
+  `sessionId`). Warnings: a forbidden path named only by a write (`Write`, `Edit`),
+  `git log -p` or `git show` of whole commits without a path, several session names,
+  unreadable lines. A wrapper run hidden in a script file is not seen; the wrapper's own
+  log is the second count. It prints each finding with its transcript
+  line number and the verdict `CLEAN`, `CLEAN, with N warning(s) to review` or
+  `VIOLATIONS (N)` (exit code 1). Detection is by markers, so the transcripts are kept.
+- **Readiness arms** (`run --readiness`, development set only; default arms
+  `lib-directed` and `code-skill`, default model `claude-sonnet-5`; `lib` on request).
+  Without the flag they stay unavailable until freeze-1; `mcp-hybrid` stays unavailable.
+  Every arm has the tools, limits and settings of Stage 0.
+  - `lib-directed`: `environment-lib.txt` (the code+ text with worldparts added to the
+    package list), `checklist.txt`, `quick-reference.txt` and `lib-directed.txt` (the
+    directive, verbatim). `lib`: `environment-lib.txt` and `quick-reference.txt`.
+    `code-skill`: `environment.txt`, `checklist.txt` and `code-skill.txt` (the sentence,
+    verbatim).
+  - **Quick reference** (`harness/quickref.py`). The lib arms refuse to run while
+    `preambles/quick-reference.txt` is missing or breaks section 3: at most 45 lines, at
+    most 20 for section 14 (the lines between the annotations `#! section 14` and `#! end`,
+    which the agent never sees), no number that is not the checklist's (1 and 90), no prose
+    word outside the checklist and a fixed list of reference words, no line with a
+    procedure word (prefer, then, if, above, ...) that is not verbatim in the checklist,
+    and no section-14 name used as code outside its part. Identifiers go in backticks or
+    call syntax. `tests/test_ops_bench_build.py` runs the same test on the committed file.
+  - **Lib environment** (`lib-env`, `harness/env.py`): `%LOCALAPPDATA%/worldparts-bench/ops-lib-<key>`
+    holds the code-plus packages at the code-plus environment's versions and worldparts
+    from a wheel built from this repository (not editable). The key hashes the versions,
+    the wheel's source SHA-256 and the commit. `run.json` records `lib_env` (directory,
+    key, commit, wheel file and SHA-256, versions) and `lib_key`. A run refuses a lib
+    environment whose worldparts sources differ from the commit, and a wheel whose files
+    would trip a contamination marker.
+  - **Toolkit** (`harness/toolkit.py`): `$WPBENCH_OPS_TOOLKIT` (or `--toolkit`) is the
+    folder that every `code-skill` session gets as `reference/` in its working directory
+    (without `.git` and caches). A run refuses without it, and refuses a toolkit whose
+    text would trip a contamination marker of the code arms (it must never name
+    worldparts). `run.json` records its SHA-256 manifest (`toolkit`, `toolkit_digest`);
+    each copy is checked against it (`extras.json` in the attempt folder), and a resumed
+    run or a re-run with another toolkit is refused.
+  - **Contamination.** `code-skill` sessions are marked as `code+` and `code-hint` sessions
+    are: any mention of worldparts contaminates them. The lib arms may use worldparts, and
+    the repository and benchmark markers still apply to them.

@@ -27,7 +27,8 @@ Run directory::
     <run>/run.json             run settings (models, arms, set, limits, CLI version, env)
     <run>/index.json           session id -> set, model, task, arm, realisation
     <run>/sessions/<sid>/attempt-<n>/   prompt.txt, command.json, stream.jsonl,
-                                        stderr.txt, outcome.json, workdir/
+                                        stderr.txt, outcome.json, bundle.json, workdir/
+                                        (code-skill: extras.json, the toolkit's digest)
     <run>/sessions/<sid>/record.json    the grade of the latest attempt
     <run>/audit.json           the blind infrastructure audit
 
@@ -68,6 +69,7 @@ from .bundles import REPO_ROOT, OpsTask, copy_realisation, realisation_digest
 from .env import SESSION_ENV, session_path
 from .infra import attempt_dirs
 from .session_bash import SessionBash, take_tmp
+from .toolkit import Toolkit, copy_toolkit
 
 #: Pinned limits (PREREGISTRATION.md section 3, "Pinned settings").
 DEFAULT_MAX_TURNS = 120
@@ -80,6 +82,9 @@ SESSIONS_DIR = "sessions"
 RECORD_FILE = "record.json"
 #: The digest of the realisation a session saw (``bundles.realisation_digest``).
 BUNDLE_FILE = "bundle.json"
+#: What a session got in its working directory besides the bundle (code-skill's
+#: ``reference/``): the toolkit's digest and file count.
+EXTRAS_FILE = "extras.json"
 TMP_PREFIX = "wpbench-ops-"
 #: Parent variables never passed to a session (truth and bundle locations, the CLI path).
 DROP_PREFIXES = ("WPBENCH",)
@@ -312,6 +317,7 @@ def execute_session(
     forbidden_roots: list[Path] | None = None,
     env_key: str | None = None,
     session_bash: SessionBash | None = None,
+    extras: dict[str, Toolkit] | None = None,
 ) -> dict[str, Any]:
     """Run one attempt and save everything in ``attempt_dir``; return its outcome.
 
@@ -319,6 +325,9 @@ def execute_session(
     directory must not be inside, such as the bundle and truth folders.
     ``session_bash`` (``session_bash.ensure_session_bash``) gives the session its own /tmp:
     emptied into ``tmp-before/`` first (normally empty), and moved into ``tmp/`` afterwards.
+    ``extras`` maps each of the arm's ``workdir_extras`` (code-skill: ``reference``) to the
+    folder copied there (:func:`.toolkit.copy_toolkit`, which checks its digest); an arm
+    whose extra is not given cannot be prepared (a harness error).
     """
     attempt_dir.mkdir(parents=True, exist_ok=False)
     arm = get_arm(spec.arm)
@@ -344,8 +353,15 @@ def execute_session(
             attempt_dir / BUNDLE_FILE,
             {"task": spec.task.task_id, "realisation": spec.realisation, "digest": digest},
         )
-        if arm.workdir_extras:  # pragma: no cover - hook for code-skill's reference/ (freeze-1)
-            raise RuntimeError(f"{arm.name}: working-directory extras are not available yet")
+        given: dict[str, Any] = {}
+        for name in arm.workdir_extras:
+            source = (extras or {}).get(name)
+            if source is None:
+                raise RuntimeError(f"{arm.name}: its {name}/ folder was not given")
+            copied = copy_toolkit(source, work / name)
+            given[name] = {"digest": source.digest, "files": len(copied)}
+        if given:
+            write_json(attempt_dir / EXTRAS_FILE, given)
         before = _snapshot(work)
         (tmp / "systems").mkdir()
         mcp_path = tmp / "mcp.json"

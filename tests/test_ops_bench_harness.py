@@ -532,7 +532,7 @@ def stage0(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
         mp.setenv("OPSFAKE_PLAN", str(plan_path))
         mp.setenv("OPSFAKE_STATE", str(state))
         base = ["--bundles", str(broot), "--no-manifest-check"]
-        assert cli.main(["run", "--set", "dev", "--models", "sonnet", "opus", "--jobs", "8",
+        assert cli.main(["run", "--set", "dev", "--models", "sonnet", "opus", "--jobs", "2",
                          "--out", str(run_dir), *base]) == 0  # fmt: skip
         out["audit1"] = json.loads((run_dir / "audit.json").read_text("utf-8"))
         # What FREEZES.md commits: the bundle manifest, the validated truths, the settings.
@@ -1448,7 +1448,7 @@ def test_timeouts_after_a_recovered_401_or_a_denial_are_graded_failures(
             f"sonnet|{tb}|code+": [{**f.good(tb), "hang": 60, "denial": True}],
             f"sonnet|{tb}|code-hint": [f.good(tb)],
         })  # fmt: skip
-        assert f.run("--tasks", ta, tb, "--jobs", "4", "--timeout", "3") == 0
+        assert f.run("--tasks", ta, tb, "--jobs", "2", "--timeout", "3") == 0
         out = capsys.readouterr().out
         assert out.count("TIMEOUT") == 2 and "STOPPED" not in out
         assert "infrastructure signature" not in out

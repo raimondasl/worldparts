@@ -20,6 +20,9 @@ API errors are reported as the real CLI reports them: an assistant message of th
 - ``"silent"``: no output at all, exit code 1;
 - ``"killed"``: one assistant turn, then the process ends without a result;
 - ``"api_error"``: an API error result after a turn.
+
+The arm is read from the prompt (:func:`arm_of`): the code-skill sentence, the lib-directed
+directive, worldparts named by the lib preamble, the checklist (code-hint), else code+.
 """
 
 from __future__ import annotations
@@ -38,6 +41,17 @@ def synthetic(text: str, error: str) -> dict:
         "usage": {"input_tokens": 0, "output_tokens": 0}}}  # fmt: skip
 
 
+def arm_of(prompt: str) -> str:
+    """The arm whose preamble the prompt holds."""
+    if "Adapt and use the tools in reference/ for this plant." in prompt:
+        return "code-skill"
+    if "Use worldparts for the plant model" in prompt:
+        return "lib-directed"
+    if "worldparts" in prompt:
+        return "lib"
+    return "code-hint" if "Method checklist" in prompt else "code+"
+
+
 def main() -> int:
     argv = sys.argv[1:]
     prompt = sys.stdin.read()
@@ -45,7 +59,7 @@ def main() -> int:
     work = Path.cwd()
     task_md = (work / "task.md").read_text(encoding="utf-8")
     task = task_md.split("TASK-ID:", 1)[1].split()[0]
-    arm = "code-hint" if "Method checklist" in prompt else "code+"
+    arm = arm_of(prompt)
     key = f"{model}|{task}|{arm}"
     state = Path(os.environ["OPSFAKE_STATE"]) / key.replace("|", "__").replace("+", "plus")
     attempt = int(state.read_text()) + 1 if state.exists() else 1

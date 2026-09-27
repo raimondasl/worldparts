@@ -11,16 +11,28 @@ Run from the repository root::
     uv run python -m benchmarks.operations.harness report RUN [--print]
     uv run python -m benchmarks.operations.harness manifest --set dev [--check]
     uv run python -m benchmarks.operations.harness code-env
+    uv run python -m benchmarks.operations.harness lib-env
+    uv run python -m benchmarks.operations.harness run --set dev --readiness \\
+        [--arms lib-directed code-skill lib] [--models claude-sonnet-5] [--dry-run]
+    uv run python -m benchmarks.operations.harness score DIR [--set dev] [--truth T]
+    uv run python -m benchmarks.operations.harness score DIR --pass-fail --session NAME
+    uv run python -m benchmarks.operations.harness firewall-audit TRANSCRIPT.jsonl [...]
 
 ``run`` never grades: it runs sessions and then the blind audit. ``grade`` runs the audit
 again before it computes any grade. A real ``run`` starts paid Claude Code sessions; use
 ``--dry-run`` first. Sessions of the same task never run at the same time (``--jobs``
 runs different tasks in parallel), so no session can read another arm's work on its task.
 
-``grade RUN --pass-fail`` is the only grader output a firewalled session may receive
-(PREREGISTRATION.md section 7): it prints pass or fail per session, writes no record and
-appends each evaluation to ``<run>/pass-fail.log``. Records and summaries are for the owner
-only, since a numeric key's truth can be worked out from a record.
+``grade RUN --pass-fail`` and ``score DIR --pass-fail`` are the only grader outputs a
+firewalled session may receive (PREREGISTRATION.md section 7): they print pass or fail,
+write no record and append each evaluation to ``pass-fail.log``. Records, summaries and
+``score.json`` are for the owner only, since a numeric key's truth can be worked out from
+them. Builders run ``tools/ops_passfail.py DIR --session NAME``, and ``firewall-audit``
+scans their transcripts (:mod:`.firewall`).
+
+``run --readiness`` runs the readiness arms (``code-skill``, ``lib-directed``, ``lib``;
+by default ``lib-directed`` and ``code-skill`` on Sonnet 5) on the development set before
+freeze-1 (section 3, "Readiness"); without it they refuse to run until freeze-1.
 """
 
 from __future__ import annotations
@@ -41,7 +53,17 @@ from typing import Any
 from benchmarks.composition.harness.grading import parse_stream
 from benchmarks.composition.harness.runner import SessionLimits, claude_executable, format_command
 
-from .arms import ARMS, STAGE0_ARMS, build_prompt, get_arm, require_available
+from . import firewall
+from . import score as scoring
+from .arms import (
+    ARMS,
+    READINESS_ARMS,
+    STAGE0_ARMS,
+    build_prompt,
+    get_arm,
+    preamble_problems,
+    require_available,
+)
 from .bundles import (
     RESULTS_DIR,
     SETS,
@@ -67,7 +89,13 @@ from .bundles import (
     truth_path,
     truth_root,
 )
-from .env import default_code_plus_dir, ensure_code_plus_env, env_info
+from .env import (
+    default_code_plus_dir,
+    ensure_code_plus_env,
+    ensure_lib_env,
+    env_info,
+    lib_env_info,
+)
 from .grading import final_reply, grade_answer, tool_numbers_of
 from .headroom import HEADROOM_REALISATION, HEADROOM_SET, headroom, headroom_lines
 from .infra import (
@@ -98,9 +126,12 @@ from .runner import (
     write_json,
 )
 from .session_bash import SessionBash, ensure_session_bash
+from .toolkit import Toolkit, load_toolkit
 
 #: Default models of ``run``: the explicit ids of PREREGISTRATION.md section 3 (never aliases).
 DEFAULT_MODELS = ("claude-sonnet-5", "claude-opus-5-5")
+#: Default model of ``run --readiness``: "... run once on the development set with Sonnet 5".
+READINESS_MODELS = ("claude-sonnet-5",)
 #: Where ``grade --pass-fail`` logs every evaluation (the firewall's evaluation log).
 PASS_FAIL_LOG = "pass-fail.log"
 
@@ -137,12 +168,29 @@ def _run_dir(arg: str) -> Path:
 # ----------------------------------------------------------------------------------------
 # run
 # ----------------------------------------------------------------------------------------
+def _readiness(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "readiness", False))
+
+
+def _check_preambles(arms: Any) -> None:
+    """Refuse arms whose preamble cannot be built (a missing file, or a quick reference
+    that breaks section 3's limits)."""
+    problems = [f"{a.name}: {p}" for a in arms for p in preamble_problems(a)]
+    if problems:
+        raise _fail("; ".join(problems))
+
+
 def _specs(args: argparse.Namespace) -> list[SessionSpec]:
+    readiness = _readiness(args)
+    if readiness and args.set != "dev":
+        raise _fail("--readiness runs only on the development set (--set dev)")
+    default_arms = READINESS_ARMS if readiness else STAGE0_ARMS
     try:
-        arms = require_available(_split(args.arms) or list(STAGE0_ARMS))
+        arms = require_available(_split(args.arms) or list(default_arms), readiness)
     except ValueError as exc:
         raise _fail(str(exc)) from None
-    models = _split(args.models) or list(DEFAULT_MODELS)
+    _check_preambles(arms)
+    models = _split(args.models) or list(READINESS_MODELS if readiness else DEFAULT_MODELS)
     try:
         reals = [int(x) for x in _split(args.realisation) or ["1"]]
     except ValueError:
@@ -175,10 +223,27 @@ def _limits(args: argparse.Namespace) -> SessionLimits:
     return lim
 
 
+#: The lib environment as a dry run shows it (it is built by the real run).
+LIB_ENV_PLACEHOLDER = Path("<ops-lib environment (code-plus packages and a worldparts wheel)>")
+
+
+def _toolkit_line(args: argparse.Namespace) -> str:
+    try:
+        tk = load_toolkit(getattr(args, "toolkit", None))
+    except ConfigError as exc:
+        return f"reference/: NOT AVAILABLE, a run refuses ({exc})"
+    return (
+        f"reference/: a copy of the toolkit {tk.dir} ({len(tk.files)} files, {tk.lines} "
+        f"lines, digest {tk.digest[:16]})"
+    )
+
+
 def dry_run(specs: list[SessionSpec], args: argparse.Namespace) -> int:
     """Print the exact claude command lines, environment changes and prompts."""
     limits = _limits(args)
+    readiness = _readiness(args)
     env_dir = args.code_env or default_code_plus_dir()
+    lib_dir = getattr(args, "lib_env", None) or LIB_ENV_PLACEHOLDER
     tmp = Path("<tmp-session-dir>")
     for spec in specs:
         arm = get_arm(spec.arm)
@@ -192,10 +257,12 @@ def dry_run(specs: list[SessionSpec], args: argparse.Namespace) -> int:
             args.max_budget_usd,
             claude=claude_executable(),
         )
-        _, changed = child_env(env_dir, _forbidden_roots(args))
+        _, changed = child_env(lib_dir if arm.env == "lib" else env_dir, _forbidden_roots(args))
         print("=" * 88)
         print(f"session {spec.sid}: {spec.label()}")
         print(f"cwd: {tmp / 'work'}  (a copy of r{spec.realisation}/ without task.json)")
+        if arm.workdir_extras:
+            print(_toolkit_line(args))
         print("env: " + " ".join(f"{k}={v}" for k, v in changed.items() if v is not None))
         removed = [k for k, v in changed.items() if v is None]
         if removed:
@@ -205,7 +272,7 @@ def dry_run(specs: list[SessionSpec], args: argparse.Namespace) -> int:
         print("command (prompt on stdin):")
         print("  " + format_command(cmd))
         print("prompt:")
-        for line in build_prompt(spec.task, arm, spec.realisation).splitlines():
+        for line in build_prompt(spec.task, arm, spec.realisation, readiness).splitlines():
             print("  | " + line)
     print("=" * 88)
     print(f"{len(specs)} session(s); nothing was run (--dry-run)")
@@ -238,6 +305,9 @@ def _forbidden_roots(args: argparse.Namespace) -> list[Path]:
     roots = [bundles_root(args.bundles)]
     with contextlib.suppress(ConfigError):
         roots.append(truth_root(getattr(args, "truth", None)))
+    tk = getattr(args, "toolkit_obj", None)
+    if tk is not None:  # a code-skill session gets a copy; its variable never reaches one
+        roots.append(tk.dir)
     return roots
 
 
@@ -257,8 +327,11 @@ def _run_meta(
     specs: list[SessionSpec],
     env_dir: Path,
     sb: SessionBash | None = None,
+    lib_env: Path | None = None,
+    toolkit: Toolkit | None = None,
 ) -> dict[str, Any]:
     info = env_info(env_dir) or {}
+    lib = (lib_env_info(lib_env) or {}) if lib_env is not None else None
     return {
         "set": args.set,
         "models": sorted({s.model for s in specs}),
@@ -277,8 +350,17 @@ def _run_meta(
         "manifest_check": not args.no_manifest_check,
         "session_bash_key": sb.key if sb is not None else None,
         "bundles": str(bundles_root(args.bundles)),
+        "readiness": _readiness(args),
+        "lib_env": lib,
+        "lib_key": (lib or {}).get("key"),
+        "toolkit": toolkit.manifest() if toolkit is not None else None,
+        "toolkit_digest": toolkit.digest if toolkit is not None else None,
     }
 
+
+#: Run settings that the lib and code-skill sessions of a run share; a resumed run keeps
+#: the recorded ones and refuses others (compared only when the resumed part uses them).
+_SHARED_WHEN_USED = (("lib_key", "lib_env"), ("toolkit_digest", "toolkit"))
 
 _PINNED_KEYS = (
     "set",
@@ -291,6 +373,7 @@ _PINNED_KEYS = (
     "jobs",
     "manifest_check",
     "session_bash_key",
+    "readiness",
 )
 #: Where the Stage 0 session settings of FREEZES.md are committed; ``headroom`` refuses a run
 #: whose run.json differs from them in any of these keys.
@@ -310,12 +393,20 @@ def cmd_run(args: argparse.Namespace) -> int:
     if shutil.which(exe) is None and not Path(exe).is_file():
         raise _fail(f"the Claude CLI {exe!r} was not found (set WPBENCH_CLAUDE)")
     run_dir = Path(args.out) if args.out else RESULTS_DIR / _run_id(args.set)
+    arms_used = {get_arm(s.arm).name: get_arm(s.arm) for s in specs}.values()
+    toolkit = _toolkit(args, arms_used)
     env_dir = ensure_code_plus_env(args.code_env)
+    lib_env = _lib_env(args, env_dir, arms_used)
     sb = args.session_bash = _session_bash(args)
-    meta = _run_meta(args, specs, env_dir, sb)
+    meta = _run_meta(args, specs, env_dir, sb, lib_env, toolkit)
     previous = read_json(run_dir / RUN_FILE, {})
     if previous:
         changed = [k for k in _PINNED_KEYS if (previous.get(k) or None) != (meta.get(k) or None)]
+        for key, info in _SHARED_WHEN_USED:
+            if meta.get(key) and previous.get(key) and meta[key] != previous[key]:
+                changed.append(key)
+            elif not meta.get(key):
+                meta[key], meta[info] = previous.get(key), previous.get(info)
         if changed:
             raise _fail(
                 f"run {run_dir} was started with other settings ({', '.join(changed)}); "
@@ -337,7 +428,35 @@ def cmd_run(args: argparse.Namespace) -> int:
     for s in specs:
         if attempts_done(run_dir, s.sid):
             print(f"skip {s.sid} {s.label()} (already run; use --rerun-flagged after audit)")
-    return _execute_all(todo, run_dir, limits, env_dir, args)
+    return _execute_all(todo, run_dir, limits, env_dir, args, lib_env, toolkit)
+
+
+def _toolkit(args: argparse.Namespace, arms: Any) -> Toolkit | None:
+    """The code-skill toolkit when an arm needs it (refused when it is not given)."""
+    if not any(a.workdir_extras for a in arms):
+        return None
+    try:
+        tk = load_toolkit(getattr(args, "toolkit", None))
+    except ConfigError as exc:
+        raise _fail(str(exc)) from None
+    args.toolkit_obj = tk
+    return tk
+
+
+def _lib_env(args: argparse.Namespace, code_plus: Path, arms: Any) -> Path | None:
+    """The lib environment when a lib arm runs; refused unless its wheel is built from a
+    commit (the wheel's sources unchanged in the working tree), which run.json records."""
+    if not any(a.env == "lib" for a in arms):
+        return None
+    lib_env = ensure_lib_env(code_plus, getattr(args, "lib_env", None))
+    info = lib_env_info(lib_env) or {}
+    if not info.get("commit") or info.get("dirty") is not False:
+        raise _fail(
+            "the lib environment's worldparts wheel must be built from a commit: commit the "
+            f"worldparts sources first (commit {info.get('commit')}, sources changed: "
+            f"{info.get('dirty')})"
+        )
+    return lib_env
 
 
 def _run_id(set_name: str) -> str:
@@ -363,34 +482,47 @@ def _execute_all(
     limits: SessionLimits,
     env_dir: Path,
     args: argparse.Namespace,
+    lib_env: Path | None = None,
+    toolkit: Toolkit | None = None,
 ) -> int:
+    """Run ``todo``. Each session gets its arm's Python environment: ``env_dir`` (code-plus)
+    or ``lib_env``; a code-skill session also gets ``toolkit`` as ``reference/``."""
     print(f"run {run_dir}: {len(todo)} session attempt(s)")
     stop: list[str] = []
     forbidden = _forbidden_roots(args)
-    key = _env_key(env_info(env_dir))
+    envs: dict[str, tuple[Path | None, str | None]] = {
+        "code-plus": (env_dir, _env_key(env_info(env_dir))),
+        "lib": (lib_env, _env_key(lib_env_info(lib_env)) if lib_env is not None else None),
+    }
+    readiness = _readiness(args)
     # Sessions of one task never overlap: a session cannot read another's working
     # directory on the same task (they are removed when a session ends).
     locks = {spec.task.task_id: threading.Lock() for spec, _ in todo}
 
     def one(item: tuple[SessionSpec, int]) -> None:
         spec, attempt = item
+        arm = get_arm(spec.arm)
+        edir, key = envs[arm.env]
         with locks[spec.task.task_id]:
             if stop:
                 return
+            if edir is None:
+                raise RuntimeError(f"{spec.arm}: its {arm.env} environment was not prepared")
             adir = session_dir(run_dir, spec.sid) / f"attempt-{attempt}"
-            prompt = build_prompt(spec.task, spec.arm, spec.realisation)
+            prompt = build_prompt(spec.task, spec.arm, spec.realisation, readiness)
             outcome = execute_session(
                 spec,
                 adir,
                 prompt,
                 limits,
-                env_dir,
+                edir,
                 args.effort,
                 args.max_budget_usd,
                 keep_tmp=args.keep_tmp,
                 forbidden_roots=forbidden,
                 env_key=key,
                 session_bash=getattr(args, "session_bash", None),
+                extras={name: toolkit for name in arm.workdir_extras if toolkit is not None},
             )
         sigs = audit_attempt(adir)
         why = stop_reason(adir)
@@ -466,9 +598,17 @@ def _cmd_rerun(args: argparse.Namespace) -> int:
     if claude_version() != meta.get("claude_version"):
         raise _fail("the Claude CLI version differs from the run's; re-runs must use the same")
     limits = SessionLimits(int(meta["max_turns"]), float(meta["timeout_s"]))
+    args.readiness = bool(meta.get("readiness"))
+    target_arms = {get_arm(index[sid]["arm"]).name: get_arm(index[sid]["arm"]) for sid in targets}
+    toolkit = _toolkit(args, target_arms.values())
+    if toolkit is not None and toolkit.digest != meta.get("toolkit_digest"):
+        raise _fail("the code-skill toolkit differs from the run's; re-runs must use the same")
     env_dir = ensure_code_plus_env(args.code_env)
     if _env_key(env_info(env_dir)) != meta.get("code_plus_key"):
         raise _fail("the code-plus environment differs from the run's")
+    lib_env = _lib_env(args, env_dir, target_arms.values())
+    if lib_env is not None and _env_key(lib_env_info(lib_env)) != meta.get("lib_key"):
+        raise _fail("the lib environment differs from the run's; re-runs must use the same")
     args.jobs = 1
     sb = args.session_bash = _session_bash(args)
     if (sb.key if sb is not None else None) != meta.get("session_bash_key"):
@@ -493,7 +633,7 @@ def _cmd_rerun(args: argparse.Namespace) -> int:
         todo.append((spec, n + 1))
     if not args.no_manifest_check:
         _check_manifest(_unique_tasks(s.task for s, _ in todo), args)
-    return _execute_all(todo, run_dir, limits, env_dir, args)
+    return _execute_all(todo, run_dir, limits, env_dir, args, lib_env, toolkit)
 
 
 # ----------------------------------------------------------------------------------------
@@ -753,6 +893,89 @@ def cmd_headroom(args: argparse.Namespace) -> int:
 
 
 # ----------------------------------------------------------------------------------------
+# scripted answers (score) and the firewall audit
+# ----------------------------------------------------------------------------------------
+def cmd_score(args: argparse.Namespace) -> int:
+    """Score DIR/<task>/r<k>.json (:mod:`.score`): the owner's full scores, or pass/fail."""
+    answers = Path(args.dir)
+    if args.pass_fail:
+        return _score_pass_fail(args, answers)
+    if not answers.is_dir():
+        raise _fail(f"no answer directory {answers}")
+    try:
+        tasks = load_tasks(args.set, args.bundles)
+        troot = truth_root(args.truth)
+        listed = _truth_list(args)
+        res = scoring.score_answers(answers, tasks, troot, listed)
+    except (BundleError, ConfigError) as exc:
+        raise _fail(str(exc)) from None
+    for line in scoring.full_lines(res):
+        print(line)
+    write_json(answers / scoring.SCORE_FILE, scoring.score_document(res, answers, args.set))
+    print(f"wrote {answers / scoring.SCORE_FILE} (for the owner only: never show it to a builder)")
+    return 0
+
+
+def _truth_list(args: argparse.Namespace) -> dict[str, str]:
+    path = Path(args.truth_manifest) if args.truth_manifest else truth_manifest_path(args.set)
+    return parse_manifest(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+
+def _score_pass_fail(args: argparse.Namespace, answers: Path) -> int:
+    """Pass or fail per realisation; nothing about the truth, its folder or the grades,
+    even in an error message."""
+    session = args.session or ""
+    if not scoring.SESSION_NAME.match(session):
+        raise _fail("--pass-fail needs --session NAME (letters, digits, '.', '_' or '-')")
+    if args.set != "dev":
+        raise _fail("--pass-fail scores the development set only")
+    if not answers.is_dir():
+        raise _fail(f"no answer directory {answers}")
+    log = answers / scoring.PASS_FAIL_LOG
+    done = scoring.evaluations_logged(log, session)
+    if done >= scoring.MAX_EVALUATIONS:
+        scoring.log_refusal(log, session)
+        raise _fail(
+            f"session {session} has had its {scoring.MAX_EVALUATIONS} evaluations "
+            "(PREREGISTRATION.md section 7)"
+        )
+    try:
+        tasks = load_tasks(args.set, args.bundles)
+    except (BundleError, ConfigError) as exc:
+        raise _fail(str(exc)) from None
+    try:
+        troot = truth_root(args.truth)
+        res = scoring.score_answers(answers, tasks, troot, _truth_list(args))
+    except (BundleError, ConfigError, OSError, ValueError):
+        raise _fail(
+            "the truth could not be read (the owner sets WPBENCH_OPS_TRUTH when launching the "
+            "session); no evaluation was logged"
+        ) from None
+    scoring.log_evaluation(log, session, done + 1, res)
+    for line in scoring.pass_fail_lines(res):
+        print(line)
+    print(f"evaluation {done + 1} of {scoring.MAX_EVALUATIONS} for session {session}")
+    return 0
+
+
+def cmd_firewall_audit(args: argparse.Namespace) -> int:
+    paths = [Path(p) for p in args.transcripts]
+    missing = [str(p) for p in paths if not p.is_file()]
+    if missing:
+        raise _fail(f"no transcript {', '.join(missing)}")
+    truths: list[str] = list(args.truth or [])
+    env_truth = os.environ.get("WPBENCH_OPS_TRUTH")
+    if env_truth and env_truth not in truths:
+        truths.append(env_truth)
+    res = firewall.audit_transcripts(paths, truths, list(args.forbid or []))
+    for line in firewall.audit_lines(res):
+        print(line)
+    if args.json:
+        write_json(Path(args.json), res.to_dict())
+    return 1 if res.violations else 0
+
+
+# ----------------------------------------------------------------------------------------
 # manifest and environment
 # ----------------------------------------------------------------------------------------
 def cmd_manifest(args: argparse.Namespace) -> int:
@@ -779,6 +1002,16 @@ def cmd_code_env(args: argparse.Namespace) -> int:
     d = ensure_code_plus_env(args.code_env)
     print(d)
     print(json.dumps(env_info(d), indent=2))
+    return 0
+
+
+def cmd_lib_env(args: argparse.Namespace) -> int:
+    d = ensure_lib_env(ensure_code_plus_env(args.code_env), args.lib_env)
+    print(d)
+    info = lib_env_info(d) or {}
+    print(json.dumps({k: v for k, v in info.items() if k != "installed"}, indent=2))
+    if info.get("dirty") is not False or not info.get("commit"):
+        print("warning: the wheel's sources differ from the commit; run refuses this environment")
     return 0
 
 
@@ -828,6 +1061,17 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument(
         "--no-manifest-check", action="store_true", help="Do not check the bundle manifest."
     )
+    sp.add_argument(
+        "--readiness",
+        action="store_true",
+        help="A readiness run on the development set before freeze-1 (section 3): the arms "
+        f"code-skill, lib-directed and lib can run (default arms {' '.join(READINESS_ARMS)}, "
+        f"default model {' '.join(READINESS_MODELS)}).",
+    )
+    sp.add_argument(
+        "--toolkit", default=None, help="code-skill toolkit folder ($WPBENCH_OPS_TOOLKIT)."
+    )
+    sp.add_argument("--lib-env", type=Path, default=None, help="lib environment dir.")
     sp.set_defaults(fn=cmd_run)
 
     sp = sub.add_parser("audit", help="Blind infrastructure audit (reads no grades or arms).")
@@ -870,6 +1114,39 @@ def parser() -> argparse.ArgumentParser:
     sp.add_argument("--print", action="store_true")
     sp.set_defaults(fn=cmd_report)
 
+    sp = sub.add_parser(
+        "score",
+        help="Score scripted answers DIR/<task>/r<k>.json on every realisation of the "
+        "validated tasks (full scores for the owner, or --pass-fail).",
+    )
+    sp.add_argument("dir")
+    sp.add_argument("--set", choices=SETS, default="dev")
+    sp.add_argument("--truth", default=None, help="Truth folder ($WPBENCH_OPS_TRUTH).")
+    sp.add_argument("--bundles", default=None, help="Bundle folder ($WPBENCH_OPS_BUNDLES).")
+    sp.add_argument(
+        "--truth-manifest", default=None, help="Committed truth list (default truth-<set>.sha256)."
+    )
+    sp.add_argument(
+        "--pass-fail",
+        action="store_true",
+        help="Print only PASS or FAIL per task realisation and the number of passes, write "
+        "nothing but DIR/pass-fail.log, and allow at most 3 evaluations per --session.",
+    )
+    sp.add_argument("--session", default=None, help="The builder session's name (--pass-fail).")
+    sp.set_defaults(fn=cmd_score)
+
+    sp = sub.add_parser(
+        "firewall-audit",
+        help="Scan builder transcripts for forbidden reads and count pass/fail evaluations.",
+    )
+    sp.add_argument("transcripts", nargs="+", help="Claude Code transcript .jsonl files.")
+    sp.add_argument(
+        "--truth", nargs="*", default=None, help="Truth folder(s) (default $WPBENCH_OPS_TRUTH)."
+    )
+    sp.add_argument("--forbid", nargs="*", default=None, help="More forbidden paths or names.")
+    sp.add_argument("--json", default=None, help="Also write the result to this JSON file.")
+    sp.set_defaults(fn=cmd_firewall_audit)
+
     sp = sub.add_parser("manifest", help="Write (or --check) bundles-<set>.sha256.")
     sp.add_argument("--set", choices=SETS, default="dev")
     sp.add_argument("--bundles", default=None)
@@ -880,6 +1157,13 @@ def parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("code-env", help="Build or check the code-plus environment.")
     sp.add_argument("--code-env", type=Path, default=None)
     sp.set_defaults(fn=cmd_code_env)
+
+    sp = sub.add_parser(
+        "lib-env", help="Build or check the lib environment (code-plus plus a worldparts wheel)."
+    )
+    sp.add_argument("--code-env", type=Path, default=None)
+    sp.add_argument("--lib-env", type=Path, default=None)
+    sp.set_defaults(fn=cmd_lib_env)
     return p
 
 

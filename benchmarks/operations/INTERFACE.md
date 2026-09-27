@@ -147,3 +147,24 @@ Field notes:
   - **If the oracle fails it:** `r1` is rewritten from the first realisation the oracle passes, and sessions on the earlier `r1` are superseded (PREREGISTRATION.md section 8).
   - **After validation:** `r1`, `r2` and `r3` are the first three realisations on which the oracle passes.
 - **Required entries.** `realisations` has exactly one entry for each realisation directory of the bundle (`r1` to `rK`). Each entry has `oracle_pass: true` and a `reference_pass` with at least one estimator. The grader refuses a truth file that breaks this.
+
+## Scripted answers (`score DIR`)
+
+A program's answers, such as those of the scripted worldparts pipeline of the readiness check (PREREGISTRATION.md section 7) or a builder's, are scored without an agent session:
+
+```text
+DIR/
+  <task_id>/r<k>.json   one JSON object: the answer object of the answer format above
+  score.json            written by the full mode (owner only)
+  pass-fail.log         appended to by the pass/fail mode
+```
+
+- **One file per task realisation.** `r<k>.json` answers realisation `r<k>` of the task's bundle, with one entry per key of `task.json`. It is graded exactly as a session's final reply: its text is the body of a fenced `json` block, read with the same lenient parse of one JSON object, then graded by section 6.6. A missing file fails, and so does a file that is not a JSON object.
+- **What is scored.** Every realisation `r1` to `rK` of every task whose truth file is listed in the committed `truth-<set>.sha256`. Other tasks are not validated yet and are not scored, and files for them are ignored. The output says how many realisations were scored.
+- **`score.json`** (full mode) holds, per realisation, the task, the realisation, whether it passed, whether its file was missing, the bundle digest and the grade (the fields of a session record's grade). Like a record, it is for the owner only.
+- **`pass-fail.log`** (pass/fail mode, `--pass-fail --session NAME`) gets, per evaluation, a line `<time> session=<NAME> evaluation=<n> realisations=<N> passed=<P>`, then a line `<time> session=<NAME> <task_id>/r<k> PASS|FAIL` per realisation. A fourth evaluation of the same session name is refused and logged as `<time> session=<NAME> refused: ...`.
+
+## Build-phase inputs of the Stage 1 arms
+
+- **The `code-skill` toolkit** is a folder, `$WPBENCH_OPS_TOOLKIT`. Every `code-skill` session gets a copy of its files, without `.git`, caches and `*.pyc`, as `reference/` in its working directory. No file, and no file name, may mention worldparts or anything else a contamination marker of the code arms flags. `run.json` records its manifest: the SHA-256 of each file and a digest over them, in the form of the bundle digest.
+- **The quick reference** is `preambles/quick-reference.txt`, plain text. A line that starts with `#!` is a harness annotation and is never shown to the agent: `#! section 14` opens the part that documents design section 14 (at most 20 lines), and `#! end` closes it. The file has exactly one such part. Section 3's limits are checked by `harness/quickref.py`.
