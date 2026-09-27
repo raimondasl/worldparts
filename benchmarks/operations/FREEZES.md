@@ -302,3 +302,15 @@ The room is open. The owner chose a staged path: first the build and the readine
 
 **What is not published yet.** Per-task grades are not published until the gate decision, because the build-phase firewall allows builders only pass/fail. They are kept in the owner's private report.
 
+## Build phase paused (2026-09-27)
+
+- **Paused before any builder session.** No builder session has run. Before one could start, the owner asked for a full account of what the build would cost and bring, and paused the phase. The protocol above stays as fixed.
+- **Options under review.** The owner is reviewing, with the Stage 0 results in a private report:
+  - deciding now;
+  - a free check of the transcripts;
+  - a small exploratory probe of Sonnet 5 `lib-directed` with the current worldparts on the development set;
+  - the full staged build.
+
+  Any choice other than the staged build is logged here before it runs.
+- **Partial disclosure of per-task results, already public.** The 10:20 entry above gives F-(Sonnet 5) = 4 while the decided tasks were known, which narrows which tasks Sonnet 5's `code-hint` failed. Any future builder session is told this at its start.
+
