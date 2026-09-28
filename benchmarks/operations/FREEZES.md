@@ -378,3 +378,23 @@ The exploratory probe was not run.
     - The blind audit flagged the attempt `harness_interrupted`, and it ran again as attempt 2 (6.6). No orphaned CLI process was left.
   - The two Opus 5.5 sessions ran without flags. The final audit shows nothing to re-run.
   - **The first validation process of ops-f3-002** ended at 18:49 because of the orchestrating session's own tooling: it had been started from a shell whose processes end with it. It resumed from its checkpoints, and no result depends on it.
+
+## Stage 0 verdict after the logged fixes (2026-09-27)
+
+**What was computed.** The frozen harness (worktree at `8ae9949`; grading and headroom code identical to freeze-0b's) graded every session again. It then computed `headroom --final` over `stage0`, `stage0-replace-f1-004` and `stage0-fix-2a`.
+
+- **Sessions scored.** The rule counts only sessions on current bundles. The 12 sessions on bundles replaced since they ran are not scored: the four earlier sessions each of ops-f1-004, ops-f3-002 and ops-f4-001.
+- **Re-run sessions.** ops-f3-002's four sessions ran in `stage0-fix-2a` after its validation (entry above), with no flags. The final blind audit of the run shows nothing to re-run, and no session was contaminated.
+
+| | Before the fixes (freeze-0c) | After the fixes (binding) |
+|---|---|---|
+| F(Sonnet 5) | 6 | **4** |
+| F(Opus 5.5) | 2 | **0** |
+| Undecided slots u | 1 (ops-f3-005) | 1 (ops-f3-005) |
+| Verdict | OPEN | **OPEN** |
+
+**Why it is still OPEN.** F(Sonnet 5) = 4 meets the rule's threshold (F ≥ 4) exactly, so the verdict is the same. Both fixed tasks now pass in `code-hint` for both models.
+
+**Cost of `stage0-fix-2a`.** It is API-equivalent. The sessions reported $5.41. Two had no result message, so their cost is estimated from their token use at the other Sonnet 5 sessions' rate: about $2.3 for the session that reached the time limit and about $2.0 for the attempt cut by the machine-wide stop. So the run cost about $9.8, and Stage 0 about $43 in all.
+
+**Not published yet.** Per-task grades are still in the owner's private report. How and where the results are published is the owner's next decision; so is what the verdict means for the worldparts library.
