@@ -363,3 +363,18 @@ The exploratory probe was not run.
 - They run in a new run directory, `benchmarks/operations/results/stage0-fix-2a`, with Stage 0's settings (`stage0-settings.json`), one at a time.
 - Every session is graded again, and the rule is computed over all three run directories. The verdict from before the change is reported beside the new one: OPEN, F(Sonnet 5) = 6 and F(Opus 5.5) = 2.
 - **The harness for the re-run** is the one at this commit. It differs from freeze-0b's only by the build-phase tooling (`dc9e5e5`, `2610f55`), whose entries above record that the `code+` and `code-hint` prompts, command lines and environments are byte-identical. The re-run's prompts and command lines are compared with Stage 0's.
+
+- **2026-09-27 21:16, validation of ops-f3-002 after D1.** Attempt 0 was validated again under content hash `396e1b34b697a57e` and accepted at n = 75, with realisation 1 unmoved. New realisation digests:
+  - r1 `5d4ebd4f1a0eb4148a95c2aa43d02c0961824ec43d2797a2ac8ecc6d853970db`;
+  - r2 `acb0ab37a43fa6439b57ef252081437b787e6a35c78200e7970563f6db295cc4`;
+  - r3 `85ea33a898c8f3a3b253a8a664619c9b8ed8e92583f1694ae6115fd4bd14d542`.
+
+  Its truth file is byte-identical to the superseded one (`1833111f2d09e2bda0fe8d294f4485ccac076f187a75a0f2d1a3fd89b1cd2047`): the draw's fault and magnitude are the same, and D1 changed only how the pump runs and what plant.md says. This commit lists the bundles and the truth. The task's four sessions run in `stage0-fix-2a` after it.
+- **2026-09-27, `stage0-fix-2a`: ops-f4-001's four sessions.** They ran from the worktree at `d1b8543` with Stage 0's settings, one at a time. Their prompts differ from Stage 0's only by D2's line. Their command lines differ only by temporary paths and the spelling of the pinned CLI's path.
+  - The Sonnet 5 `code+` session reached the 2,400 s limit: a failure (6.6).
+  - The Sonnet 5 `code-hint` session's attempt 1 was cut at about 19:28, when every `python.exe` on the machine ended, the owner's own resident processes included.
+    - This is the second such event, after 2026-09-26 21:22. Its cause is outside the project and not yet known: a crash, low memory, Defender and every script found on the machine were ruled out.
+    - A read-only process watcher now logs what starts before the next one.
+    - The blind audit flagged the attempt `harness_interrupted`, and it ran again as attempt 2 (6.6). No orphaned CLI process was left.
+  - The two Opus 5.5 sessions ran without flags. The final audit shows nothing to re-run.
+  - **The first validation process of ops-f3-002** ended at 18:49 because of the orchestrating session's own tooling: it had been started from a shell whose processes end with it. It resumed from its checkpoints, and no result depends on it.
