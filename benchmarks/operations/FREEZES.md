@@ -414,3 +414,15 @@ The manifest's own SHA-256 is `c893eed9d001b7fc0690a66d0eab249f41130421eec5ecb70
 
 - **One planned change.** The item key gains one entry when the last item's draw is accepted. Its new hash will be logged here before that item runs.
 - **Publication.** The files are published with the study's results.
+
+## H1: labels and settings amendments locked before any verdict was read (2026-09-29)
+
+Before any auditor verdict was opened, these three private manifests were locked. Each lists the SHA-256 of its files.
+
+| Manifest | What it locks | SHA-256 |
+|---|---|---|
+| `FREEZE-H1-labels.sha256` | the witness step's labels of the defect candidates, and the witness reports | `24df254bd64b029b92df4907b27e6e03e12e3e634e69430380dc2370ca20e9da` |
+| `FREEZE-H1-v1a.sha256` | amendment 1: the settings of the two non-Claude auditor arms | `eaa66f9c5fb2f29d11ef14440ec267fef1497f65092d7d5bdd837308133ab2b1` |
+| `FREEZE-H1-v1b.sha256` | amendment 2: those arms were re-run after an environment fault on our side | `433594fdb429f0bd90d45ac8552a3753521bbcfdcabd32d4c4848221a119de12` |
+
+These are published with the study's results.
