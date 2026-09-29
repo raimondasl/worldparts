@@ -426,3 +426,19 @@ Before any auditor verdict was opened, these three private manifests were locked
 | `FREEZE-H1-v1b.sha256` | amendment 2: those arms were re-run after an environment fault on our side | `433594fdb429f0bd90d45ac8552a3753521bbcfdcabd32d4c4848221a119de12` |
 
 These are published with the study's results.
+
+## H1: last item added, and later records (2026-09-29)
+
+The contest's last item was generated with the pre-fix code (content hash `ed64b3e257623db0`) and accepted by the pre-fix gate. Its hashes are logged here before any auditor saw it.
+
+| What | SHA-256 |
+|---|---|
+| `item-key.json` with the last item added | `0a03d78c926112a66361739374fcb4647b5f0e747dfe5eae64a582863e1fe10c` |
+| The item's bundle files (`d3-bundle.sha256`) | `c66b604398bf0d1de855b152af0959bcdf893f0d8db2bc315008124d88f432c3` |
+| Amendment 3: an exploratory run of the auditor without the generator source, locked before it ran (`FREEZE-H1-v1c.sha256`) | `5f7bb8437c84dc0d66cf396b0dc23188c5810e537e34be71f8e826654d326f8f` |
+| Amendment 4: one non-Claude arm excluded after it left its task folder (`FREEZE-H1-v1d.sha256`) | `c4b91033b4382efe34de7b6afb5912639b2969ce97341d75e2059e27f7dce5a0` |
+| A single-input ablation of the gate, locked before it ran (`FREEZE-H1-mech.sha256`) | `2f872a358b25cc133f9c58f6a0215d06292af837e9bb6dc9a436e251067eaf0d` |
+| The ablation's result (`MECH-H1-result.md`) | `b79f7ea8a2746482e75edd0d9fc4deeea30c0f806a557a9f14cc0368bed63a87` |
+| Adjudication of an auditor's flags on clean items (`FREEZE-H1-adjudication.sha256`) | `59fd372eec817de5690b7af377462b09b1000e54d0e2e49b541bf41994e65721` |
+
+All of these are published with the study's results.
