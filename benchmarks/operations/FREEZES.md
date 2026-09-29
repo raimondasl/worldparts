@@ -398,3 +398,19 @@ The exploratory probe was not run.
 **Cost of `stage0-fix-2a`.** It is API-equivalent. The sessions reported $5.41. Two had no result message, so their cost is estimated from their token use at the other Sonnet 5 sessions' rate: about $2.3 for the session that reached the time limit and about $2.0 for the attempt cut by the machine-wide stop. So the run cost about $9.8, and Stage 0 about $43 in all.
 
 **Not published yet.** Per-task grades are still in the owner's private report. How and where the results are published is the owner's next decision; so is what the verdict means for the worldparts library.
+
+## Follow-up study H1 locked before its first run (2026-09-29)
+
+H1 is a private pre-registered follow-up. It asks whether automated validity auditors find the generator defects that the Stage 0 gate missed (the logged fixes above). Its criteria, runner, item builder and sealed item key were fixed before any auditor session. The manifest `FREEZE-H1-v1.sha256` lists:
+
+```
+a661db51d52277f3a0d34f48f8f03af77818078c2780ae67e54b1ee495288e42  PREREG-H1-draft.md
+621bab752c0b46c6d4db17317ab1639ad35e5e252bf174c8f55545250aa4ec94  run_auditor.py
+d70add2729c821d7cd9df314c897e719e826e2188e221da1cca72f9e0aec016b  build_items.py
+9c2b8f7abd8dc86d504d35618a349c52e53ff5812c3e87a17b1d4332c304f21f  item-key.json
+```
+
+The manifest's own SHA-256 is `c893eed9d001b7fc0690a66d0eab249f41130421eec5ecb702c8c135e0e8fcf2`.
+
+- **One planned change.** The item key gains one entry when the last item's draw is accepted. Its new hash will be logged here before that item runs.
+- **Publication.** The files are published with the study's results.
