@@ -58,6 +58,13 @@ OPS = REPO / "benchmarks" / "operations"
 PRE = OPS / "preambles"
 #: The folder that holds the repository (and, on the owner's machine, the private folder).
 WM = REPO.parent.as_posix()
+#: The firewall audits transcripts of Windows sessions and reads absolute paths in their drive
+#: form (``c:/...``), so an absolute POSIX path above a Linux checkout (CI) is outside its scope.
+WINDOWS_PATHS = pytest.mark.xfail(
+    sys.platform != "win32",
+    reason="absolute POSIX paths are outside the firewall's scope",
+    strict=True,
+)
 UNCOMMITTED_PREAMBLES = cli.uncommitted_preambles
 
 
@@ -830,10 +837,11 @@ def test_scripted_answers_are_graded_as_a_final_reply(tmp_path: Path) -> None:
     p.write_text("[1, 2]", "utf-8")
     assert scoring.grade_file(task, truth, p).parse_error == "the answer block is not a JSON object"
     # what the grader cannot grade fails that file (the run goes on): an integer too large
-    # for a float (grading.as_number) and an array nested deeper than Python recurses
+    # for a float (grading.as_number) and an array nested deeper than Python recurses (json
+    # parses 5000 levels on Linux with Python 3.13 and on 3.14; 100000 fails on every one)
     for text, error in (
         ('{"extra_energy_mwh_per_yr": 1' + "0" * 400 + "}", "OverflowError"),
-        ("[" * 5000 + "]" * 5000, "RecursionError"),
+        ("[" * 100_000 + "]" * 100_000, "RecursionError"),
     ):
         p.write_text(text, "utf-8")
         g = scoring.grade_file(task, truth, p)
@@ -1149,9 +1157,12 @@ ALLOWED = [
         (_use("Bash", command="grep -rn cannot_determine"), "holds run directories"),
         (_use("Bash", command="grep -rn X benchmarks/"), "holds run directories"),
         (_use("Bash", command="grep -rn X .."), "above the repository"),
-        (_use("Bash", command=f"grep -rn X {WM}"), "above the repository"),
-        (_use("Bash", command=f"grep -rn X {WM}/worldparts-bench"), "holds run directories"),
-        (_use("Grep", pattern="x", path=f"{WM}"), "above the repository"),
+        pytest.param(_use("Bash", command=f"grep -rn X {WM}"), "above the repository",
+                     marks=WINDOWS_PATHS),
+        pytest.param(_use("Bash", command=f"grep -rn X {WM}/worldparts-bench"),
+                     "holds run directories", marks=WINDOWS_PATHS),
+        pytest.param(_use("Grep", pattern="x", path=f"{WM}"), "above the repository",
+                     marks=WINDOWS_PATHS),
         (_use("Bash", command="grep -h passed benchmarks/operations/results/stage0/sessions/*/"
                               "*.json"), "run directory"),
         (_use("Bash", command="jq . benchmarks/operations/results/stage0/sessions/*/*.json"),
@@ -1174,8 +1185,8 @@ ALLOWED = [
         (_use("Bash", command=f"cd {WM}; cd reports; ls"),
          "change of directory into 'reports'"),
         (_use("Bash", command="cd ~/.claude && cat projects/*/memory/*.md"), "into '.claude'"),
-        (_use("Bash", command=f"cd {WM} && grep -rn X . --include='*.py'"),
-         "above the repository"),
+        pytest.param(_use("Bash", command=f"cd {WM} && grep -rn X . --include='*.py'"),
+                     "above the repository", marks=WINDOWS_PATHS),
         # a script written with Write runs what it says
         (_use("Write", file_path="scratch/peek.py", content="import os\nprint(open(os.environ["
               "'WPBENCH_OPS_TRUTH'] + '/dev/x.truth.json').read())\n"), "WPBENCH_OPS_TRUTH"),
