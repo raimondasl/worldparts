@@ -488,3 +488,15 @@ The private manifest `FREEZE-H2-A1.sha256` (35 entries) holds:
 - the unchanged frozen harness files it relies on.
 
 Its SHA-256 is `d99875967ec5f62ce61669e0079252a1df537c048dfbd092983d01a50d7ebfda`.
+
+## H1 and H2: results locked (2026-10-01)
+
+Three private manifests lock results that the owner's exploratory follow-ups produced. Each lists the SHA-256 of its files.
+
+| Manifest | What it locks | Entries | SHA-256 |
+|---|---|---|---|
+| `FREEZE-H1-results.sha256` | H1's results report and the three auditor arms' scores. Unchanged since the results were written; re-checked today | 4 | `f6a9f33b694b8f4519a95c84124cb4d650fbf2e300a815268b328aea95bc8b05` |
+| `FREEZE-H1-rederive.sha256` | The re-derivation of H1's two disputed labels by a non-Claude model: its protocol (committed before the first session), prompts, runner, results, each session's full output and working folder, and the operator's reproduction log | 530 | `14f3ce86a5b8a7e37b53e78cdafbc436cdf7d5c9e7e490d7150d2595936055e2` |
+| `FREEZE-H2-A1-results.sha256` | H2 amendment 1's results (the second auditor model and the adjudication of 20 tasks): the reports, decisions, analyses and leak reviews, and every session's raw output | 1,456 | `3f2cf3c906b4802a7f88a8f2ef3d1a6355b1c7665a09bfedad938fbf6ae1caab` |
+
+These are published with the studies' results, after the benchmarks' maintainers have been contacted.
