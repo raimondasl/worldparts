@@ -12,6 +12,7 @@ the explanations is added.
 from __future__ import annotations
 
 import copy
+import itertools
 import json
 import math
 import time
@@ -253,8 +254,11 @@ def test_the_true_fault_ranks_first(
     assert result.best == ref and result.conclusion == "fault", result.notes
     assert result.hypotheses[0].rank == 1 and result.ranking[0] == ref
     assert result.best_hypothesis.supported and result.best_hypothesis.weight is not None
+    # AICs within the ranking's tie tolerance (1e-6) are equal, and their last bits vary by
+    # platform; equal scores go to fewer faults
     aics = [h.aic for h in result.hypotheses]
-    assert aics == sorted(aics) and result.hypotheses[0].delta_aic == 0
+    assert all(b > a - 1e-6 for a, b in itertools.pairwise(aics)), aics
+    assert result.hypotheses[0].delta_aic == 0
     est = result[ref].estimates[ref]
     assert est.path == path and est.verdict == "identifiable"
     assert est.standard_error is not None
@@ -785,7 +789,10 @@ def test_an_explicit_combination_checks_each_of_its_faults() -> None:
         result = wp.diagnose(s, data, ["pump.worn_impeller + filter.clogged"])
         assert result.ranking == ["pump.worn_impeller + filter.clogged", BASELINE]
         assert result.conclusion == "weak_evidence", result.notes
-        assert result.false_alarm == 1.0 and result.false_alarm_against == "filter.clogged"
+        # 1 up to rounding: the member adds nothing, and chi2.sf(x, 1) near x = 0 turns an AIC
+        # residue of 1e-15 into about 3e-8 (seen on CI)
+        assert result.false_alarm == pytest.approx(1.0, abs=1e-6)
+        assert result.false_alarm_against == "filter.clogged"
         text = " ".join(result.notes)
         assert "filter.clogged alone (fitted for this check) explains the measurements" in text
         assert "the data do not support pump.worn_impeller" in text
