@@ -458,3 +458,15 @@ The manifest's own SHA-256 is `9be4c2fa105c6c4b578ac735a58af8c63def9a773e961312f
 - **Staged design.** Stage 1 runs first. Stage 2 runs only if stage 1 passes the pre-registered futility rule.
 - **Later arms.** Arms added later get their settings locked by an amendment, logged here before they run.
 - **Publication.** The files are published with the study's results, after the benchmarks' maintainers have been contacted.
+
+## H2: stage-1 result locked before any adjudication (2026-09-30)
+
+Stage 1 of H2 ran under the manifest above. The pre-registered interim decision is recorded: the binding futility rule was not met, so the confirmatory hypothesis is declared not supported and the confirmatory study stops. Before any adjudication or exploratory follow-up, the private manifest `FREEZE-H2-stage1.sha256` (1,209 entries) locks:
+- the interim report and the run log;
+- the scorer's output and the void list;
+- the leak-review records;
+- the raw output of every session: outcome, verdict, full transcript, proxy log, scan and prompt.
+
+The manifest's own SHA-256 is `b7336e57dee1a03863f9a5b5586447746ad25cf051824fd5f1f09eaf39663987`.
+
+The files are published with the study's results, after the benchmarks' maintainers have been contacted.
