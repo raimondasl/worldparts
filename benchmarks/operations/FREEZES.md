@@ -442,3 +442,19 @@ The contest's last item was generated with the pre-fix code (content hash `ed64b
 | Adjudication of an auditor's flags on clean items (`FREEZE-H1-adjudication.sha256`) | `59fd372eec817de5690b7af377462b09b1000e54d0e2e49b541bf41994e65721` |
 
 All of these are published with the study's results.
+
+## Follow-up study H2 locked before its first stage-1 run (2026-09-30)
+
+H2 is a private pre-registered follow-up to H1. It tests automated validity auditors at scale, on tasks from public benchmarks that already carry published third-party labels. Its criteria, sample draw, sealed item key, task files, prompt, containment, runner and scoring were fixed before any stage-1 session. The manifest `FREEZE-H2.sha256` has 726 entries:
+- the pre-registration, with the owner's decisions and every deviation found while building the pilot;
+- the harness scripts;
+- the sample and the sealed item key;
+- each task's files;
+- each task's source image digest and the ID of its sanitised image;
+- each task's offline environment check.
+
+The manifest's own SHA-256 is `9be4c2fa105c6c4b578ac735a58af8c63def9a773e961312f0ec58b008c2a475`.
+
+- **Staged design.** Stage 1 runs first. Stage 2 runs only if stage 1 passes the pre-registered futility rule.
+- **Later arms.** Arms added later get their settings locked by an amendment, logged here before they run.
+- **Publication.** The files are published with the study's results, after the benchmarks' maintainers have been contacted.
