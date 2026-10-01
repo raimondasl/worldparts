@@ -470,3 +470,21 @@ Stage 1 of H2 ran under the manifest above. The pre-registered interim decision 
 The manifest's own SHA-256 is `b7336e57dee1a03863f9a5b5586447746ad25cf051824fd5f1f09eaf39663987`.
 
 The files are published with the study's results, after the benchmarks' maintainers have been contacted.
+
+## H2: amendment 1 locked before its first session (2026-10-01)
+
+After the stage-1 stop, the owner asked for two exploratory follow-ups. Neither changes the stage-1 result or any frozen file.
+- **A second auditor model** on the 40 stage-1 tasks, with the settings that the frozen runner already holds.
+- **An adjudication of 20 tasks:** 12 where the auditor and the published labels disagree, plus 8 controls where they agree. The tasks are under neutral IDs, and the judges are blind to labels and audit verdicts. The procedure has three steps:
+  1. mechanical evidence: fixes written from the issue alone, and a search for a patch that resolves the issue yet fails the tests;
+  2. a non-Claude adjudicator;
+  3. the owner, on every case where those two disagree.
+
+The private manifest `FREEZE-H2-A1.sha256` (35 entries) holds:
+- the amendment and its scripts;
+- the session prompts;
+- the decision rule;
+- the sealed task key;
+- the unchanged frozen harness files it relies on.
+
+Its SHA-256 is `d99875967ec5f62ce61669e0079252a1df537c048dfbd092983d01a50d7ebfda`.
