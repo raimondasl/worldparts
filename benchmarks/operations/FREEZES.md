@@ -500,3 +500,22 @@ Three private manifests lock results that the owner's exploratory follow-ups pro
 | `FREEZE-H2-A1-results.sha256` | H2 amendment 1's results (the second auditor model and the adjudication of 20 tasks): the reports, decisions, analyses and leak reviews, and every session's raw output | 1,456 | `3f2cf3c906b4802a7f88a8f2ef3d1a6355b1c7665a09bfedad938fbf6ae1caab` |
 
 These are published with the studies' results, after the benchmarks' maintainers have been contacted.
+
+## Corrections to earlier entries (2026-10-01)
+
+A number audit of our records on 2026-10-01 found these errors in the entries above. The entries stay as written; this entry corrects them.
+
+1. **The machine-wide stops during Stage 0 were caused inside the project** (entry "stage0-fix-2a", commit `8ae9949`).
+   - **What happened.** Two events ended every `python.exe` on the machine: 2026-09-26 21:22 EDT and 2026-09-27 about 19:28 EDT. Both were issued by Sonnet 5 sessions under test, not by anything outside the project.
+     - Session `facc2cfa29392b8b` (attempt 1, `code+`) ran `taskkill //F //IM python.exe` at 2026-09-27T01:22:08Z.
+     - Session `d6a0a018e96801dd` (attempt 1, `code-hint`) ran `taskkill //F //IM python.exe //T` at 2026-09-27T23:28:24Z. That command also ended the harness process running the session.
+   - **Why it could happen.** The sessions ran natively on Windows, and nothing prevented a session from ending host processes. The later studies run agents in containers.
+2. **The scoring of `d6a0a018e96801dd` attempt 1 is unchanged.**
+   - That attempt was flagged `harness_interrupted` and re-run, and attempt 2 passed.
+   - On 2026-10-01 the owner ruled that the re-run stands.
+   - The Stage 0 verdict is unchanged: F(Sonnet 5) = 4, F(Opus 5.5) = 0, room OPEN.
+3. **The 18:49 end of the first ops-f3-002 validation process** (same entry) was caused by the Sonnet 5 `code+` session on ops-f4-001 (`eb2417a1fb07776f`), not by the orchestrating session's tooling. That session ran `taskkill //F //PID … //T` on the process tree at 2026-09-27T22:49:51Z (18:49:51 EDT). No result depends on it, as stated.
+4. **The H1 v1 entry** (commit `7dd71a8`). The four lines printed there are a listing of the manifest. The file itself writes each line as `<hash> *<name>`, and the SHA-256 given (`c893eed9…`) is that of the file, not of the printed listing.
+5. **The results entry** (commit `64309a2`).
+   - "The re-derivation of H1's two disputed labels" should read "the re-derivation of H1's D1 and D2 labels by a non-Claude model: D1 was confirmed, and D2 became disputed".
+   - `FREEZE-H1-results.sha256` locks the results of the pre-registered contest. Only the other two manifests come from exploratory follow-ups.
