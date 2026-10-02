@@ -519,3 +519,20 @@ A number audit of our records on 2026-10-01 found these errors in the entries ab
 5. **The results entry** (commit `64309a2`).
    - "The re-derivation of H1's two disputed labels" should read "the re-derivation of H1's D1 and D2 labels by a non-Claude model: D1 was confirmed, and D2 became disputed".
    - `FREEZE-H1-results.sha256` locks the results of the pre-registered contest. Only the other two manifests come from exploratory follow-ups.
+
+## H1: amendment 5 locked before its first session (2026-10-02)
+
+The owner approved one more exploratory arm for the H1 contest. Nothing already reported changes.
+- **Why.** The auditor prompt of the contest named three examples of the defect class, and those examples were written after the defects were found.
+- **The new arm** keeps the same model, settings, 12 items and scorer, and removes that one sentence. It tests whether the auditor still flags the unsolvable task without the hindsight examples.
+- **Containment.** Sessions run one at a time, in containers whose only network exit is the model's API.
+- **A conditional control.** If the new arm misses the unsolvable task in either run, the unchanged prompt is run again on that task in the same container, to separate the prompt from the environment.
+
+The private manifest `FREEZE-H1-v5.sha256` (983 entries) holds:
+- the amendment, its runner and its freeze script;
+- the container definition, with its pinned packages and image ID;
+- both prompt texts;
+- the unchanged frozen runner, scorer and labels;
+- every file of the 12 items.
+
+Its SHA-256 is `d96cf2a45420455ad27fc4d6c453fad36ec92bda69d3cec6775626a1d28846ae`.
