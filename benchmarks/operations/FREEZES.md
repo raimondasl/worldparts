@@ -536,3 +536,15 @@ The private manifest `FREEZE-H1-v5.sha256` (983 entries) holds:
 - every file of the 12 items.
 
 Its SHA-256 is `d96cf2a45420455ad27fc4d6c453fad36ec92bda69d3cec6775626a1d28846ae`.
+
+## H1: amendment 5 results locked (2026-10-06)
+
+The exploratory arm registered on 2026-10-02 (entry above) has run: 24 sessions, contained, one at a time. With the hindsight examples removed from the prompt, every verdict was the same as in the original arm, including both flags on the unsolvable task. No earlier result changes.
+
+The private manifest `FREEZE-H1-A5-results.sha256` (2,306 entries) holds:
+- the results report and the scorer's outputs;
+- the blind correct-reason sheets and both judges' scores;
+- the unchanged frozen scorer;
+- every session's raw output and working folder.
+
+Its SHA-256 is `00882a2c3ce33ad513e5a184b42a240ea0894e9202288c913794fcbbe3970075`.
