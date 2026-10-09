@@ -349,8 +349,10 @@ Three of its findings drive the design:
   the time. In a 2026 fluid-systems benchmark, ten LLMs scored 0.0 on simulation fidelity.
 - **Agents do well when they compose verified parts through typed tools.** EPANET-Agentic,
   which gives an agent function-call tools over WNTR, reported 100 % task success on three
-  benchmark networks. An earlier framework that generated free-form EPANET code scored 56
-  to 81 %.
+  benchmark networks. An earlier framework, LLM-EPANET (Goldshtein, Perelman, Schuster and
+  Ostfeld, *Environmental Modelling & Software* 205, 107148, 2026), translates questions into
+  EPANET code and runs it; it reached 56 to 81 % overall on its 69 queries, and over 90 % on
+  the simpler ones. The two studies used different tasks.
 - **No existing library packages components for agents.** The physics exists in Modelica
   Buildings, WNTR/EPANET and WaterTAP. None of them ships an agent-readable manifest,
   behavioural contracts or data provenance.
