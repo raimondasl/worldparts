@@ -548,3 +548,19 @@ The private manifest `FREEZE-H1-A5-results.sha256` (2,306 entries) holds:
 - every session's raw output and working folder.
 
 Its SHA-256 is `00882a2c3ce33ad513e5a184b42a240ea0894e9202288c913794fcbbe3970075`.
+
+## H3a locked before any reported census or gate run (2026-10-19)
+
+H3a is the first part of the private pre-registration H3. It fixes how the census tasks of the next runs are sampled and how their outputs are sealed. That covers:
+- the census index blocks for every purpose;
+- the derivation of every index list from one public randomness round;
+- the census definitions;
+- the stratified sample of 1,000 indices per generator version;
+- a paired subsample of 23 indices, with the admission screen on its 46 draws and the full admission gate on 10 of them;
+- the rule that these outputs stay sealed until the second part, H3b, is locked.
+
+The private manifest `FREEZE-H3A.sha256` has 35 entries, one per file, each `<sha256>  <label>` with LF line ends. It also holds the hashes of an external case-study protocol, frozen and run earlier under its own protocol, and of a survey protocol. The SHA-256 of the manifest file's bytes is `821395d6327abd304619ae0967521cdc624e57f43627da45a1b81d8f2b521f15`.
+
+- **Randomness:** drand quicknet (chain `52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971`), round R = `33231412`, published at `2026-10-20T12:00:00Z` UTC. R counts only if a web-archive capture of this entry, dated before that time, shows this hash and R. The capture is given in the H3b entry.
+- **Sealing:** the SHA-256 of the sealed outputs' manifest will be listed in the H3b entry.
+- **Publication:** the files are published with the study's results.
