@@ -564,3 +564,22 @@ The private manifest `FREEZE-H3A.sha256` has 35 entries, one per file, each `<sh
 - **Randomness:** drand quicknet (chain `52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971`), round R = `33231412`, published at `2026-10-20T12:00:00Z` UTC. R counts only if a web-archive capture of this entry, dated before that time, shows this hash and R. The capture is given in the H3b entry.
 - **Sealing:** the SHA-256 of the sealed outputs' manifest will be listed in the H3b entry.
 - **Publication:** the files are published with the study's results.
+
+## Catch-up: earlier protocols and frozen code hashed (2026-10-22)
+
+Between 2026-10-07 and 2026-10-19, several private studies wrote their protocols or predictions, and froze their scripts, before the steps those files govern. No hash of these files was logged here at the time, so this entry logs them now.
+- **What it proves:** only that these exact bytes existed by the time of this entry. It does not show that any file came before its step.
+- **Where the original dates are:** the freeze dates and the times of the steps are only in private records, namely commit times and run logs.
+- **Steps still ahead:** some of these files also govern steps that come after this entry. For those steps, this entry is a hash published before the step.
+
+The private manifest `MANIFEST-CATCHUP-2026-10-22.sha256` has 67 entries, one per file, each `<sha256> *<path>` with LF line ends. It holds:
+- protocols, prediction files and amendments;
+- decision records;
+- scorers, with their cells and notes;
+- the frozen scripts that these records name.
+
+The SHA-256 of the manifest file's bytes is `676d4f1708edde06a13a86d58d1975d65096c88344366068af5104b47fb3bddd`.
+
+The private manifest `MANIFEST-CATCHUP-2026-10-22-opsbench.sha256` covers the frozen code that these records pin in the private benchmark repository. It has 149 entries, each the SHA-256 of one file at one of seven commits, with one header line per commit. The SHA-256 of the manifest file's bytes is `411f92276e80e8acd8adac7c8d98e42e03cd9b1ceec1c9ce84187ffbb260fc86`.
+
+- **Publication:** both manifests are published with the paper, together with the files that the first one lists, except any file withheld at release. The release names each withheld file and gives the reason. The code that the second manifest lists can be checked once those files of the benchmark repository are released.
