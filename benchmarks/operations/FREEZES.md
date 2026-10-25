@@ -583,3 +583,14 @@ The SHA-256 of the manifest file's bytes is `676d4f1708edde06a13a86d58d1975d6509
 The private manifest `MANIFEST-CATCHUP-2026-10-22-opsbench.sha256` covers the frozen code that these records pin in the private benchmark repository. It has 149 entries, each the SHA-256 of one file at one of seven commits, with one header line per commit. The SHA-256 of the manifest file's bytes is `411f92276e80e8acd8adac7c8d98e42e03cd9b1ceec1c9ce84187ffbb260fc86`.
 
 - **Publication:** both manifests are published with the paper, together with the files that the first one lists, except any file withheld at release. The release names each withheld file and gives the reason. The code that the second manifest lists can be checked once those files of the benchmark repository are released.
+
+## H3b locked before any E4 or E2 run (2026-10-25)
+
+H3b is the second part of the private pre-registration H3. It fixes the tools (the labeller and the agent-view gate, each frozen and hashed), the designs of the planted-defect, prevalence and false-rejection experiments, the predictions, the analyses, and the order of the runs with their cut-off.
+
+The private manifest `FREEZE-H3B.sha256` has 68 entries, one per file, each `<sha256>  <label>` with LF line ends. Its first entry is the H3a manifest, whose SHA-256 is `821395d6327abd304619ae0967521cdc624e57f43627da45a1b81d8f2b521f15`. The SHA-256 of this manifest file's bytes is `2e61c44afff6d9c09d44ec6e31f0594bdeb8c2ec3b1d023b538b0c827ec25b0b`.
+
+- **H3a's capture:** `https://web.archive.org/web/20261019135421/https://github.com/raimondasl/worldparts/pull/30`, time-stamp `20261019135421` (the PR page; the raw `FREEZES.md` was captured at the PR's head, `20261019135609`, and on main, `20261019140126`). H3a's dated amendments: commit `7b304f3b4122ede1a55a099102e78258e2287098`.
+- **H3a's sealed outputs:** the sealed runs have ended, and no interim manifest was made. The final manifest's SHA-256 is `ebacacd529c818c8c34f341439327c10e8a2fcfc15c8494c28be8c6d688b9d49` (2026-10-21T17:33:20Z).
+- **Randomness:** drand quicknet (chain `52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971`), round R′ = `33389812`, published at `2026-10-26T00:00:00Z` UTC. R′ counts only if a web-archive capture of this entry, dated before that time, shows this hash and R′.
+- **Publication:** the files are published with the study's results.
