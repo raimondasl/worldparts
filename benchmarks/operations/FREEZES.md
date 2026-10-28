@@ -594,3 +594,21 @@ The private manifest `FREEZE-H3B.sha256` has 68 entries, one per file, each `<sh
 - **H3a's sealed outputs:** the sealed runs have ended, and no interim manifest was made. The final manifest's SHA-256 is `ebacacd529c818c8c34f341439327c10e8a2fcfc15c8494c28be8c6d688b9d49` (2026-10-21T17:33:20Z).
 - **Randomness:** drand quicknet (chain `52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971`), round R′ = `33389812`, published at `2026-10-26T00:00:00Z` UTC. R′ counts only if a web-archive capture of this entry, dated before that time, shows this hash and R′.
 - **Publication:** the files are published with the study's results.
+
+## H3b: the analysis runs fixed, and the cut-off moved earlier (2026-10-28)
+
+H3b's stage-1 runs ended on 2026-10-27, before the cut-off fixed in the H3b entry. Two dated amendments to H3b, in the private file `AMENDMENTS-H3B.md`, fix the runs that analyse them. Both were merged before any of those runs:
+- **Amendment 1** adds a script that writes the full gate's verdict files.
+- **Amendment 2** fixes every analysis run, in order, with a driver script, an input builder and a plan file. It also moves the stage-1 cut-off earlier, from Mon 2026-11-02 11:00Z to Thu 2026-10-29 12:00Z, before any analysis ran.
+  - Every job that the cut-off counts had finished by 2026-10-27, so the counts at the new time are the same as at the old one. Waiting would only have delayed the runs.
+  - The move changes no prediction, cell or reported item. The slip date stays Mon 2026-11-09 11:00Z.
+
+The SHA-256 of each file, as merged in the private record at commit `ea13536c2a1fdbc0c806011e63a9f3e1a0537c64`:
+- `AMENDMENTS-H3B.md`, both amendments: `e070b498ebe1bffb48d3bdc0af0215a17e067c4dbd62188790d6927755acbc09`
+- the driver, `after_cutoff.py`: `d44cb2c9eba9d4d3f7d153a9d56bb004fc70f73842d96a256048e6a9913d448f`
+- the input builder, `analysis_inputs.py`: `66f4b8814b5d443813594a074289249a52d30ae039a996676ab9b0f7e5fa179d`
+- the full gate's verdict script, `full_verdicts.py`: `55c101330d521752c3caa549792761a9159ca88eeb6a8620877d243d224b8657`
+- the plan, `AFTER-CUTOFF-PLAN.txt`: `f9b2dc9355b372382c0cfd8f43246cfdf5d9229e5822178c3a5e3ab3839a73d7`
+
+- **What it proves:** that these exact bytes existed by the time of this entry. A web-archive capture of this entry, dated before the first analysis run, gives that time. The first run starts at or after 2026-10-29T12:00:00Z.
+- **Publication:** the files are published with the study's results.
