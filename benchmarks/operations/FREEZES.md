@@ -612,3 +612,12 @@ The SHA-256 of each file, as merged in the private record at commit `ea13536c2a1
 
 - **What it proves:** that these exact bytes existed by the time of this entry. A web-archive capture of this entry, dated before the first analysis run, gives that time. The first run starts at or after 2026-10-29T12:00:00Z.
 - **Publication:** the files are published with the study's results.
+
+## Documented-only labeller study: its source list, version 1 (2026-10-29)
+
+The documented-only study is a private pre-registered study of our labeller, in a setting where only documented values are known. Its predictions file plans a later reading with ranges taken from published sources. It also fixes which sources count: only those in a version of its source list whose hash was published here before any result of the study is shared or made public.
+
+- The source list `DOCONLY-CITED-SOURCES.md`, version 1 (18 entries), as added at private research commit `e096c3814c5397207ca023cf583525768ede4f0a`: sha256 `9519e38ce4e12d342c970c3bd442121503facc99d2cd6e747463f3e1b77d6af3`.
+- The study's predictions file `LABELLER-DOCONLY-PREDICTIONS-2026-10-15.md`, as it stands at that commit, with its addenda through addendum 11 (merged at private research commit `72d7d59476fc2312e866f932276b7a58111c6db8`): sha256 `a4cd0ec15c05066e8966d2e04ff1d0aa892f54e867d201436bae99704f9946e4`.
+- **What it proves:** that these exact bytes existed by the time this entry was merged here.
+- **Publication:** the list is published with the predictions file.
