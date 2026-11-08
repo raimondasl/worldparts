@@ -621,3 +621,33 @@ The documented-only study is a private pre-registered study of our labeller, in 
 - The study's predictions file `LABELLER-DOCONLY-PREDICTIONS-2026-10-15.md`, as it stands at that commit, with its addenda through addendum 11 (merged at private research commit `72d7d59476fc2312e866f932276b7a58111c6db8`): sha256 `a4cd0ec15c05066e8966d2e04ff1d0aa892f54e867d201436bae99704f9946e4`.
 - **What it proves:** that these exact bytes existed by the time this entry was merged here.
 - **Publication:** the list is published with the predictions file.
+
+## H3b's amendments 3 and 4, and the timing of the documented-only study's cited reading (2026-11-08)
+
+Two dated amendments to H3b, in the private file `AMENDMENTS-H3B.md`, and one addendum to the documented-only study's predictions file have had no hash logged here. This entry logs them.
+
+- **Amendment 3** fixes one run of a registered description: the census estimate over H3a's whole sample, with a small script that copies the sealed records into the frozen code's input layout. It was merged on 2026-10-29, after H3b's score and before that run. No public entry came before the run.
+- **Amendment 4** records work added after the results. Every output of H3a and H3b was open when it was written, so nothing in it is a test. It changes no prediction, cell, band, scorer, index list or score. It adds:
+  - a logged run of a frozen script that only reads existing records;
+  - a census and a key check on one task;
+  - the full admission gate on one other task;
+  - a rebuilt certificate, and a description of one external control.
+
+  The last two were done before the amendment's merge, and the runs of the first three follow it. It also returns H3b's release decision to section 7 of `PREREGISTRATION.md`, which publishes the generators, the simulator, the sealed appendix and the truth. They go public with the first public version of the paper. The amendment removes the estimated date of that version. The dates before which item-level material of the external case studies stays out of public view do not change.
+- **H3a** gets one dated entry in `AMENDMENTS-H3A.md`: the calendar line, and a note on runs on census k. No H3a rule, list or job changes.
+- **The documented-only study, addendum 12.** The study's cited reading, with ranges taken from published sources, now runs before the first public version of the paper. It goes in stages. Retrieval and a blind mapping note come first, with no computing run and no code, apart from the small script that addendum 9 requires to compute the ranges of any element found eligible. The code and the runs happen only if at least one listed source qualifies for a row. If none qualifies, the reading is reported as not run, and nothing further waits. Only free, lawful copies of a source count. That version reports the result whichever way it comes out. Whether that version holds this study at all is decided and recorded before the mapping note is written. No source had been mapped when this was decided, and every rule that keeps the mapping blind stays. No cell changes.
+
+The SHA-256 of each file:
+- `AMENDMENTS-H3B.md` with amendment 3, as merged at private research commit `67b533a9a95ed686d92055019da02d7125fdbae2`: `2881b1d75b1ea73f43ca139c803a141c9ffaf3cced15b77c267763d32b0ec3f3`
+- amendment 3's script, `x_view.py`, at that commit: `8c82cc75c6d2050583ed98e85011901013913cb9c0f8ec3f2a61c3041808b025`
+- amendment 3's outputs, the manifest `ANALYSIS-1-H3B.sha256`: `2476525a27a8c8f63867aa13b3ec380ef302edef4f663f0d9cd7c11851128ade`
+- `AMENDMENTS-H3B.md` with amendment 4, at private research commit `f4a967af58ab66c5eec848fa25f64ac3da695f20`: `b4340ab1b1ab2e5bd717edf55256939677d7164466751a5215aba38dab928c1e`. The file of the first line is a byte prefix of it.
+- `AMENDMENTS-H3A.md` at that commit: `e872c3c66635396f43efb81867a20d66ff7e68e7de85c143865462f83be8bf38`
+- the predictions file `LABELLER-DOCONLY-PREDICTIONS-2026-10-15.md`, with addendum 12, at that commit: `6211c959ec597bd716035beaf88e87ce13c5910bb48b3def1fa4e9b2604cd0c0`. The bytes hashed `a4cd0ec15c05066e8966d2e04ff1d0aa892f54e867d201436bae99704f9946e4` in the entry of 2026-10-29 are a byte prefix of it.
+- the source list `DOCONLY-CITED-SOURCES.md`, version 1, unchanged since that entry: `9519e38ce4e12d342c970c3bd442121503facc99d2cd6e747463f3e1b77d6af3`.
+- The predictions file's addendum 9, which fixes the cited reading's rules, was added at private research commit `5d999caed875b890be669b6f021622d86a9f27ec`.
+
+- **What it proves:** that these exact bytes existed by the time this entry was merged here.
+  - For amendment 3, it does not show that the amendment came before its run. Those times are in private records, published with the study.
+  - For addendum 12, it gives a third-party time before the mapping of any source.
+- **Publication:** the files are published with the study's results, and the source list with the predictions file.
