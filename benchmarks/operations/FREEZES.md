@@ -669,3 +669,28 @@ The SHA-256 of each file:
   - If this entry is merged before the run starts, it also gives the run's reading a third-party time before the run. The run's times are in private records, published with the study.
   - For addendum 13, it gives a third-party time before the mapping of any source.
 - **Publication:** the files are published with the study's results.
+
+## The documented-only study's mapping note and addendum 14, and the outputs of H3b's amendment 5 (2026-11-09)
+
+This entry logs three more files in private records.
+
+- **The mapping note.** The documented-only study's addendum 9 plans a "cited reading". A note fixes, before any run, which printed numbers in the listed sources become which ranges. Two AI sessions wrote and checked it. Neither saw the study's results, apart from two values of one world that the study's design prints. It was then approved under addendum 9's rule. A block after the sessions' text holds that approval and the statements the rules require. Addendum 9 fixes the note once its commit is listed here. No run under its ranges has started, and the code for them is not merged.
+- **Addendum 14** to the predictions file limits that code to what the note uses. It was written after the note, knowing its outcome, and before any such code or run.
+- **H3b's amendment 5** added one run after the results. That run has ended, and a manifest lists its outputs.
+
+The SHA-256 of each file:
+- the mapping note `CITED-ROWS-2026-11-09.md`, at private research commit `fcc6faebc3e722d8e857ada4ca987cbdef62b940`, merged as `e0bb94737b32d7b43075c551b623e1a5b88c2604`: `702e25cda6f824752663e127e768d9ef6e2e3a557b0b5eee76b89004cb61bdd6`. Its first 32,627 bytes are the sessions' text: `7e405a2517a2bf4aff2d89988182178dec3474fe423d8f6bc69bc39d2e7358b0`.
+- the files beside it, at that commit:
+  - the script that computes its ranges, `cited_boxes.py`: `db98abf673b6e687fdce94ace9d6671fc310d1c4c38b64c86f79c83c1ada677d`;
+  - its output, `cited_boxes.json`: `42c5c5d7f3ed95daa0836348f5cd38c2a6f5fe4a43918f914f70d48f3bf65840`;
+  - the second session's own mapping, `MY-MAPPING.md`: `f8dcac44a57725a72e70cc6d1e626a47cd410c2efc3fc9c69e9a47c37926669f`;
+  - its check of the note, `CHECK-2026-11-09.md`: `4d187f9dfedef5248de7321332363bbb59c860840815f4657cae6888821cb8b2`;
+  - the retrieval manifest, `MANIFEST.md`: `53b3ae23e4130cccd8c4b1b4829a3f1dfd66cd74a0eec97c6e90b1a037a67d72`;
+  - the two sessions' briefs: `b57f6e55a126e363a50c239c8636457a57c347d1f15f2de23a03be8bffdc0988` (mapping), `42fcbc10b7f701feb8fd48b3557b256ff8dfc5bc90a85b3c5c2fa807cbb2eaac` (check) and `48c1f108ec047ae14632ae50bd763c1b3dec29c87e0a22c1de1659df82f1013f` (the check's second phase).
+- the predictions file `LABELLER-DOCONLY-PREDICTIONS-2026-10-15.md`, with addendum 14, at that commit: `d2a229aae8588d9f0c4624793b345cfd45f83a8b0785ccd5c41cc26a182c4416`. The file of SHA-256 `42e25681edfa7c0562bf53379a9b020ce76336cdb073331473b22ab9e3d6c612` in the entry above is a byte prefix of it.
+- amendment 5's outputs, the manifest `AMENDMENT-5-H3B.sha256`, at private research commit `9cf5fb1d1a21f9b639f64f76eaa902fbac43c003`, merged as `e90a8c55061263e4da8668cea1a5aaca5407b8a6`: `849dec014149793a9e35d6a7c98abbef9a7cad07060652bfaa45e1e80cbdfbb9`.
+
+- **What it proves:** that these exact bytes existed by the time this entry was merged here.
+  - For the mapping note and addendum 14, it gives a third-party time before any run under the note's ranges.
+  - For amendment 5, it does not show when the run happened. Those times are in private records, published with the study.
+- **Publication:** the files are published with the study's results. The archived sources the note maps are not.
