@@ -651,3 +651,21 @@ The SHA-256 of each file:
   - For amendment 3, it does not show that the amendment came before its run. Those times are in private records, published with the study.
   - For addendum 12, it gives a third-party time before the mapping of any source.
 - **Publication:** the files are published with the study's results, and the source list with the predictions file.
+
+## H3b's amendment 5, and the documented-only study's addendum 13 (2026-11-09)
+
+Two more dated additions to private records have had no hash logged here. This entry logs them.
+
+- **H3b's amendment 5** records work added after the results. Every output of H3a and H3b was open when it was written, so nothing in it is a test. It changes no prediction, cell, band, scorer, index list or score. It adds one more run of the full admission gate, on the task of amendment 4's gate run with nothing planted in it. It fixes how that run's outcome will be read before the run starts.
+- **H3a** gets one dated addendum in `AMENDMENTS-H3A.md`, a note on that run. No H3a rule, list or job changes.
+- **The documented-only study, addendum 13.** The first public version of the paper holds this study. So that version reports the study's cited reading, whichever way it comes out. The addendum was written before any source was mapped.
+
+The SHA-256 of each file:
+- `AMENDMENTS-H3B.md` with amendment 5, at private research commit `c5f5779390016fd698fba1c1ff7af4b47893bff3`: `597575b28fd0c49e534700e0ac36971ebe53f46e547b9e6bdbc6fb7e6d9bb2e3`. The file with amendment 4, of SHA-256 `b4340ab1b1ab2e5bd717edf55256939677d7164466751a5215aba38dab928c1e` in the entry of 2026-11-08, is a byte prefix of it. The amendment names the run's script and input by their SHA-256.
+- `AMENDMENTS-H3A.md` at that commit: `250c987adf075553f6f01fd301966d2149efc645678a600e26493618599e3534`. The file of SHA-256 `e872c3c66635396f43efb81867a20d66ff7e68e7de85c143865462f83be8bf38` in the entry of 2026-11-08 is a byte prefix of it.
+- the predictions file `LABELLER-DOCONLY-PREDICTIONS-2026-10-15.md`, with addendum 13, at that commit: `42e25681edfa7c0562bf53379a9b020ce76336cdb073331473b22ab9e3d6c612`. The file of SHA-256 `6211c959ec597bd716035beaf88e87ce13c5910bb48b3def1fa4e9b2604cd0c0` in the entry of 2026-11-08 is a byte prefix of it.
+
+- **What it proves:** that these exact bytes existed by the time this entry was merged here.
+  - If this entry is merged before the run starts, it also gives the run's reading a third-party time before the run. The run's times are in private records, published with the study.
+  - For addendum 13, it gives a third-party time before the mapping of any source.
+- **Publication:** the files are published with the study's results.
