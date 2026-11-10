@@ -694,3 +694,23 @@ The SHA-256 of each file:
   - For the mapping note and addendum 14, it gives a third-party time before any run under the note's ranges.
   - For amendment 5, it does not show when the run happened. Those times are in private records, published with the study.
 - **Publication:** the files are published with the study's results. The archived sources the note maps are not.
+
+## The documented-only study's run setup for its cited reading: addendum 15, its reporting script and its queue (2026-11-10)
+
+This entry logs six more files in private records. No run under the mapping note's ranges has started.
+
+- **Addendum 15** to the predictions file sets up the cited reading's runs, as addendum 9 asks. It names the code, each command, each import list and each label. It also lists the choices the reporting script makes where the plan leaves a point open.
+- **The reporting script**, with its tests and its notes, computes every reported line of the cited reading from the runs' outputs. Addendum 9 requires it to be written without access to any of those outputs, and pushed with the run setup. AI agents wrote and checked it. None of them was given any such output, and none existed.
+- **The queue script** runs a short check of the code first (a smoke run on a development draw that is on no list), then the five runs and their rechecks, then the reporting script. Before each step it checks the SHA-256 of every input, the reporting script, its tests and its notes included.
+- **The list** of the certificates that the runs import and recheck, a byte copy of the one the code's tests use.
+
+The SHA-256 of each file, at private research commit `d844fd230b1ab67a86aa95a87233bd727676c541`, merged as `f6fa8ffa51a307f763e746a323b2f0aabe644383`:
+- the predictions file `LABELLER-DOCONLY-PREDICTIONS-2026-10-15.md`, with addendum 15: `c3a74a48856919b8ce4177f148c04b73af5171aa21d1d71856336536262241ce`. The file of SHA-256 `d2a229aae8588d9f0c4624793b345cfd45f83a8b0785ccd5c41cc26a182c4416` in the entry above is a byte prefix of it.
+- the reporting script `report_cited.py`: `447005709a8f05abef1b6558a97d5ec2eb5d1a47c74989e596c8757f4581c671`;
+- its tests `test_report_cited.py`: `0b22e8bcd606d7d01a213143de761919264f6c5c681dbee50cb3344d14fa1712`;
+- its notes `REPORTING-NOTES-CITED.md`: `6d92660629d4b0d4a2a198dae7b7b9fe47d205404a07bac5c7a7c87ef41cd803`;
+- the queue script `run_cited_queue.py`: `0b9e65d77dc9a55c5e8744a6e2dee5bb1c39d11835cbb0b86ba46a987b2844d3`;
+- the list `cited_item7_certs.json`: `ff355e067813ed1db506e4c13235d6e71ad3ca42f2dd4297ab0988fb4cbe6495`.
+
+- **What it proves:** that these exact bytes existed by the time this entry was merged here. Addendum 15 has this entry merged before the smoke run, so it gives a third-party time before any output under the note's ranges.
+- **Publication:** the files are published with the study's results.
